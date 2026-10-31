@@ -1,0 +1,6 @@
+name: sky_ui_shared
+description: Core-independent models shared by the sky_ui frontend and backend.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.8.0 <4.0.0'

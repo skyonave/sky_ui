@@ -1,0 +1,31 @@
+[Unit]
+Description=Sky UI server panel
+After=network.target polkit.service
+Wants=polkit.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=sky-ui
+Group=sky-ui
+WorkingDirectory=/var/lib/sky-ui
+EnvironmentFile=/etc/sky-ui/server.env
+ExecStart=/opt/sky-ui/current/bin/sky-ui
+Restart=on-failure
+RestartSec=3
+StateDirectory=sky-ui
+StateDirectoryMode=0750
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/sky-ui
+# Read interface addresses through libc/getifaddrs; no network capabilities.
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

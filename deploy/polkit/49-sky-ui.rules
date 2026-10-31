@@ -1,0 +1,9 @@
+// Authorize only the dedicated managed unit and lifecycle verbs.
+polkit.addRule(function(action, subject) {
+    if (action.id === "org.freedesktop.systemd1.manage-units" &&
+        subject.user === "sky-ui" &&
+        action.lookup("unit") === "sky-ui-mihomo.service" &&
+        ["start", "stop", "restart", "reset-failed"].indexOf(action.lookup("verb")) !== -1) {
+        return polkit.Result.YES;
+    }
+});

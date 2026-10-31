@@ -1,0 +1,10 @@
+PxPlus IBM VGA8
+From The Ultimate Oldschool PC Font Pack by VileR.
+Project: https://int10h.org/oldschool-pc-fonts/
+License: Creative Commons Attribution-ShareAlike 4.0 International.
+Full license: LICENSE-IBM-VGA.txt (included alongside this unmodified font).
+
+Unmodified font and license obtained from the official cool-retro-term repository:
+https://github.com/Swordfish90/cool-retro-term/tree/1394ce82fa53d2a87d5adc4d99f9eeba598ea53d/app/qml/fonts/oldschool-pc-fonts
+
+The font's license applies to the font asset. It does not replace the application license.

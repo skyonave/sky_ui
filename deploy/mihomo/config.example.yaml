@@ -1,0 +1,14 @@
+mode: direct
+log-level: info
+ipv6: false
+allow-lan: false
+external-controller: 127.0.0.1:19090
+secret: "__SKY_UI_CONTROLLER_SECRET__"
+dns:
+  enable: false
+tun:
+  enable: false
+listeners: []
+proxies: []
+proxy-groups: []
+rules: []

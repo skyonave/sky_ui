@@ -1,0 +1,14 @@
+name: sky_ui_web
+description: Russian-first Jaspr prototype of the personal sky_ui server panel.
+version: 0.2.0
+publish_to: none
+environment:
+  sdk: '>=3.8.0 <4.0.0'
+dependencies:
+  jaspr: 0.23.4
+  web: 1.1.1
+  qr: 3.0.2
+  sky_ui_shared:
+    path: ../shared
+jaspr:
+  mode: client
