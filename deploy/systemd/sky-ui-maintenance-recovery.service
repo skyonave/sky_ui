@@ -1,0 +1,15 @@
+[Unit]
+Description=Sky UI interrupted maintenance recovery
+DefaultDependencies=no
+After=local-fs.target
+Before=sky-ui.service sky-ui-mihomo.service sky-ui-edge.service
+ConditionPathExists=/var/lib/sky-ui-maintenance
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/sky-ui/current/deploy/maintenance.py --recover
+RemainAfterExit=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

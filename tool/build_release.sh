@@ -32,6 +32,7 @@ cp -R "$root/deploy/systemd" "$root/deploy/polkit" "$root/deploy/mihomo" "$stage
 cp "$root/deploy/setup.sh" "$root/deploy/sky-ui" "$stage/payload/deploy/"
 cp "$root/deploy/render_access.sh" "$stage/payload/deploy/"
 cp "$root/deploy/certificate_sync.py" "$stage/payload/deploy/"
+cp "$root/deploy/maintenance.py" "$stage/payload/deploy/"
 dart "$root/tool/collect_licenses.dart" "$root/app/api" "$root/app/web" "$stage/payload/licenses/dart"
 cp "$root/LICENSE" "$stage/payload/LICENSE"
 cp "$root/app/web/FEATHER-LICENSE.txt" "$stage/payload/licenses/feather.LICENSE"

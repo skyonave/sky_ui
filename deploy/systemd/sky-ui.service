@@ -22,7 +22,7 @@ ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
-ReadWritePaths=/var/lib/sky-ui
+ReadWritePaths=/var/lib/sky-ui /var/lib/sky-ui-maintenance/inbox
 # Read interface addresses through libc/getifaddrs; no network capabilities.
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 CapabilityBoundingSet=

@@ -1,2 +1,7 @@
 #!/usr/bin/env bash
+case "${1:-}" in
+  backup|backups|restore|update-core)
+    exec python3 /opt/sky-ui/current/deploy/maintenance.py --cli "$@"
+    ;;
+esac
 exec bash /opt/sky-ui/current/deploy/setup.sh "$@"

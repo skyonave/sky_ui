@@ -1,0 +1,16 @@
+[Unit]
+Description=Sky UI backup, restore and core update worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/sky-ui/current/deploy/maintenance.py
+TimeoutStartSec=600
+UMask=0077
+PrivateTmp=yes
+ProtectHome=yes
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/sky-ui-maintenance /var/lib/sky-ui /var/lib/sky-ui-edge /var/lib/sky-ui-certificates /etc/sky-ui /opt/sky-ui/cores
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

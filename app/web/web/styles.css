@@ -517,3 +517,5 @@ button.sidebar-core:hover { background: var(--raised); }
 .transport-guide p { margin: 7px 0 0; color: var(--muted); white-space: pre-line; line-height: 1.4; }
 .field-hint { margin: 8px 0 0; color: var(--muted); line-height: 1.35; font-size: 16px; }
 textarea { width: 100%; resize: vertical; padding: 10px; color: var(--text); background: var(--input); border: 1px solid var(--line); border-radius: 4px; font: inherit; }
+.maintenance-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.maintenance-heading ~ .setting-row > div:first-child { display: grid; gap: 6px; min-width: 0; }

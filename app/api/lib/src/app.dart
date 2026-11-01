@@ -10,12 +10,14 @@ import 'panel/service.dart';
 import 'system_monitor.dart';
 import 'core_releases.dart';
 import 'auth/owner_auth.dart';
+import 'maintenance.dart';
 
 Handler createApplication(
   ServerConfig config,
   CoreManager manager, {
   PanelService? panel,
   OwnerAuth? auth,
+  MaintenanceService? maintenance,
 }) {
   if (config.requireOwnerAuth && auth == null)
     throw StateError('Owner authentication is required.');
@@ -33,6 +35,66 @@ Handler createApplication(
   );
   final system = SystemMonitor(config.dataDirectory);
   final releases = CoreReleases();
+  if (maintenance != null) {
+    router.get(
+      '/api/v1/maintenance',
+      (_) async => Response.json(
+        body: {'data': (await maintenance.snapshot()).toJson()},
+      ),
+    );
+    router.post('/api/v1/maintenance', (context) async {
+      if ((context.request.headers['content-type'] ?? '')
+              .split(';')
+              .first
+              .trim() !=
+          'application/json') {
+        throw const ApiException('json_required', status: 415);
+      }
+      final bytes = <int>[];
+      await for (final chunk in context.request.bytes()) {
+        if (bytes.length + chunk.length > 4096)
+          throw const ApiException('request_too_large', status: 413);
+        bytes.addAll(chunk);
+      }
+      Map<String, dynamic> value;
+      try {
+        value = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      } on Object {
+        throw const ApiException('request_invalid', status: 400);
+      }
+      if (value['confirmed'] != true ||
+          value['action'] is! String ||
+          (value['backupId'] != null && value['backupId'] is! String) ||
+          (value['tag'] != null && value['tag'] is! String)) {
+        throw const ApiException('request_invalid', status: 400);
+      }
+      final job = await manager.exclusive((_) async {
+        if (panel != null && !await panel.isSynchronized()) {
+          throw const ApiException('configuration_out_of_sync', status: 409);
+        }
+        return maintenance.submit(
+          value['action'] as String,
+          backupId: value['backupId'] as String?,
+          core: value['action'] == 'update' ? manager.core.coreId : null,
+          tag: value['tag'] as String?,
+        );
+      });
+      return Response.json(statusCode: 202, body: {'data': job.toJson()});
+    });
+    router.get('/api/v1/backups/<id>/download', (
+      RequestContext context,
+      String id,
+    ) async {
+      final file = await maintenance.archive(id);
+      return Response.stream(
+        body: file.openRead(),
+        headers: {
+          'content-type': 'application/gzip',
+          'content-disposition': 'attachment; filename=sky-ui-$id.tar.gz',
+        },
+      );
+    });
+  }
   if (auth != null) {
     Future<Map<String, dynamic>> authBody(RequestContext context) async {
       if ((context.request.headers['content-type'] ?? '')
@@ -426,7 +488,7 @@ Handler createApplication(
         body: await panel.subscription(filename.substring(0, 43)),
         headers: {
           'content-type': 'application/yaml; charset=utf-8',
-          'content-disposition': 'inline; filename="sky-ui.yaml"',
+          'content-disposition': 'inline; filename=Sky-UI.yaml',
           'profile-update-interval': '6',
           'x-robots-tag': 'noindex, nofollow, noarchive',
         },
@@ -515,6 +577,12 @@ Handler createApplication(
             if (!reading)
               auth.csrf(identity, request.headers['x-sky-ui-csrf'] ?? '');
           }
+        }
+        if (maintenance?.busy == true &&
+            request.method != HttpMethod.get &&
+            request.method != HttpMethod.head &&
+            !request.url.path.startsWith('api/v1/auth/')) {
+          throw const ApiException('maintenance_busy', status: 409);
         }
         response = await router(context);
       }

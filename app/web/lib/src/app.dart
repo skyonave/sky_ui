@@ -29,6 +29,10 @@ class SkyApp extends StatefulComponent {
 }
 
 class _SkyAppState extends State<SkyApp> {
+  static const appVersion = String.fromEnvironment(
+    'SKY_UI_VERSION',
+    defaultValue: '0.5.0-dev.2',
+  );
   final store = PanelStore();
   PanelSnapshot? panelData;
   bool dataBusy = false, ownerBusy = false, ownerSessionsLoading = false;
@@ -51,8 +55,17 @@ class _SkyAppState extends State<SkyApp> {
       dataError == null &&
       panelData!.synchronized &&
       !runtimeBusy &&
+      !maintenanceBusy &&
       runtime?.platformSupported == true;
   final api = ApiClient();
+  MaintenanceSnapshot? maintenance;
+  MaintenanceJob? maintenanceJob;
+  bool maintenanceLoading = false, maintenanceSubmitting = false;
+  String? maintenanceBackupId;
+  CoreReleaseNotes? updateNotes;
+  String? updateTag;
+  bool get maintenanceBusy =>
+      maintenanceSubmitting || maintenanceJob?.busy == true;
   CoreSnapshot? runtime;
   List<CoreLogEntry> runtimeLogs = [];
   SystemSnapshot? system;
@@ -347,6 +360,7 @@ class _SkyAppState extends State<SkyApp> {
       if (mounted) component.onSignedOut();
     };
     unawaited(refreshOwnerSessions());
+    unawaited(refreshMaintenance());
     store.running = false;
     unawaited(refreshRuntime());
     unawaited(refreshPanel());
@@ -355,6 +369,8 @@ class _SkyAppState extends State<SkyApp> {
       unawaited(refreshRuntime());
       unawaited(refreshPanel());
       if (page == 'settings') unawaited(refreshOwnerSessions());
+      if (page == 'settings' || page == 'core' || maintenanceBusy)
+        unawaited(refreshMaintenance());
     });
     final route = web.window.location.hash.replaceFirst('#', '');
     if (pages.contains(route)) page = route;
@@ -539,7 +555,7 @@ class _SkyAppState extends State<SkyApp> {
   }
 
   void closeModal() {
-    if (dataBusy || clearingLogs || ownerBusy) return;
+    if (dataBusy || clearingLogs || ownerBusy || maintenanceSubmitting) return;
     ownerDraft.clear();
     releaseGeneration++;
     shareGeneration++;
@@ -781,9 +797,7 @@ class _SkyAppState extends State<SkyApp> {
           if (page == 'logs') logsPage(),
           if (page == 'settings') settingsPage(),
           el('footer', [
-            txt(
-              '${t('app.name')} / ${const String.fromEnvironment('SKY_UI_VERSION', defaultValue: '0.4.0-dev.1')}',
-            ),
+            txt('${t('app.name')} / $appVersion'),
           ], classes: 'page-footer'),
         ], classes: 'main-content ${page == 'logs' ? 'logs-layout' : ''}'),
       ],
@@ -1515,9 +1529,11 @@ class _SkyAppState extends State<SkyApp> {
         runtimeOnline &&
         !runtimeBusy &&
         !dataBusy &&
+        !maintenanceBusy &&
         value!.operations.contains(op);
     return div([
       heading('core'),
+      maintenanceStatus(),
       div([
         div([
           div([icon('core')], classes: 'core-large-icon'),
@@ -1585,7 +1601,15 @@ class _SkyAppState extends State<SkyApp> {
             glyph: 'refresh',
             disabled: runtimeBusy,
           ),
-          action(t('core.update'), () {}, glyph: 'down', disabled: true),
+          action(
+            t('core.update'),
+            () => unawaited(prepareCoreUpdate()),
+            glyph: 'down',
+            disabled:
+                !canInspect ||
+                maintenance?.available != true ||
+                maintenanceBusy,
+          ),
           action(
             t('core.releases'),
             () => openReleases(value?.coreId ?? 'mihomo'),
@@ -1770,6 +1794,7 @@ class _SkyAppState extends State<SkyApp> {
 
   Component settingsPage() => div([
     heading('settings'),
+    backupPanel(),
     div([
       h2([Component.text(t('settings.general'))]),
       div([
@@ -1870,6 +1895,120 @@ class _SkyAppState extends State<SkyApp> {
       plannedSetting('settings.logging', 'settings.configure'),
     ], classes: 'panel settings-panel'),
   ]);
+
+  Future<void> refreshMaintenance() async {
+    if (maintenanceLoading) return;
+    maintenanceLoading = true;
+    try {
+      final value = await api.maintenance();
+      if (mounted)
+        setState(() {
+          maintenance = value;
+          maintenanceJob = value.job;
+        });
+    } on ApiClientException {
+      // The worker briefly stops the API. Keep the durable job visible until it returns.
+    } finally {
+      maintenanceLoading = false;
+    }
+  }
+
+  Future<void> prepareCoreUpdate() async {
+    updateNotes = null;
+    updateTag = null;
+    openModal('coreUpdate');
+    try {
+      final notes = await api.releases(runtime?.coreId ?? 'mihomo');
+      if (mounted && modal == 'coreUpdate')
+        setState(() {
+          updateNotes = notes;
+          updateTag = notes.latest;
+        });
+    } on ApiClientException catch (e) {
+      if (mounted) setState(() => error = runtimeMessage(e.code));
+    }
+  }
+
+  Future<void> submitMaintenance(String action) async {
+    if (maintenanceBusy) return;
+    setState(() => maintenanceSubmitting = true);
+    try {
+      final job = await api.maintain(
+        action,
+        backupId: action == 'restore' ? maintenanceBackupId : null,
+        tag: action == 'update' ? updateTag : null,
+      );
+      if (mounted) setState(() => maintenanceJob = job);
+    } on ApiClientException catch (e) {
+      if (mounted) {
+        setState(() => error = runtimeMessage(e.code));
+        return;
+      }
+    } finally {
+      if (mounted) setState(() => maintenanceSubmitting = false);
+    }
+    if (mounted) closeModal();
+  }
+
+  Component maintenanceStatus() {
+    final job = maintenanceJob;
+    return div(
+      [
+        if (job != null)
+          txt(
+            job.status == 'failed'
+                ? runtimeMessage(job.error ?? 'maintenance_failed')
+                : t('maintenance.status.${job.status}'),
+            classes: job.status == 'failed' ? 'form-error' : 'muted small',
+          ),
+      ],
+      attributes: {'role': 'status', 'aria-live': 'polite'},
+    );
+  }
+
+  Component backupPanel() => div([
+    div([
+      h2([Component.text(t('maintenance.backups'))]),
+      action(
+        t('maintenance.create'),
+        () => openModal('backup'),
+        glyph: 'plus',
+        disabled: maintenance?.available != true || maintenanceBusy,
+      ),
+    ], classes: 'maintenance-heading'),
+    maintenanceStatus(),
+    if (maintenance?.available != true) pill(t('feature.unavailable')),
+    if (maintenance?.available == true && maintenance!.backups.isEmpty)
+      p([Component.text(t('maintenance.empty'))], classes: 'muted small'),
+    for (final backup in maintenance?.backups ?? <BackupInfo>[])
+      div([
+        div([
+          txt(
+            DateTime.tryParse(
+                  backup.created,
+                )?.toLocal().toString().substring(0, 19) ??
+                backup.created,
+          ),
+          txt(
+            'Sky UI ${backup.version} · ${backup.size < 1000000 ? '${(backup.size / 1000).toStringAsFixed(1)} KB' : '${(backup.size / 1000000).toStringAsFixed(1)} MB'}',
+            classes: 'muted small',
+          ),
+        ]),
+        div([
+          a(
+            [Component.text(t('maintenance.download'))],
+            href: '/api/v1/backups/${backup.id}/download',
+            classes: 'button',
+            attributes: {'download': 'sky-ui-${backup.id}.tar.gz'},
+          ),
+          action(t('maintenance.restore'), () {
+            maintenanceBackupId = backup.id;
+            openModal('restore');
+          }, disabled: maintenanceBusy || backup.version != appVersion),
+        ], classes: 'core-actions'),
+      ], classes: 'setting-row'),
+    p([Component.text(t('maintenance.secrets'))], classes: 'muted small'),
+  ], classes: 'panel settings-panel');
 
   Future<void> refreshOwnerSessions() async {
     if (ownerSessionsLoading || ownerBusy) return;
@@ -2103,6 +2242,9 @@ class _SkyAppState extends State<SkyApp> {
                   'ownerName' => 'admin.editName',
                   'ownerPassword' => 'admin.changePassword',
                   'revokeSession' => 'admin.revokeTitle',
+                  'backup' => 'maintenance.create',
+                  'restore' => 'maintenance.restore',
+                  'coreUpdate' => 'core.update',
                   _ => 'modal.deleteTitle',
                 }),
               ),
@@ -2147,6 +2289,45 @@ class _SkyAppState extends State<SkyApp> {
           if (modal == 'share') shareContent(),
           if (modal == 'clearLogs') p([Component.text(t('logs.clearHint'))]),
           if (modal == 'releases') releaseContent(),
+          if (modal == 'backup')
+            p([Component.text(t('maintenance.backupHint'))]),
+          if (modal == 'restore')
+            p([Component.text(t('maintenance.restoreHint'))]),
+          if (modal == 'coreUpdate') ...[
+            if (updateNotes == null && error == null)
+              txt(t('maintenance.loading')),
+            if (updateNotes != null) ...[
+              label([
+                Component.text(t('core.version')),
+                select(
+                  [
+                    for (final tag in {
+                      updateNotes!.latest,
+                      ...updateNotes!.releases.map((r) => r.tag),
+                    })
+                      option(
+                        [Component.text(tag)],
+                        value: tag,
+                        selected: tag == updateTag,
+                      ),
+                  ],
+                  value: updateTag,
+                  onChange: (value) => setState(() => updateTag = value.first),
+                ),
+              ]),
+              txt('${runtime?.version ?? '—'} → $updateTag', classes: 'mono'),
+              p([
+                Component.text(
+                  t(
+                    runtime?.version?.replaceFirst('v', '') ==
+                            updateTag?.replaceFirst('v', '')
+                        ? 'maintenance.latest'
+                        : 'maintenance.updateHint',
+                  ),
+                ),
+              ]),
+            ],
+          ],
           if (modal == 'ownerName' || modal == 'ownerPassword') ownerForm(),
           if (modal == 'revokeSession')
             p([
@@ -2239,6 +2420,35 @@ class _SkyAppState extends State<SkyApp> {
                   () => unawaited(clearLogHistory()),
                   classes: 'button danger',
                   disabled: clearingLogs || runtimeBusy,
+                ),
+              if (modal == 'backup' ||
+                  modal == 'restore' ||
+                  modal == 'coreUpdate')
+                action(
+                  t(
+                    modal == 'backup'
+                        ? 'maintenance.create'
+                        : modal == 'restore'
+                        ? 'maintenance.restore'
+                        : 'core.update',
+                  ),
+                  () => unawaited(
+                    submitMaintenance(
+                      modal == 'backup'
+                          ? 'backup'
+                          : modal == 'restore'
+                          ? 'restore'
+                          : 'update',
+                    ),
+                  ),
+                  classes:
+                      'button ${modal == 'restore' ? 'danger' : 'primary'}',
+                  disabled:
+                      maintenanceBusy ||
+                      (modal == 'coreUpdate' &&
+                          (updateNotes == null ||
+                              runtime?.version?.replaceFirst('v', '') ==
+                                  updateTag?.replaceFirst('v', ''))),
                 ),
               if (modal == 'delete')
                 action(

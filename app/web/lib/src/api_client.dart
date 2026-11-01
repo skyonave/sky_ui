@@ -81,6 +81,32 @@ class ApiClient {
     );
   }
 
+  Future<MaintenanceSnapshot> maintenance() async =>
+      MaintenanceSnapshot.fromJson(
+        Map<String, dynamic>.from(
+          (await _request('/api/v1/maintenance'))['data'] as Map,
+        ),
+      );
+  Future<MaintenanceJob> maintain(
+    String action, {
+    String? backupId,
+    String? tag,
+  }) async => MaintenanceJob.fromJson(
+    Map<String, dynamic>.from(
+      (await _request(
+            '/api/v1/maintenance',
+            post: true,
+            payload: {
+              'action': action,
+              'confirmed': true,
+              if (backupId != null) 'backupId': backupId,
+              if (tag != null) 'tag': tag,
+            },
+          ))['data']
+          as Map,
+    ),
+  );
+
   Future<Map<String, dynamic>> _request(
     String path, {
     bool post = false,

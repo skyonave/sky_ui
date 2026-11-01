@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dart_frog/dart_frog.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sky_ui_api/src/auth/owner_auth.dart';
+import 'package:sky_ui_api/src/maintenance.dart';
 
 Future<void> main(List<String> args) async {
   if (args.contains('--version')) {
@@ -49,7 +50,13 @@ Future<void> main(List<String> args) async {
   );
   await panel.initialize();
   final server = await serve(
-    createApplication(config, manager, panel: panel, auth: ownerAuth),
+    createApplication(
+      config,
+      manager,
+      panel: panel,
+      auth: ownerAuth,
+      maintenance: MaintenanceService(runner),
+    ),
     InternetAddress.loopbackIPv4,
     config.port,
     poweredByHeader: null,

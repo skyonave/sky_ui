@@ -11,7 +11,7 @@ String _bundleVersion() {
     if (RegExp(r'^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?$').hasMatch(value))
       return value;
   }
-  return '0.4.0-dev.1';
+  return '0.5.0-dev.2';
 }
 
 class ServerConfig {
