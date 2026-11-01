@@ -14,12 +14,12 @@ import sys
 
 import maintenance as m
 
-UNITS = ('sky-ui.service', 'sky-ui-mihomo.service', 'sky-ui-edge.service',
+UNITS = ('sky-ui.service', 'sky-ui-mihomo.service', 'sky-ui-sing-box.service', 'sky-ui-xray.service', 'sky-ui-amneziawg.service', 'sky-ui-edge.service',
          'sky-ui-certificates.service', 'sky-ui-certificates.timer',
          'sky-ui-maintenance.service', 'sky-ui-maintenance-recovery.service', 'sky-ui-update.service', 'sky-ui-update-recovery.service')
-ACCOUNTS = ('sky-ui', 'sky-ui-core', 'sky-ui-edge')
+ACCOUNTS = ('sky-ui', 'sky-ui-core', 'sky-ui-sing-box', 'sky-ui-xray', 'sky-ui-build', 'sky-ui-edge')
 DIRECTORIES = tuple(map(Path, ('/etc/sky-ui', '/var/lib/sky-ui', '/var/lib/sky-ui-edge',
-    '/var/lib/sky-ui-certificates', '/var/lib/sky-ui-maintenance', '/opt/sky-ui')))
+    '/var/lib/sky-ui-certificates', '/var/lib/sky-ui-maintenance', '/var/lib/sky-ui-amneziawg-network', '/opt/sky-ui')))
 COMMANDS = (Path('/usr/local/bin/skyui'), Path('/usr/local/bin/sky-ui'))
 SYSTEMD = Path('/etc/systemd/system')
 POLKIT = Path('/etc/polkit-1/rules.d/49-sky-ui.rules')
@@ -86,15 +86,36 @@ def status():
 
 
 def lifecycle(action, target):
+    if target == 'all':
+        for core in ('sing-box', 'xray', 'amneziawg'):
+            if (m.CORES / core / 'current' / core).is_file() or m.active('sky-ui-' + core + '.service'):
+                lifecycle(action, core)
+    if target in ('sing-box', 'xray', 'amneziawg'):
+        with locked():
+            if action != 'stop' and not (m.CORES / target / 'current' / target).is_file():
+                raise ValueError('Ядро не установлено. Используйте skyui install-core ' + target)
+            api_running = m.active('sky-ui.service')
+            if api_running: run('systemctl', 'stop', 'sky-ui.service')
+            try:
+                m.assert_configuration_settled()
+                owner = pwd.getpwnam('sky-ui')
+                path = m.DATA / 'instances' / (target + '.json')
+                run('systemctl', action, 'sky-ui-' + target + '.service')
+                m.atomic(path, json.dumps({'instanceId': target, 'coreId': target, 'desiredState': 'stopped' if action == 'stop' else 'running'}).encode(), 0o600, owner.pw_uid, owner.pw_gid)
+            finally:
+                if api_running: run('systemctl', 'start', 'sky-ui.service')
+        status()
+        return
     with locked():
-        if action != 'stop' and target in ('core', 'all') and not Path(m.environment()['SKY_UI_CORE_BINARY']).is_file():
+        if action != 'stop' and target == 'core' and not Path(m.environment()['SKY_UI_CORE_BINARY']).is_file():
             raise ValueError('Ядро не установлено. Используйте skyui install-core.')
         api_running = m.active('sky-ui.service')
-        if target in ('core', 'all'):
+        if target == 'core' or target == 'all' and (action == 'stop' or Path(m.environment()['SKY_UI_CORE_BINARY']).is_file()):
             # Stop API writes while changing persisted instance state.
             if api_running:
                 run('systemctl', 'stop', 'sky-ui.service')
             try:
+                m.assert_configuration_settled()
                 path = m.DATA / 'instances/primary.json'
                 instance = json.loads(m.read_regular(path, 65536)) if path.exists() else {
                     'instanceId': 'primary', 'coreId': 'mihomo'}
@@ -130,6 +151,7 @@ def logs(target, follow, lines):
     units = {'panel': ('sky-ui.service', 'sky-ui-edge.service'),
              'core': ('sky-ui-mihomo.service',), 'all': UNITS,
              'certificates': ('sky-ui-edge.service', 'sky-ui-certificates.service')}
+    units.update({core: ('sky-ui-' + core + '.service',) for core in ('sing-box', 'xray', 'amneziawg')})
     args = ['journalctl', '--no-pager', '-n', str(lines)]
     for unit in units[target]:
         args += ['-u', unit]
@@ -216,6 +238,8 @@ def uninstall(confirm=input):
     print('Будут удалены Sky UI, ядро, настройки, доступы, пароли, сертификаты и резервные копии Sky UI:')
     for path in DIRECTORIES:
         print('  ' + str(path))
+    forwarding = Path('/var/lib/sky-ui-amneziawg-network/ip_forward')
+    if forwarding.exists(): print('Будет восстановлено значение IP forwarding, сохранённое до включения AmneziaWG.')
     if confirm('Введи DELETE для полного удаления: ').strip() != 'DELETE':
         print('Удаление отменено.')
         return
@@ -228,6 +252,11 @@ def uninstall(confirm=input):
             state = run('systemctl', 'is-active', unit, check=False, capture=True).stdout.strip()
             if state in ('active', 'activating', 'deactivating', 'reloading'):
                 raise ValueError(f'Служба не остановилась: {unit}. Удаление прервано.')
+        if forwarding.exists():
+            trusted(forwarding)
+            original = m.read_regular(forwarding, 16).decode().strip()
+            if original in ('0', '1') and Path('/proc/sys/net/ipv4/ip_forward').read_text().strip() == '1':
+                Path('/proc/sys/net/ipv4/ip_forward').write_text(original + '\n')
         for account in reversed(ACCOUNTS):
             if run('id', '-u', account, check=False, capture=True).returncode == 0:
                 run('userdel', account)
@@ -262,16 +291,18 @@ def main(argv=None):
             ('setup','Настройка IP, домена и администратора'), ('backup','Создать резервную копию'),
             ('backups','Список резервных копий'), ('remove-core','Удалить ядро, сохранив подключения'), ('install-core','Установить проверенное ядро'), ('update-core','Установить проверенную версию ядра'),
             ('uninstall','Полностью удалить Sky UI и его данные')]:
-        commands.add_parser(name, help=help_text)
+        sub = commands.add_parser(name, help=help_text)
+        if name in ('install-core', 'update-core', 'remove-core'):
+            sub.add_argument('core', choices=tuple(m.CORE_REPOSITORIES), nargs='?', default='mihomo')
     restore = commands.add_parser('restore', help='Восстановить резервную копию')
     restore.add_argument('id')
     for action in ('start', 'stop', 'restart'):
         sub = commands.add_parser(action)
-        sub.add_argument('target', choices=('panel','core','all'), default='panel', nargs='?')
+        sub.add_argument('target', choices=('panel','core','all','sing-box','xray','amneziawg'), default='panel', nargs='?')
     for name in ('logs', 'certificates'):
         sub = commands.add_parser(name, help='Журнал' if name == 'logs' else 'HTTPS и Let’s Encrypt')
         sub.add_argument('target', nargs='?', default='panel' if name == 'logs' else 'status',
-                         choices=('panel','core','all') if name == 'logs' else ('status','setup','check','logs'))
+                         choices=('panel','core','all','sing-box','xray','amneziawg') if name == 'logs' else ('status','setup','check','logs'))
         sub.add_argument('-f','--follow', action='store_true')
         sub.add_argument('-n','--lines', type=int, default=100)
     if argv == [] or (argv is None and len(sys.argv) == 1):
@@ -281,7 +312,7 @@ def main(argv=None):
     managed()
     command = args.command
     if command in ('backup','backups','restore','update-core','install-core','remove-core','update'):
-        return m.cli([command] + ([args.id] if command == 'restore' else []), pwd.getpwnam('sky-ui'))
+        return m.cli([command] + ([args.id] if command == 'restore' else [args.core] if command.endswith('-core') and args.core != 'mihomo' else []), pwd.getpwnam('sky-ui'))
     if command in ('start','stop','restart'):
         return lifecycle(command, args.target)
     if command == 'version':

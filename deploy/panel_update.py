@@ -19,6 +19,7 @@ SYSTEMD = Path('/etc/systemd/system')
 POLKIT = Path('/etc/polkit-1/rules.d/49-sky-ui.rules')
 COMMANDS = Path('/usr/local/bin')
 UNITS = ('sky-ui.service', 'sky-ui-mihomo.service', 'sky-ui-edge.service',
+         'sky-ui-sing-box.service', 'sky-ui-xray.service', 'sky-ui-amneziawg.service',
          'sky-ui-maintenance.service', 'sky-ui-maintenance-recovery.service',
          'sky-ui-update.service', 'sky-ui-update-recovery.service',
          'sky-ui-certificates.service', 'sky-ui-certificates.timer')
@@ -148,7 +149,7 @@ def main():
             recover(m, owner.pw_gid, start=True)
             return
         m.require(not any((m.STATE / name).exists() for name in
-            ('restore-intent.json', 'update-intent.json', 'core-remove-intent.json', 'panel-update-intent.json')),
+            ('restore-intent.json', 'update-intent.json', 'core-remove-intent.json', 'engine-intent.json', 'panel-update-intent.json')),
             'maintenance_recovery_required')
         job = m.consume_request(m.STATE / 'inbox/request.json', owner.pw_uid, remove=False)
         m.require(job['action'] == 'panel-update', 'request_invalid')

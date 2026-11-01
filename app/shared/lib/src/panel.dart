@@ -13,6 +13,8 @@ class PanelSnapshot {
     required this.protocols,
     this.errorCode,
     this.coreAvailability = const {},
+    this.instanceIds = const {},
+    this.instanceReadiness = const {},
   });
   final int revision;
   final List<Connection> connections;
@@ -24,6 +26,8 @@ class PanelSnapshot {
   final Map<String, List<ProtocolDefinition>> protocols;
   final String? errorCode;
   final Map<String, bool> coreAvailability;
+  final Map<String, String> instanceIds;
+  final Map<String, bool> instanceReadiness;
   Map<String, Object?> toJson() => {
     'revision': revision,
     'connections': connections.map((v) => v.toJson()).toList(),
@@ -34,6 +38,8 @@ class PanelSnapshot {
     'deliveryReady': deliveryReady,
     'errorCode': errorCode,
     'coreAvailability': coreAvailability,
+    'instanceIds': instanceIds,
+    'instanceReadiness': instanceReadiness,
     'protocols': protocols.map(
       (k, v) => MapEntry(k, v.map((p) => p.toJson()).toList()),
     ),
@@ -54,6 +60,12 @@ class PanelSnapshot {
     coreAvailability: Map<String, bool>.from(
       json['coreAvailability'] as Map? ?? const {},
     ),
+    instanceIds: Map<String, String>.from(
+      json['instanceIds'] as Map? ?? const {},
+    ),
+    instanceReadiness: Map<String, bool>.from(
+      json['instanceReadiness'] as Map? ?? const {},
+    ),
     protocols: (json['protocols'] as Map).map(
       (k, v) => MapEntry(
         k as String,
@@ -70,12 +82,28 @@ class PanelSnapshot {
 }
 
 class ShareLink {
-  const ShareLink({required this.name, required this.uri});
+  const ShareLink({
+    required this.name,
+    required this.uri,
+    this.content,
+    this.filename,
+  });
   final String name;
   final String uri;
-  Map<String, Object?> toJson() => {'name': name, 'uri': uri};
-  factory ShareLink.fromJson(Map<String, dynamic> json) =>
-      ShareLink(name: json['name'] as String, uri: json['uri'] as String);
+  final String? content, filename;
+  String get payload => content ?? uri;
+  Map<String, Object?> toJson() => {
+    'name': name,
+    'uri': uri,
+    if (content != null) 'content': content,
+    if (filename != null) 'filename': filename,
+  };
+  factory ShareLink.fromJson(Map<String, dynamic> json) => ShareLink(
+    name: json['name'] as String,
+    uri: json['uri'] as String,
+    content: json['content'] as String?,
+    filename: json['filename'] as String?,
+  );
 }
 
 class RecipientShare {

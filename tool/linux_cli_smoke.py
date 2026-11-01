@@ -28,7 +28,8 @@ BUNDLE = '/source/build/releases/sky-ui-linux-amd64.tar.gz'
 
 
 def run(*args, input=None):
-    result = subprocess.run(args, input=input, text=True, capture_output=True, timeout=180)
+    result = subprocess.run(args, input=input, text=True, capture_output=True, timeout=180,
+                            env=dict(os.environ,PYTHONPATH='/test-fixtures'))
     assert result.returncode == 0, (args, result.stdout, result.stderr)
     return result.stdout
 
@@ -51,6 +52,12 @@ def ready():
 
 http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 ready()
+for unit in ('sky-ui-maintenance.service','sky-ui-maintenance-recovery.service'):
+    directory=Path('/run/systemd/system')/(unit+'.d');directory.mkdir(parents=True,exist_ok=True)
+    (directory/'fixture.conf').write_text('[Service]\nEnvironment=PYTHONPATH=/test-fixtures\n')
+run('systemctl','daemon-reload')
+if not Path('/opt/sky-ui/cores/mihomo/current/mihomo').is_file():
+    run('skyui','install-core',input='INSTALL\n');ready()
 assert run('skyui', 'version').strip() == VERSION
 run('skyui','status')
 run('skyui','certificates','status')
@@ -183,7 +190,7 @@ assert cancelled.returncode != 0 and binary.exists()
 run('skyui','remove-core',input='REMOVE\n')
 ready()
 assert not binary.exists()
-body,_=call('panel');assert body['data']['coreAvailability']=={'mihomo':False}
+body,_=call('panel');assert body['data']['coreAvailability']['mihomo'] is False
 assert body['data']['deliveryReady'] is False
 assert body['data']['connections']==records['connections']
 assert body['data']['recipients']==records['recipients']
@@ -197,7 +204,7 @@ run('skyui','install-core',input='INSTALL\n');ready()
 assert binary.exists()
 assert not (binary.parent.parent/'removed.json').exists()
 assert subprocess.run(['systemctl','is-active','--quiet','sky-ui-mihomo.service']).returncode != 0
-body,_=call('panel');assert body['data']['coreAvailability']=={'mihomo':True}
+body,_=call('panel');assert body['data']['coreAvailability']['mihomo'] is True
 assert body['data']['connections']==records['connections']
 assert body['data']['recipients']==records['recipients']
 run('skyui','start','core');ready()
@@ -213,7 +220,7 @@ run('skyui','uninstall',input='DELETE\n')
 for path in ['/etc/sky-ui','/var/lib/sky-ui','/var/lib/sky-ui-edge','/var/lib/sky-ui-certificates',
              '/var/lib/sky-ui-maintenance','/opt/sky-ui','/usr/local/bin/skyui','/usr/local/bin/sky-ui']:
     assert not Path(path).exists(),path
-for name in ['sky-ui','sky-ui-core','sky-ui-edge']:
+for name in ['sky-ui','sky-ui-core','sky-ui-edge','sky-ui-sing-box','sky-ui-xray','sky-ui-amneziawg','sky-ui-build']:
     try:
         pwd.getpwnam(name)
     except KeyError:

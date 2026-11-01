@@ -91,6 +91,22 @@ class PanelData {
     recipients: [...recipients],
     grants: [...grants],
   );
+
+  /// A codec sees only its own instance; grants and recipients keep their identity.
+  PanelData forInstance(String instanceId) {
+    final owned = connections
+        .where((c) => c.value.instanceId == instanceId)
+        .toList();
+    final ids = owned.map((c) => c.value.id).toSet();
+    return PanelData(
+      serverName: serverName,
+      address: address,
+      connections: owned,
+      recipients: [...recipients],
+      grants: grants.where((g) => ids.contains(g.connectionId)).toList(),
+    );
+  }
+
   Recipient publicRecipient(StoredRecipient value) => Recipient(
     id: value.id,
     name: value.name,

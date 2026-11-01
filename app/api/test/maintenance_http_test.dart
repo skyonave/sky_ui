@@ -7,6 +7,7 @@ import 'package:sky_ui_api/src/auth/owner_auth.dart';
 import 'package:sky_ui_api/src/maintenance.dart';
 import 'package:sky_ui_api/src/core_updates.dart';
 import 'package:sky_ui_api/src/panel_updates.dart';
+import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:test/test.dart';
 import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor;
 
@@ -19,6 +20,18 @@ class RejectingUpdates extends CoreUpdates {
 
 class RejectingPanelUpdates extends PanelUpdates {
   RejectingPanelUpdates(super.runner) : super(supported: false);
+  bool refreshed = false;
+  @override
+  Future<PanelUpdateInfo> get({bool refresh = false}) async {
+    refreshed = refresh;
+    return const PanelUpdateInfo(
+      currentVersion: '0.6.0-dev.4',
+      available: false,
+      supported: true,
+      checkedAt: '2026-11-01T00:00:00Z',
+    );
+  }
+
   @override
   Future<void> requireApproved(String tag) async {
     throw const ApiException('panel_update_unavailable', status: 422);
@@ -50,6 +63,7 @@ void main() {
   late Uri base;
   late MaintenanceService maintenance;
   late MaintenanceRunner runner;
+  late RejectingPanelUpdates panelUpdates;
   late FakeAdapter adapter;
   const password = 'fixture-maintenance-owner';
   const gateway = 'fixture-private-gateway';
@@ -65,6 +79,7 @@ void main() {
     auth = OwnerAuth('${directory.path}/owner.sqlite', secure: true);
     await auth.initialize(seed.path);
     runner = MaintenanceRunner();
+    panelUpdates = RejectingPanelUpdates(runner);
     maintenance = MaintenanceService(
       runner,
       directory: directory.path,
@@ -109,7 +124,7 @@ void main() {
         auth: auth,
         maintenance: maintenance,
         coreUpdates: RejectingUpdates(),
-        panelUpdates: RejectingPanelUpdates(runner),
+        panelUpdates: panelUpdates,
       ),
       InternetAddress.loopbackIPv4,
       0,
@@ -161,6 +176,27 @@ void main() {
       csrf: (response.json['data'] as Map)['csrf'] as String,
     );
   }
+
+  test(
+    'manual release checks require owner access and bypass discovery cache',
+    () async {
+      expect((await call('/api/v1/panel-update?refresh=true')).status, 401);
+      final who = await login();
+      expect(
+        (await call('/api/v1/panel-update', cookie: who.cookie)).status,
+        200,
+      );
+      expect(panelUpdates.refreshed, false);
+      expect(
+        (await call(
+          '/api/v1/panel-update?refresh=true',
+          cookie: who.cookie,
+        )).status,
+        200,
+      );
+      expect(panelUpdates.refreshed, true);
+    },
+  );
 
   test(
     'core removal requires owner confirmation and CSRF before queuing a fixed core operation',
@@ -415,6 +451,36 @@ void main() {
     );
     expect(maintenance.busy, false);
     expect(await File('${directory.path}/inbox/request.json').exists(), false);
+  });
+  test(
+    'concurrent engine submissions cannot overwrite the same job inbox',
+    () async {
+      final first = maintenance.submit(
+        'install',
+        core: 'sing-box',
+        tag: 'v1.14.4',
+      );
+      await expectLater(
+        maintenance.submit('install', core: 'xray', tag: 'v26.10.31'),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'maintenance_busy'),
+        ),
+      );
+      final job = await first;
+      final request =
+          jsonDecode(
+                await File(
+                  '${directory.path}/inbox/request.json',
+                ).readAsString(),
+              )
+              as Map;
+      expect(request['id'], job.id);
+      expect(request['core'], 'sing-box');
+    },
+  );
+  test('unfinished additional-engine activation blocks writes', () async {
+    await File('${directory.path}/engine-intent.json').writeAsString('{}');
+    expect(maintenance.busy, true);
   });
   test('a finishing worker cannot accept and lose a second request', () async {
     runner.workerActive = true;

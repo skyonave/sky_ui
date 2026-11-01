@@ -32,7 +32,7 @@ ETC = Path('/etc/sky-ui')
 EDGE = Path('/var/lib/sky-ui-edge')
 CORES = Path('/opt/sky-ui/cores')
 CURRENT = Path('/opt/sky-ui/current')
-UNITS = ['sky-ui.service', 'sky-ui-mihomo.service', 'sky-ui-edge.service']
+UNITS = ['sky-ui.service', 'sky-ui-mihomo.service', 'sky-ui-sing-box.service', 'sky-ui-xray.service', 'sky-ui-amneziawg.service', 'sky-ui-edge.service']
 ID = re.compile(r'^[a-f0-9]{32}$')
 TAG = re.compile(r'^v\d+\.\d+\.\d+$')
 MAX_ARCHIVE = 128 * 1024 * 1024
@@ -50,6 +50,16 @@ def require(condition, message):
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
+
+
+def assert_configuration_settled():
+    """Run after stopping API writes; interrupted deployments recover in the API."""
+    path = DATA / 'panel.sqlite'
+    if not path.exists(): return
+    read_regular(path)
+    with contextlib.closing(sqlite3.connect(path.as_uri() + '?mode=ro', uri=True)) as db:
+        require(db.execute('SELECT count(*) FROM deployment').fetchone()[0] == 0,
+                'configuration_recovery_required')
 
 
 def read_regular(path, limit=MAX_ARCHIVE):
@@ -139,7 +149,9 @@ def valid_member(name):
     if path.is_absolute() or str(path) != name or any(p in ['..', '.'] for p in path.parts):
         return False
     if name in ['data/panel.sqlite', 'data/owner.sqlite', 'data/instances/primary.json',
-                'data/cores/mihomo/config.yaml']:
+                'data/cores/mihomo/config.yaml',
+                *['data/instances/' + core + '.json' for core in ('sing-box', 'xray', 'amneziawg')],
+                *['data/cores/' + core + '/config.json' for core in ('sing-box', 'xray', 'amneziawg')]]:
         return True
     if name.startswith('etc/') and len(path.parts) == 2:
         return path.name in ['server.env', 'owner.seed', 'admin.hash', 'gateway.secret', 'controller.secret',
@@ -199,7 +211,9 @@ def snapshot_files(preserve_sessions=False):
                         copy.commit()
                     require(copy.execute('PRAGMA integrity_check').fetchone()[0] == 'ok', 'database_invalid')
             files['data/' + source.name] = target.read_bytes()
-    for name in ['instances/primary.json', 'cores/mihomo/config.yaml']:
+    for name in ['instances/primary.json', 'cores/mihomo/config.yaml',
+                 *['instances/' + core + '.json' for core in ('sing-box', 'xray', 'amneziawg')],
+                 *['cores/' + core + '/config.json' for core in ('sing-box', 'xray', 'amneziawg')]]:
         path = DATA / name
         if path.exists():
             files['data/' + name] = read_regular(path)
@@ -224,7 +238,7 @@ def create_backup(gid):
                 'version': read_regular(CURRENT.resolve(strict=True) / 'VERSION', 128).decode().strip(),
                 'machine': digest(read_regular(Path('/etc/machine-id'), 256)),
                 'coreVersion': run(['runuser', '-u', 'sky-ui-core', '--',
-                                    str(CORES / 'mihomo/current/mihomo'), '-v']).decode().splitlines()[0]}
+                                    str(CORES / 'mihomo/current/mihomo'), '-v']).decode().splitlines()[0] if (CORES / 'mihomo/current/mihomo').is_file() else 'not installed'}
     data, manifest = pack_backup(snapshot_files(), metadata)
     atomic(STATE / 'backups' / (identity + '.tar.gz'), data, gid=gid)
     public = {key: metadata[key] for key in ['id', 'created', 'version', 'coreVersion']}
@@ -243,6 +257,7 @@ def candidate_validate(binary, configuration, directory):
 
 
 def restore_backup(identity, gid):
+    import engine_install
     require(ID.fullmatch(identity), 'backup_invalid')
     data = read_regular(STATE / 'backups' / (identity + '.tar.gz'))
     files, manifest = unpack_backup(data)
@@ -268,7 +283,19 @@ def restore_backup(identity, gid):
     core = pwd.getpwnam('sky-ui-core')
     os.chown(staging, 0, gid)
     atomic(staging / 'config.yaml', files['data/cores/mihomo/config.yaml'], gid=gid)
-    candidate_validate(CORES / 'mihomo/current/mihomo', staging / 'config.yaml', DATA / 'cores/mihomo')
+    if (CORES / 'mihomo/current/mihomo').is_file():
+        candidate_validate(CORES / 'mihomo/current/mihomo', staging / 'config.yaml', DATA / 'cores/mihomo')
+    for engine in ('sing-box', 'xray', 'amneziawg'):
+        name = 'data/cores/' + engine + '/config.json'
+        if name not in files: continue
+        configuration = staging / (engine + '.json')
+        atomic(configuration, files[name], gid=gid)
+        if engine == 'amneziawg':
+            import amnezia_network
+            amnezia_network.load(configuration)
+        elif (CORES / engine / 'current' / engine).is_file():
+            args = ['run', '-test', '-config', str(configuration)] if engine == 'xray' else ['check', '-c', str(configuration)]
+            run(['runuser', '-u', 'sky-ui-' + engine, '--', str(CORES / engine / 'current' / engine), *args])
     rescue = create_backup(gid)
     previous = snapshot_files()
     running = {unit: active(unit) for unit in UNITS}
@@ -285,6 +312,8 @@ def restore_backup(identity, gid):
                 run(['systemctl', 'start', unit])
         if running['sky-ui-mihomo.service']:
             ready(environment())
+        for engine in engine_install.ENGINES:
+            if running['sky-ui-' + engine + '.service']: engine_install.await_ready(engine, SimpleNamespace(**globals()))
         if running['sky-ui.service']:
             api_ready(environment())
         (STATE / 'restore-intent.json').unlink()
@@ -298,10 +327,13 @@ def restore_backup(identity, gid):
                 run(['systemctl', 'start', unit])
         if running['sky-ui-mihomo.service']:
             ready(environment())
+        for engine in engine_install.ENGINES:
+            if running['sky-ui-' + engine + '.service']: engine_install.await_ready(engine, SimpleNamespace(**globals()))
         (STATE / 'restore-intent.json').unlink(missing_ok=True)
         raise MaintenanceError('restore_rolled_back')
     finally:
         (staging / 'config.yaml').unlink(missing_ok=True)
+        for engine in ('sing-box', 'xray', 'amneziawg'): (staging / (engine + '.json')).unlink(missing_ok=True)
         if timer_running:
             run(['systemctl', 'start', 'sky-ui-certificates.timer'])
 
@@ -332,6 +364,8 @@ def apply_files(files, gid):
             atomic(target, payload, 0o640, 0, gid)
         elif name == 'data/cores/mihomo/config.yaml':
             atomic(target, payload, 0o660, core.pw_uid, gid)
+        elif name.startswith('data/cores/') and name.endswith('/config.json'):
+            atomic(target, payload, 0o660, owner.pw_uid, gid)
         elif name in ['etc/server.env', 'etc/admin.hash', 'etc/access.conf', 'etc/managed-by-sky-ui']:
             atomic(target, payload, 0o600, 0, 0)
         else:
@@ -381,6 +415,9 @@ def switch_link(link, destination):
 
 
 def remove_core(core, gid, uid):
+    if core != 'mihomo':
+        import engine_install
+        return engine_install.change('remove', core, None, gid, uid, SimpleNamespace(**globals()))
     require(core == 'mihomo', 'core_unsupported')
     root = CORES / core
     core_install.trusted(root, directory=True)
@@ -424,6 +461,9 @@ def remove_core(core, gid, uid):
 
 
 def install_core(core, tag, gid):
+    if core != 'mihomo':
+        import engine_install
+        return engine_install.change('install', core, tag, gid, pwd.getpwnam('sky-ui').pw_uid, SimpleNamespace(**globals()))
     require(core == 'mihomo', 'core_unsupported')
     root = CORES / core
     core_install.trusted(root, directory=True)
@@ -458,6 +498,9 @@ def install_core(core, tag, gid):
 
 
 def update_core(core, tag, gid):
+    if core != 'mihomo':
+        import engine_install
+        return engine_install.change('update', core, tag, gid, pwd.getpwnam('sky-ui').pw_uid, SimpleNamespace(**globals()))
     require(core == 'mihomo', 'core_unsupported')
     latest, url, expected = latest_mihomo(tag)
     require(tag == latest, 'release_changed')
@@ -517,18 +560,20 @@ def consume_request(path, owner_uid, remove=True):
     if action == 'restore':
         require(ID.fullmatch(value['backupId']), 'request_invalid')
     if action in ('update', 'install'):
-        require(value['core'] == 'mihomo' and TAG.fullmatch(value['tag']), 'request_invalid')
+        require(value['core'] in CORE_REPOSITORIES and TAG.fullmatch(value['tag']), 'request_invalid')
     if action == 'panel-update':
         from panel_releases import version
         require(isinstance(value.get('tag'), str) and value['tag'].startswith('v') and version(value['tag']), 'request_invalid')
     if action == 'remove':
-        require(value['core'] == 'mihomo', 'request_invalid')
+        require(value['core'] in CORE_REPOSITORIES, 'request_invalid')
     if remove:
         path.unlink()
     return value
 
 
 def recover(gid):
+    import engine_install
+    engine_install.recover(gid, pwd.getpwnam('sky-ui').pw_uid, SimpleNamespace(**globals()))
     from panel_update import recover as recover_panel
     recover_panel(SimpleNamespace(**globals()), gid)
     removal = STATE / 'core-remove-intent.json'
@@ -570,7 +615,7 @@ def main():
         recover(owner.pw_gid)
         return
     require(not (STATE / 'restore-intent.json').exists() and not (STATE / 'update-intent.json').exists()
-            and not (STATE / 'core-remove-intent.json').exists() and not (STATE / 'panel-update-intent.json').exists(),
+            and not (STATE / 'core-remove-intent.json').exists() and not (STATE / 'engine-intent.json').exists() and not (STATE / 'panel-update-intent.json').exists(),
             'maintenance_recovery_required')
     job = consume_request(STATE / 'inbox/request.json', owner.pw_uid, remove=False)
     require(job['action'] != 'panel-update', 'request_invalid')
@@ -586,6 +631,7 @@ def main():
         if api_running:
             time.sleep(1)
             run(['systemctl', 'stop', 'sky-ui.service'])
+        assert_configuration_settled()
         if job['action'] == 'backup':
             result['data'] = create_backup(owner.pw_gid)
         elif job['action'] == 'restore':
@@ -601,7 +647,7 @@ def main():
         result.update(status='failed', error=str(error) if isinstance(error, MaintenanceError) else 'maintenance_failed')
     finally:
         if api_running and not any((STATE / name).exists() for name in
-                ('restore-intent.json', 'update-intent.json', 'core-remove-intent.json')):
+                ('restore-intent.json', 'update-intent.json', 'core-remove-intent.json', 'engine-intent.json')):
             try:
                 run(['systemctl', 'reset-failed', 'sky-ui.service'])
                 run(['systemctl', 'start', 'sky-ui.service'])
@@ -635,6 +681,13 @@ def cli(arguments, owner):
         print('Restore replaces settings, access and owner data. Services restart and sessions are revoked.')
         require(input('Type RESTORE to continue: ') == 'RESTORE', 'cancelled')
         job = {'action': 'restore', 'backupId': arguments[1]}
+    elif len(arguments) == 2 and arguments[0] in ('install-core', 'update-core', 'remove-core') and arguments[1] in CORE_REPOSITORIES and arguments[1] != 'mihomo':
+        action, core = arguments[0].removesuffix('-core'), arguments[1]
+        tag = None if action == 'remove' else verified_release(core)[0]
+        print(action.capitalize(), core, tag or '', '. Connections and recipient data are retained.')
+        require(input('Type ' + action.upper() + ' to continue: ') == action.upper(), 'cancelled')
+        job = {'action': action, 'core': core}
+        if tag is not None: job['tag'] = tag
     elif arguments == ['remove-core']:
         print('Ядро будет остановлено и удалено. Подключения и ключи сохранятся, но работать не будут.')
         require(input('Введите REMOVE для удаления: ') == 'REMOVE', 'cancelled')

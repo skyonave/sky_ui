@@ -7,6 +7,7 @@ import 'config.dart';
 import 'core_manager.dart';
 import 'errors.dart';
 import 'panel/service.dart';
+import 'panel/client_exporter.dart';
 import 'system_monitor.dart';
 import 'core_updates.dart';
 import 'panel_updates.dart';
@@ -39,12 +40,17 @@ Handler createApplication(
   );
   final system = SystemMonitor(config.dataDirectory);
   final updates = coreUpdates ?? CoreUpdates();
+  final instances = panel?.managers ?? {manager.core.id: manager};
   final applicationUpdates =
       panelUpdates ?? PanelUpdates(const NativeCommandRunner());
   router.get(
     '/api/v1/panel-update',
-    (_) async => Response.json(
-      body: {'data': (await applicationUpdates.get()).toJson()},
+    (context) async => Response.json(
+      body: {
+        'data': (await applicationUpdates.get(
+          refresh: context.request.uri.queryParameters['refresh'] == 'true',
+        )).toJson(),
+      },
     ),
   );
   if (maintenance != null) {
@@ -77,10 +83,17 @@ Handler createApplication(
       if (value['confirmed'] != true ||
           value['action'] is! String ||
           (value['backupId'] != null && value['backupId'] is! String) ||
+          (value['core'] != null && value['core'] is! String) ||
           (value['tag'] != null && value['tag'] is! String)) {
         throw const ApiException('request_invalid', status: 400);
       }
-      final job = await manager.exclusive((_) async {
+      final selectedCore = value['core'] as String? ?? manager.core.coreId;
+      final selectedManager = instances.values
+          .where((m) => m.core.coreId == selectedCore)
+          .firstOrNull;
+      if (selectedManager == null)
+        throw const ApiException('core_unsupported', status: 422);
+      final job = await selectedManager.exclusive((_) async {
         if (panel != null && !await panel.isSynchronized()) {
           throw const ApiException('configuration_out_of_sync', status: 409);
         }
@@ -90,7 +103,7 @@ Handler createApplication(
           );
         }
         if (['remove', 'install'].contains(value['action'])) {
-          final installed = (await manager.snapshot()).binaryAvailable;
+          final installed = (await selectedManager.snapshot()).binaryAvailable;
           if (installed == (value['action'] == 'install')) {
             throw ApiException(
               installed ? 'core_already_installed' : 'binary_missing',
@@ -100,7 +113,7 @@ Handler createApplication(
         }
         if (['update', 'install'].contains(value['action'])) {
           await updates.requireApproved(
-            manager.core.coreId,
+            selectedCore,
             value['tag'] as String? ?? '',
           );
         }
@@ -108,7 +121,7 @@ Handler createApplication(
           value['action'] as String,
           backupId: value['backupId'] as String?,
           core: ['update', 'install', 'remove'].contains(value['action'])
-              ? manager.core.coreId
+              ? selectedCore
               : null,
           tag: value['tag'] as String?,
         );
@@ -260,9 +273,10 @@ Handler createApplication(
     RequestContext context,
     String core,
   ) async {
-    final installed = core == manager.core.coreId
-        ? (await manager.snapshot()).version
-        : null;
+    final owner = instances.values
+        .where((m) => m.core.coreId == core)
+        .firstOrNull;
+    final installed = owner == null ? null : (await owner.snapshot()).version;
     return Response.json(
       body: {'data': (await updates.get(core, installed)).toJson()},
     );
@@ -271,7 +285,8 @@ Handler createApplication(
     RequestContext context,
     String id,
   ) {
-    if (id != manager.core.id) return failure('instance_not_found', 404);
+    final manager = instances[id];
+    if (manager == null) return failure('instance_not_found', 404);
     Timer? timer;
     String? previous;
     var ticks = 0;
@@ -320,7 +335,8 @@ Handler createApplication(
     RequestContext context,
     String id,
   ) async {
-    if (id != manager.core.id) return failure('instance_not_found', 404);
+    final manager = instances[id];
+    if (manager == null) return failure('instance_not_found', 404);
     if ((context.request.headers['content-type'] ?? '')
             .split(';')
             .first
@@ -362,16 +378,21 @@ Handler createApplication(
     '/api/v1/cores',
     (_) async => Response.json(
       body: {
-        'data': [(await manager.snapshot()).toJson()],
+        'data': [
+          for (final owner in instances.values)
+            (await owner.snapshot()).toJson(),
+        ],
       },
     ),
   );
   router.get('/api/v1/cores/<id>', (RequestContext context, String id) async {
-    if (id != manager.core.id) return failure('instance_not_found', 404);
+    final manager = instances[id];
+    if (manager == null) return failure('instance_not_found', 404);
     return Response.json(body: {'data': (await manager.snapshot()).toJson()});
   });
   router.get('/api/v1/cores/<id>/logs', (RequestContext context, String id) {
-    if (id != manager.core.id) return failure('instance_not_found', 404);
+    final manager = instances[id];
+    if (manager == null) return failure('instance_not_found', 404);
     return Response.json(
       body: {'data': manager.logs().map((v) => v.toJson()).toList()},
     );
@@ -381,7 +402,8 @@ Handler createApplication(
     String id,
     String action,
   ) async {
-    if (id != manager.core.id) return failure('instance_not_found', 404);
+    final manager = instances[id];
+    if (manager == null) return failure('instance_not_found', 404);
     final operation = CoreOperation.values
         .where((v) => v.name == action)
         .firstOrNull;
@@ -400,7 +422,7 @@ Handler createApplication(
     return Response.json(
       body: {
         'data':
-            (await (panel?.executeCore(operation) ??
+            (await (panel?.executeCore(operation, instanceId: id) ??
                     manager.execute(operation)))
                 .toJson(),
       },
@@ -516,21 +538,27 @@ Handler createApplication(
       RequestContext context,
       String filename,
     ) async {
-      if (!RegExp(r'^[A-Za-z0-9_-]{43}\.(yaml|txt)$').hasMatch(filename))
+      if (!RegExp(r'^[A-Za-z0-9_-]{43}(?:\.(yaml|txt))?$').hasMatch(filename))
         return failure('not_found', 404);
+      final format = filename.endsWith('.yaml')
+          ? 'clash'
+          : filename.endsWith('.txt')
+          ? 'v2ray'
+          : subscriptionFormatFor(context.request.headers['user-agent'] ?? '');
       return Response(
         body: await panel.subscription(
           filename.substring(0, 43),
-          format: filename.endsWith('.txt') ? 'v2ray' : 'clash',
+          format: format,
         ),
         headers: {
-          'content-type': filename.endsWith('.txt')
+          'content-type': format == 'v2ray'
               ? 'text/plain; charset=utf-8'
               : 'application/yaml; charset=utf-8',
-          'content-disposition': filename.endsWith('.txt')
+          'content-disposition': format == 'v2ray'
               ? 'inline; filename=Sky-UI.txt'
               : 'inline; filename=Sky-UI.yaml',
           'profile-update-interval': '6',
+          if (filename.length == 43) 'vary': 'User-Agent',
           'x-robots-tag': 'noindex, nofollow, noarchive',
         },
       );
@@ -574,7 +602,9 @@ Handler createApplication(
     final publicRead =
         (request.method == HttpMethod.get ||
             request.method == HttpMethod.head) &&
-        RegExp(r'^s/[A-Za-z0-9_-]{43}\.(yaml|txt)$').hasMatch(request.url.path);
+        RegExp(
+          r'^s/[A-Za-z0-9_-]{43}(?:\.(yaml|txt))?$',
+        ).hasMatch(request.url.path);
     Response response;
     try {
       final healthRead =

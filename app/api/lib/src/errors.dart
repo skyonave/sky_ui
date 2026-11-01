@@ -34,7 +34,7 @@ String redact(String value, Iterable<String> secrets) {
     '[uuid redacted]',
   );
   result = result.replaceAll(
-    RegExp(r'/s/[A-Za-z0-9_-]{43}\.yaml'),
+    RegExp(r'/s/[A-Za-z0-9_-]{43}(?:\.(?:yaml|txt))?'),
     '/s/[redacted]',
   );
   return result.length > 512 ? '${result.substring(0, 512)}…' : result;

@@ -1,4 +1,5 @@
 import 'native_strings.dart';
+import 'engine_strings.dart';
 
 class AppStrings {
   const AppStrings({this.locale = 'ru'});
@@ -7,6 +8,7 @@ class AppStrings {
     var message =
         (_catalogs[locale] ?? _catalogs['ru']!)[key] ??
         mihomoNativeText(key) ??
+        engineText(key) ??
         key;
     for (final entry in values.entries) {
       message = message.replaceAll('{${entry.key}}', '${entry.value}');
@@ -20,9 +22,9 @@ class AppStrings {
       'share.v2raySubscription': 'Подписка · V2Box / V2Ray',
       'core.feedback.validate':
           'Конфигурация проверена ядром. Ошибок не найдено. Подключения не проверялись, служба не перезапускалась.',
-      'core.feedback.start': 'Ядро запущено. Контроллер отвечает.',
+      'core.feedback.start': 'Ядро запущено.',
       'core.feedback.stop': 'Ядро остановлено.',
-      'core.feedback.restart': 'Ядро перезапущено. Контроллер отвечает.',
+      'core.feedback.restart': 'Ядро перезапущено.',
       'core.updatesChecking': 'Проверяем список проверенных версий Sky UI…',
       'core.updatesNone': 'Проверенных обновлений нет.',
       'core.updatesAvailable': 'Доступна проверенная версия ядра.',
@@ -78,9 +80,26 @@ class AppStrings {
           'Копия превышает допустимый размер 128 MB.',
       'runtime.error.api_not_ready':
           'Панель не запустилась после обслуживания. Доступно восстановление через SSH.',
-      'builder.recommended': 'RECOMMENDED',
+      'builder.recommended': 'RECOMMEND',
+      'builder.engineInstalled': 'Установлено',
+      'builder.engineRequired': 'Потребуется установка',
+      'builder.installRequired':
+          'Для подключения нужно установить это ядро. После установки продолжим настройку.',
+      'builder.installContinue': 'Установить и продолжить',
+      'builder.installChecking': 'Ищем совместимую сборку…',
+      'builder.installing': 'Устанавливаем…',
+      'builder.step.dependency': 'Установка',
+      'builder.planned': 'Планируется',
+      'protocol.naive':
+          'Передача через HTTPS с клиентом на сетевом стеке Chromium. Нужен сертификат сервера.',
+      'protocol.naive.details':
+          'NaiveProxy использует HTTP/2 или HTTP/3 CONNECT. Для подключения нужен совместимый клиент NaiveProxy; VLESS-клиент сам по себе этот протокол не заменяет. Панель настроит пользователей и TLS в выбранном серверном ядре.',
+      'protocol.amneziawg':
+          'VPN-туннель AmneziaWG 3.1 с маскировкой пакетов. Нужен совместимый клиент версии 3.1.',
+      'protocol.amneziawg.details':
+          'AmneziaWG 3.1 создаёт сетевой туннель и выдаёт каждому получателю собственный ключ и адрес. Нужны TUN-интерфейс и маршрутизация на сервере. Поддержка обычного WireGuard не означает поддержку AmneziaWG 3.1. Профиль выдаётся в родном формате AmneziaWG.',
       'builder.guide.vless.TCP':
-          'Для первого подключения к личному серверу начни с TCP + REALITY. Дополнительный HTTP-прокси и свой сертификат подключения не требуются.\nНа следующем шаге выбери REALITY, оставь Flow xtls-rprx-vision и укажи подходящее имя сервера SNI. Ключи и настройки клиента подготовит панель.',
+          'Для первого подключения к личному серверу начни с TCP + REALITY. Дополнительный HTTP-прокси и свой сертификат подключения не требуются.\nВыбери REALITY. На шаге «Параметры» оставь Flow xtls-rprx-vision и укажи подходящий SNI. Ключи и настройки клиента подготовит панель.',
       'builder.guideTitle': 'Как настроить',
       'builder.guide.TCP':
           'Прямое соединение с сервером — удобный старт для личного использования. Дополнительный HTTP-прокси не требуется.\nДалее настрой защиту, доступную для выбранного протокола. Если используется TLS, потребуется сертификат сервера.',
@@ -236,9 +255,6 @@ class AppStrings {
       'protocol.hysteria.details':
           'Требует UDP и совместимого клиента Hysteria v1. Не совместима с Hysteria 2; выбирайте версию клиента, а не похожее название.',
       'protocol.hysteria': 'Первая версия Hysteria через QUIC.',
-      'protocol.naive.details':
-          'Использует TLS и поддерживаемый клиентом способ HTTP-проксирования. Доступность зависит от ядра и его сборки.',
-      'protocol.naive': 'Прокси на основе HTTPS и HTTP CONNECT.',
       'protocol.direct.details':
           'Назначение и поведение зависят от выбранного ядра. Это служебный вход, а не универсальный VPN-протокол с собственной защитой.',
       'protocol.direct': 'Вход для передачи трафика на заданное назначение.',
@@ -335,7 +351,7 @@ class AppStrings {
       'builder.next': 'Далее',
       'builder.step.review': 'Проверка',
       'builder.step.parameters': 'Параметры',
-      'builder.step.security': 'Защита',
+      'builder.step.security': 'Маскировка',
       'builder.step.transport': 'Транспорт',
       'builder.step.protocol': 'Протокол',
       'builder.step.core': 'Ядро',
@@ -388,8 +404,12 @@ class AppStrings {
       'protocol.unavailable':
           'Этот протокол ещё не подключён к серверной части. Сейчас работает VLESS · TCP · REALITY на mihomo.',
       'share.subscriptionUrl': 'Ссылка на подписку',
+      'share.subscription': 'Подписка',
       'panelUpdate.title': 'Обновление Sky UI',
       'panelUpdate.update': 'Обновить',
+      'panelUpdate.check': 'Проверить',
+      'panelUpdate.checkingAction': 'Проверяем…',
+      'panelUpdate.current': 'Установлена последняя версия',
       'panelUpdate.available': 'Доступна v{version}',
       'panelUpdate.none': 'Обновлений нет',
       'panelUpdate.checking': 'Проверяем обновления…',
@@ -477,7 +497,7 @@ class AppStrings {
       'runtime.loading': 'Загрузка…',
       'runtime.offline': 'Нет связи',
       'runtime.working': 'Выполняется…',
-      'runtime.controller': 'Контроллер',
+      'runtime.controller': 'Готовность',
       'runtime.ready': 'Готов',
       'runtime.notReady': 'Не готов',
       'runtime.refresh': 'Обновить',
@@ -622,7 +642,7 @@ class AppStrings {
           'Приватный ключ серверного интерфейса WireGuard. Он остаётся на сервере; клиентам передаётся публичный ключ. Здесь форма демонстрационная.',
       'field.port': 'Порт',
       'field.transport': 'Транспорт',
-      'field.security': 'Защита соединения',
+      'field.security': 'Маскировка',
       'field.serverName': 'Имя сервера (SNI)',
       'field.flow': 'Flow',
       'field.certificate': 'Путь к сертификату',
@@ -794,8 +814,8 @@ class AppStrings {
       'system.configuration': 'Конфигурация',
       'system.applied': 'Применена',
       'system.configurationHint': 'Проверка соответствия настроек ядру',
-      'system.coreHint': 'Процесс работает, контроллер доступен',
-      'system.coreNotReady': 'Контроллер ядра не готов',
+      'system.coreHint': 'Активные службы ядер готовы',
+      'system.coreNotReady': 'Нет готовых служб ядер',
       'settings.title': 'Настройки',
       'settings.description': 'Только необходимое для вашей панели.',
       'settings.general': 'Общие',

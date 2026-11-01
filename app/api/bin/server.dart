@@ -4,6 +4,10 @@ import 'package:dart_frog/dart_frog.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sky_ui_api/src/auth/owner_auth.dart';
 import 'package:sky_ui_api/src/maintenance.dart';
+import 'package:sky_ui_api/src/cores/json_proxy_adapter.dart';
+import 'package:sky_ui_api/src/cores/proxy_configuration.dart';
+import 'package:sky_ui_api/src/cores/amnezia_adapter.dart';
+import 'package:sky_ui_api/src/cores/amnezia_configuration.dart';
 
 Future<void> main(List<String> args) async {
   if (args.contains('--version')) {
@@ -23,6 +27,25 @@ Future<void> main(List<String> args) async {
     stateDirectory: '${config.dataDirectory}/instances',
   );
   await manager.initialize();
+  final extraAdapters = [
+    for (final core in config.proxyCores)
+      if (core.coreId == 'amneziawg')
+        AmneziaAdapter(runner, supervisor)
+      else
+        JsonProxyAdapter(core.coreId, runner, supervisor),
+  ];
+  final extraManagers = [
+    for (final core in config.proxyCores)
+      CoreManager(
+        core: core,
+        adapters: {for (final a in extraAdapters) a.id: a},
+        supervisor: supervisor,
+        stateDirectory: '${config.dataDirectory}/instances',
+      ),
+  ];
+  for (final item in extraManagers) {
+    await item.initialize();
+  }
   await Directory(config.dataDirectory).create(recursive: true);
   final ownerAuth = OwnerAuth(
     '${config.dataDirectory}/owner.sqlite',
@@ -45,7 +68,19 @@ Future<void> main(List<String> args) async {
     config: config,
     manager: manager,
     repository: repository,
-    codecs: {codec.coreId: codec},
+    additionalManagers: extraManagers,
+    codecs: {
+      codec.coreId: codec,
+      for (final item in extraManagers)
+        item.core.coreId: item.core.coreId == 'amneziawg'
+            ? AmneziaConfiguration()
+            : ProxyConfiguration(
+                item.core.coreId,
+                core: item.core,
+                supervisor: supervisor,
+                certificatesDirectory: config.certificatesDirectory,
+              ),
+    },
     exporter: ClashExporter(),
     additionalExporters: [V2RayExporter()],
   );
@@ -93,6 +128,9 @@ Future<void> main(List<String> args) async {
     await server.close(force: true);
     await manager.exclusive((_) async {});
     await adapter.close();
+    for (final item in extraAdapters) {
+      await item.close();
+    }
     repository.close();
     ownerAuth.close();
   }

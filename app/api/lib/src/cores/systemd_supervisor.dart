@@ -88,7 +88,9 @@ class SystemdSupervisor implements ProcessSupervisor {
         'reset-failed',
         core.service,
       ]);
-      if (reset.exitCode != 0)
+      // systemd may garbage-collect a stopped, never-used unit between inspect
+      // and reset-failed. Starting it remains valid; a failed unit must reset.
+      if (reset.exitCode != 0 && observed.state == CoreProcessState.failed)
         throw const ApiException('service_operation_failed');
     }
     final result = await runner.run('/usr/bin/systemctl', [

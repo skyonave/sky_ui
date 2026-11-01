@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'dart:math';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../config.dart';
@@ -17,38 +18,83 @@ class PanelService {
     required this.repository,
     required Map<String, ConfigurationCodec> codecs,
     required this.exporter,
+    List<CoreManager> additionalManagers = const [],
     List<ClientExporter> additionalExporters = const [],
   }) : exporters = {
          exporter.format: exporter,
          for (final item in additionalExporters) item.format: item,
        },
-       codec =
-           codecs[manager.core.coreId] ??
-           (throw const ApiException('core_unsupported', status: 422));
+       codecs = codecs,
+       managers = {
+         manager.core.id: manager,
+         for (final item in additionalManagers) item.core.id: item,
+       };
   final ServerConfig config;
   final CoreManager manager;
   final PanelRepository repository;
-  final ConfigurationCodec codec;
+  final Map<String, ConfigurationCodec> codecs;
+  final Map<String, CoreManager> managers;
+  ConfigurationCodec get codec => codecs[manager.core.coreId]!;
+  ConfigurationCodec _codec(String id) =>
+      codecs[id] ?? (throw const ApiException('core_unsupported', status: 422));
+  CoreManager _owner(Connection connection) {
+    final owner = managers[connection.instanceId];
+    if (owner == null || owner.core.coreId != connection.coreId)
+      throw const ApiException('core_unavailable', status: 422);
+    return owner;
+  }
+
+  Future<T> _exclusive<T>(Future<T> Function(Map<String, CoreControl>) action) {
+    final ordered = managers.keys.toList()..sort();
+    final controls = <String, CoreControl>{};
+    Future<T> lock(int index) => index == ordered.length
+        ? action(controls)
+        : managers[ordered[index]]!.exclusive((control) {
+            controls[ordered[index]] = control;
+            return lock(index + 1);
+          });
+    return lock(0);
+  }
+
   final ClientExporter exporter;
   final Map<String, ClientExporter> exporters;
   bool busy = false;
   final _portRandom = Random.secure();
 
-  Future<void> initialize() => manager.exclusive((control) async {
+  Map<String, dynamic> _recovery(DeploymentIntent intent) {
+    try {
+      final value = jsonDecode(intent.previous);
+      if (value is Map && value['skyUiDeployment'] == 2)
+        return Map<String, dynamic>.from(value['instances'] as Map);
+    } on FormatException {}
+    return {
+      manager.core.id: {
+        'previous': intent.previous,
+        'wasRunning': intent.wasRunning,
+      },
+    };
+  }
+
+  Future<void> initialize() => _exclusive((controls) async {
     final pending = repository.pending;
     if (pending == null) return;
     busy = true;
     try {
-      await _publish(pending.previous);
-      final observation = await manager.supervisor.inspect(manager.core);
-      if (observation.state == CoreProcessState.active ||
-          (pending.wasRunning && manager.desired != CoreDesiredState.stopped)) {
-        await control.execute(
-          observation.state == CoreProcessState.active
-              ? CoreOperation.restart
-              : CoreOperation.start,
-          remember: false,
-        );
+      for (final entry in _recovery(pending).entries) {
+        final owner = managers[entry.key];
+        if (owner == null) throw const ApiException('core_unavailable');
+        await _publish(entry.value['previous'] as String, owner);
+        final observation = await owner.supervisor.inspect(owner.core);
+        if (observation.state == CoreProcessState.active ||
+            (entry.value['wasRunning'] == true &&
+                owner.desired != CoreDesiredState.stopped)) {
+          await controls[entry.key]!.execute(
+            observation.state == CoreProcessState.active
+                ? CoreOperation.restart
+                : CoreOperation.start,
+            remember: false,
+          );
+        }
       }
       repository.clearPending();
       manager.event('configuration_recovered');
@@ -62,34 +108,50 @@ class PanelService {
 
   Future<bool> isSynchronized() async {
     if (repository.pending != null) return false;
-    final expected = repository.configurationHash;
-    if (expected == null) return true;
-    try {
-      return digest(await File(manager.core.configuration).readAsString()) ==
-          expected;
-    } on FileSystemException {
-      return false;
+    for (final owner in managers.values) {
+      final expected = repository.instanceHash(owner.core.id);
+      if (expected == null) continue;
+      try {
+        if (digest(await File(owner.core.configuration).readAsString()) !=
+            expected)
+          return false;
+      } on FileSystemException {
+        return false;
+      }
     }
+    return true;
   }
 
-  Future<PanelSnapshot> snapshot() => manager.exclusive((_) => _snapshot());
+  Future<PanelSnapshot> snapshot() => _exclusive((_) => _snapshot());
   Future<PanelSnapshot> _snapshot() async {
     final data = repository.read();
     final synchronized = await isSynchronized();
-    final core = await manager.snapshot();
-    var ready =
-        !busy &&
-        synchronized &&
-        core.controllerReady &&
-        core.processState == CoreProcessState.active;
+    final snapshots = {
+      for (final owner in managers.values)
+        owner.core.id: await owner.snapshot(),
+    };
+    final core = snapshots[manager.core.id]!;
+    final readiness = <String, bool>{};
     String? readinessError;
-    if (ready) {
-      try {
-        await codec.verifyRunning(data, manager.core);
-      } on ApiException catch (e) {
-        ready = false;
-        readinessError = e.code;
+    for (final owner in managers.values) {
+      final observed = snapshots[owner.core.id]!;
+      var ready =
+          !busy &&
+          synchronized &&
+          observed.binaryAvailable &&
+          observed.controllerReady &&
+          observed.processState == CoreProcessState.active;
+      if (ready) {
+        try {
+          await _codec(
+            owner.core.coreId,
+          ).verifyRunning(data.forInstance(owner.core.id), owner.core);
+        } on ApiException catch (e) {
+          ready = false;
+          readinessError = e.code;
+        }
       }
+      readiness[owner.core.id] = ready;
     }
     return PanelSnapshot(
       revision: repository.revision,
@@ -112,12 +174,20 @@ class PanelService {
       serverName: data.serverName,
       address: data.address,
       synchronized: synchronized,
-      deliveryReady: ready && core.binaryAvailable,
-      coreAvailability: {core.coreId: core.binaryAvailable},
+      deliveryReady: readiness.values.any((v) => v),
+      coreAvailability: {
+        for (final value in snapshots.values)
+          value.coreId: value.binaryAvailable,
+      },
+      instanceIds: {
+        for (final owner in managers.values) owner.core.coreId: owner.core.id,
+      },
+      instanceReadiness: readiness,
       protocols: {
-        codec.coreId: codec.protocols
-            .map((p) => p.withExportRestrictions(exporter.restrictions))
-            .toList(),
+        for (final codec in codecs.values)
+          codec.coreId: codec.protocols
+              .map((p) => p.withExportRestrictions(exporter.restrictions))
+              .toList(),
       },
       errorCode: !core.binaryAvailable
           ? 'binary_missing'
@@ -136,10 +206,6 @@ class PanelService {
       throw const ApiException('configuration_rollback_failed', status: 503);
     if (!await isSynchronized())
       throw const ApiException('configuration_out_of_sync', status: 409);
-    if (!(await manager.snapshot()).binaryAvailable)
-      throw const ApiException('binary_missing', status: 409);
-    if (!manager.supervisor.supported)
-      throw const ApiException('platform_unsupported', status: 501);
   }
 
   // Stage outside the core-owned directory so it cannot replace a candidate
@@ -175,75 +241,195 @@ class PanelService {
     }
   }
 
-  Future<void> _publish(String text) =>
+  Future<void> _publish(String text, [CoreManager? owner]) =>
       _staged(text, 'published.yaml', (file) async {
-        await file.rename(manager.core.configuration);
+        await file.rename((owner ?? manager).core.configuration);
       });
 
   Future<PanelSnapshot> _change(
     int revision,
     Future<void> Function(PanelData) update,
-  ) => manager.exclusive((control) async {
+  ) => _exclusive((controls) async {
     await _check(revision);
     busy = true;
     var prepared = false;
-    String? previous;
-    var wasRunning = false;
+    final changes = <String, Map<String, dynamic>>{};
+    final configurations = <String, String>{};
     try {
       final before = repository.read();
       final after = before.copy();
       await update(after);
-      final observation = await manager.supervisor.inspect(manager.core);
-      if (!observation.loaded)
-        throw const ApiException('service_missing', status: 409);
-      if (![
-        CoreProcessState.active,
-        CoreProcessState.inactive,
-        CoreProcessState.failed,
-      ].contains(observation.state)) {
-        throw const ApiException('service_busy', status: 409);
-      }
-      wasRunning = observation.state == CoreProcessState.active;
-      previous = await File(manager.core.configuration).readAsString();
-      final candidate = codec.compile(after, manager.core, previous);
-      final validation = codec.compile(
-        after,
-        manager.core,
-        previous,
-        validationOnly: true,
-      );
-      if (validation != candidate || candidate != previous)
-        await _staged(
-          validation,
-          'draft.validate',
-          (file) => control.validateCandidate(file.path),
+      for (final owner in managers.values) {
+        final native = _codec(owner.core.coreId);
+        final oldData = before.forInstance(owner.core.id);
+        final newData = after.forInstance(owner.core.id);
+        final file = File(owner.core.configuration);
+        if (!await file.exists()) {
+          if (newData.connections.isNotEmpty)
+            throw const ApiException('binary_missing', status: 409);
+          continue;
+        }
+        final previous = await file.readAsString();
+        String signature(PanelData data) => jsonEncode({
+          'connections': data.connections
+              .map((c) => {'value': c.value.toJson(), 'secrets': c.secrets})
+              .toList(),
+          'grants': data.grants
+              .map((g) => [g.id, g.recipientId, g.connectionId, g.credentials])
+              .toList(),
+          'recipients': data.recipients
+              .where((u) => data.grants.any((g) => g.recipientId == u.id))
+              .map((u) => [u.id, u.enabled])
+              .toList(),
+        });
+        if (signature(oldData) == signature(newData)) {
+          configurations[owner.core.id] = previous;
+          continue;
+        }
+        final candidate = native.compile(newData, owner.core, previous);
+        configurations[owner.core.id] = candidate;
+        if (!(await owner.snapshot()).binaryAvailable) {
+          final unchangedConnections = newData.connections.every((c) {
+            final old = oldData.connections
+                .where((o) => o.value.id == c.value.id)
+                .firstOrNull;
+            if (old == null || !old.value.enabled && c.value.enabled)
+              return false;
+            final value = old.value.toJson()..['enabled'] = c.value.enabled;
+            return jsonEncode(value) == jsonEncode(c.value.toJson()) &&
+                jsonEncode(old.secrets) == jsonEncode(c.secrets);
+          });
+          final previousGrants = oldData.grants
+              .map(
+                (g) => jsonEncode([
+                  g.id,
+                  g.connectionId,
+                  g.recipientId,
+                  g.credentials,
+                ]),
+              )
+              .toSet();
+          final previousActive = {
+            for (final c in oldData.connections)
+              ...oldData.activeGrants(c.value.id).map((g) => g.id),
+          };
+          final reductionsOnly =
+              unchangedConnections &&
+              newData.grants.every(
+                (g) => previousGrants.contains(
+                  jsonEncode([
+                    g.id,
+                    g.connectionId,
+                    g.recipientId,
+                    g.credentials,
+                  ]),
+                ),
+              ) &&
+              newData.connections.every(
+                (c) => newData
+                    .activeGrants(c.value.id)
+                    .every((g) => previousActive.contains(g.id)),
+              );
+          if (!reductionsOnly ||
+              (await owner.supervisor.inspect(owner.core)).state ==
+                  CoreProcessState.active)
+            throw const ApiException('binary_missing', status: 409);
+          // Revocation remains possible after removal. Reinstallation validates
+          // the stored native document before the engine can serve it again.
+          if (candidate != previous)
+            changes[owner.core.id] = {
+              'previous': previous,
+              'candidate': candidate,
+              'wasRunning': false,
+            };
+          continue;
+        }
+        if (!owner.supervisor.supported)
+          throw const ApiException('platform_unsupported', status: 501);
+        final observation = await owner.supervisor.inspect(owner.core);
+        if (!observation.loaded)
+          throw const ApiException('service_missing', status: 409);
+        if (![
+          CoreProcessState.active,
+          CoreProcessState.inactive,
+          CoreProcessState.failed,
+        ].contains(observation.state)) {
+          throw const ApiException('service_busy', status: 409);
+        }
+        final wasRunning = observation.state == CoreProcessState.active;
+        final validation = native.compile(
+          newData,
+          owner.core,
+          previous,
+          validationOnly: true,
         );
-      if (candidate != previous) {
-        if (validation != candidate)
+        if (validation != candidate || candidate != previous)
           await _staged(
-            candidate,
-            'candidate.validate',
-            (file) => control.validateCandidate(file.path),
+            validation,
+            'draft.${owner.core.coreId == 'mihomo' ? 'yaml' : 'json'}',
+            (file) => controls[owner.core.id]!.validateCandidate(file.path),
           );
-        await codec.preflight(before, after, wasRunning);
-        repository.prepare(DeploymentIntent(previous, candidate, wasRunning));
-        prepared = true;
-        await _publish(candidate);
-        if (wasRunning) {
-          // Restart closes existing sessions, making revocation effective immediately.
-          await control.execute(CoreOperation.restart, remember: false);
-          await codec.verifyRunning(after, manager.core);
+        if (candidate != previous) {
+          if (validation != candidate)
+            await _staged(
+              candidate,
+              'candidate.${owner.core.coreId == 'mihomo' ? 'yaml' : 'json'}',
+              (file) => controls[owner.core.id]!.validateCandidate(file.path),
+            );
+          await native.preflight(oldData, newData, wasRunning);
+          changes[owner.core.id] = {
+            'previous': previous,
+            'candidate': candidate,
+            'wasRunning': wasRunning,
+          };
         }
       }
-      repository.commit(after, candidate);
+      if (changes.isNotEmpty) {
+        final intent = jsonEncode({'skyUiDeployment': 2, 'instances': changes});
+        // The existing durable row remains the single recovery/maintenance barrier.
+        repository.prepare(
+          DeploymentIntent(
+            intent,
+            intent,
+            changes.values.any((c) => c['wasRunning'] == true),
+          ),
+        );
+        prepared = true;
+        for (final entry in changes.entries) {
+          final owner = managers[entry.key]!;
+          await _publish(entry.value['candidate'] as String, owner);
+          if (entry.value['wasRunning'] == true) {
+            await controls[entry.key]!.execute(
+              CoreOperation.restart,
+              remember: false,
+            );
+            await _codec(
+              owner.core.coreId,
+            ).verifyRunning(after.forInstance(entry.key), owner.core);
+          }
+        }
+      }
+      repository.commit(
+        after,
+        configurations[manager.core.id] ??
+            repository.metadata('configuration') ??
+            '',
+        configurations: configurations,
+      );
       prepared = false;
       manager.event('configuration_applied');
     } on Object catch (e) {
-      if (prepared && previous != null) {
+      if (prepared) {
         try {
-          await _publish(previous);
-          if (wasRunning)
-            await control.execute(CoreOperation.restart, remember: false);
+          for (final entry in changes.entries.toList().reversed) {
+            final owner = managers[entry.key]!;
+            await _publish(entry.value['previous'] as String, owner);
+            if (entry.value['wasRunning'] == true)
+              await controls[entry.key]!.execute(
+                CoreOperation.restart,
+                remember: false,
+              );
+          }
           repository.clearPending();
           manager.event('configuration_rolled_back', level: 'error');
         } on Object {
@@ -267,11 +453,12 @@ class PanelService {
     String? id,
   }) => _change(revision, (data) async {
     final old = data.connections.where((c) => c.value.id == id).firstOrNull;
+    _owner(input);
+    final codec = _codec(input.coreId);
     if (id != null && old == null)
       throw const ApiException('not_found', status: 404);
-    if (input.coreId != manager.core.coreId ||
-        input.instanceId != manager.core.id)
-      throw const ApiException('core_unavailable', status: 422);
+    if (old == null && productProtocol(input.protocolId) == null)
+      throw const ApiException('protocol_unavailable', status: 422);
     if (old != null &&
         (old.value.coreId != input.coreId ||
             old.value.protocolId != input.protocolId ||
@@ -288,7 +475,13 @@ class PanelService {
     if (definition.usesPort && (port == null || port < 1 || port > 65535))
       throw const ApiException('port_invalid', status: 422);
     if (port != null &&
-        {22, 80, 443, config.port, manager.core.controller.port}.contains(port))
+        {
+          22,
+          80,
+          443,
+          config.port,
+          for (final m in managers.values) m.core.controller.port,
+        }.contains(port))
       throw const ApiException('port_reserved', status: 422);
     if (port != null &&
         (data.connections.any(
@@ -441,10 +634,17 @@ class PanelService {
       ))
         continue;
       final c = data.connections.firstWhere((c) => c.value.id == connectionId);
+      final codec = _codec(c.value.coreId);
       final definition = codec.protocols.firstWhere(
         (p) => p.id == c.value.protocolId,
       );
-      final credentials = await codec.grantCredentials(c);
+      var credentials = await codec.grantCredentials(c);
+      if (codec is GrantAllocator)
+        credentials = (codec as GrantAllocator).allocateGrant(
+          data,
+          c,
+          credentials,
+        );
       if (definition.isolatedBindings)
         credentials['port'] = '${await _allocateGrantPort(data, c)}';
       data.grants.add(
@@ -467,7 +667,7 @@ class PanelService {
       80,
       443,
       config.port,
-      manager.core.controller.port,
+      for (final owner in managers.values) owner.core.controller.port,
       for (final c in data.connections)
         if (c.value.id != connection.value.id && c.value.port != null)
           c.value.port!,
@@ -531,44 +731,63 @@ class PanelService {
         for (final grant in data.grants.where(
           (g) => g.recipientId == recipientId && g.connectionId == c.value.id,
         ))
-          codec.clientEndpoint(c, grant, data.address),
+          _codec(c.value.coreId).clientEndpoint(c, grant, data.address),
     ];
   }
 
-  Future<void> _canExport() async {
+  Future<void> _canExport(String recipientId) async {
     if (busy) throw const ApiException('configuration_busy', status: 503);
     if (!await isSynchronized())
       throw const ApiException('configuration_out_of_sync', status: 503);
-    final core = await manager.snapshot();
-    if (!core.binaryAvailable)
-      throw const ApiException('binary_missing', status: 503);
-    if (core.processState != CoreProcessState.active || !core.controllerReady)
-      throw const ApiException('core_not_ready', status: 503);
-    await codec.verifyRunning(repository.read(), manager.core);
+    final data = repository.read();
+    final owned = data.connections
+        .where(
+          (c) =>
+              c.value.enabled &&
+              data.grants.any(
+                (g) =>
+                    g.connectionId == c.value.id &&
+                    g.recipientId == recipientId,
+              ),
+        )
+        .map((c) => c.value.instanceId)
+        .toSet();
+    for (final id in owned) {
+      final owner = managers[id];
+      if (owner == null)
+        throw const ApiException('core_unavailable', status: 503);
+      final core = await owner.snapshot();
+      if (!core.binaryAvailable)
+        throw const ApiException('binary_missing', status: 503);
+      if (core.processState != CoreProcessState.active || !core.controllerReady)
+        throw const ApiException('core_not_ready', status: 503);
+      await _codec(
+        owner.core.coreId,
+      ).verifyRunning(data.forInstance(id), owner.core);
+    }
   }
 
-  Future<RecipientShare> share(String id) => manager.exclusive((_) async {
-    await _canExport();
+  Future<RecipientShare> share(String id) => _exclusive((_) async {
+    await _canExport(id);
     final data = repository.read();
     final user = data.recipients.where((u) => u.id == id).firstOrNull;
     if (user == null || !user.enabled)
       throw const ApiException('not_found', status: 404);
     final endpoints = _clientEndpoints(data, id);
-    final links = exporter.links(endpoints);
+    final links = ShareUriCodec().links(endpoints);
     return RecipientShare(
-      subscriptionUrl: config.webOrigin
-          .resolve('/s/${user.token}.yaml')
-          .toString(),
+      subscriptionUrl: config.webOrigin.resolve('/s/${user.token}').toString(),
       links: links,
       subscriptionUrls: {
-        'clash': config.webOrigin.resolve('/s/${user.token}.yaml').toString(),
+        if (exporter.canExport(endpoints))
+          'clash': config.webOrigin.resolve('/s/${user.token}.yaml').toString(),
         if (V2RayExporter().canExport(endpoints))
           'v2ray': config.webOrigin.resolve('/s/${user.token}.txt').toString(),
       },
     );
   });
   Future<String> subscription(String token, {String format = 'clash'}) =>
-      manager.exclusive((_) async {
+      _exclusive((_) async {
         final id = repository.recipientForToken(token);
         if (id == null) throw const ApiException('not_found', status: 404);
         final data = repository.read();
@@ -583,7 +802,7 @@ class PanelService {
         )) {
           throw const ApiException('not_found', status: 404);
         }
-        await _canExport();
+        await _canExport(id);
         final endpoints = _clientEndpoints(data, id);
         return switch (format) {
           'clash' => exporter.profile(endpoints),
@@ -591,24 +810,48 @@ class PanelService {
           _ => throw const ApiException('export_unavailable', status: 422),
         };
       });
-  Future<CoreSnapshot> executeCore(CoreOperation operation) =>
-      manager.exclusive((control) async {
-        if ([CoreOperation.start, CoreOperation.restart].contains(operation) &&
-            !await isSynchronized()) {
-          throw const ApiException('configuration_out_of_sync', status: 409);
+  Future<CoreSnapshot> executeCore(
+    CoreOperation operation, {
+    String? instanceId,
+  }) {
+    final owner = managers[instanceId ?? manager.core.id];
+    if (owner == null)
+      throw const ApiException('instance_not_found', status: 404);
+    return owner.exclusive((control) async {
+      if ([CoreOperation.start, CoreOperation.restart].contains(operation) &&
+          !await isSynchronized()) {
+        throw const ApiException('configuration_out_of_sync', status: 409);
+      }
+      final result = await control.execute(operation);
+      if ([CoreOperation.start, CoreOperation.restart].contains(operation)) {
+        try {
+          await _codec(owner.core.coreId).verifyRunning(
+            repository.read().forInstance(owner.core.id),
+            owner.core,
+          );
+        } on Object {
+          await control.execute(CoreOperation.stop);
+          rethrow;
         }
-        final result = await control.execute(operation);
-        if ([CoreOperation.start, CoreOperation.restart].contains(operation))
-          await codec.verifyRunning(repository.read(), manager.core);
-        return result;
-      });
+      }
+      return result;
+    });
+  }
+
   Future<void> restoreCore() async {
-    if (manager.desired == CoreDesiredState.unknown) return;
-    await executeCore(
-      manager.desired == CoreDesiredState.running
-          ? CoreOperation.start
-          : CoreOperation.stop,
-    );
+    for (final owner in managers.values) {
+      if (owner.desired == CoreDesiredState.unknown) continue;
+      try {
+        await executeCore(
+          owner.desired == CoreDesiredState.running
+              ? CoreOperation.start
+              : CoreOperation.stop,
+          instanceId: owner.core.id,
+        );
+      } on Object {
+        owner.event('core_state_restore_failed', level: 'error');
+      }
+    }
   }
 }
 

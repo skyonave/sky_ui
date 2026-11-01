@@ -261,6 +261,10 @@ class MaintenanceTests(unittest.TestCase):
 
     def restore_fixture(self):
         files = self.fixtures()
+        # This fixture represents a backup restored with mihomo installed.
+        binary = m.CORES / 'mihomo/current/mihomo'
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(b'fixture native binary')
         for name in ['panel', 'owner']:
             path = self.root / (name + '.sqlite')
             with sqlite3.connect(path) as db:
@@ -281,7 +285,7 @@ class MaintenanceTests(unittest.TestCase):
         with patch.object(m, 'run', return_value=b''), patch.object(m, 'candidate_validate') as validation, \
                 patch.object(m, 'create_backup', return_value={'id': 'b' * 32}), \
                 patch.object(m, 'snapshot_files', return_value={'previous': b'fixture'}), \
-                patch.object(m, 'active', return_value=True), patch.object(m, 'ready'), \
+                patch.object(m, 'active', side_effect=lambda unit: unit in ('sky-ui.service','sky-ui-mihomo.service','sky-ui-edge.service','sky-ui-certificates.timer')), patch.object(m, 'ready'), \
                 patch.object(m, 'environment', return_value={}), patch.object(m, 'api_ready'), \
                 patch.object(m, 'apply_files', side_effect=lambda data, gid: applied.append(data)):
             result = m.restore_backup(identity, os.getgid())
@@ -300,7 +304,7 @@ class MaintenanceTests(unittest.TestCase):
         applied = []
         with patch.object(m, 'run', return_value=b''), patch.object(m, 'candidate_validate'), \
                 patch.object(m, 'create_backup', return_value={'id': 'b' * 32}), \
-                patch.object(m, 'snapshot_files', return_value=previous), patch.object(m, 'active', return_value=True), \
+                patch.object(m, 'snapshot_files', return_value=previous), patch.object(m, 'active', side_effect=lambda unit: unit in ('sky-ui.service','sky-ui-mihomo.service','sky-ui-edge.service','sky-ui-certificates.timer')), \
                 patch.object(m, 'ready', side_effect=[m.MaintenanceError('not_ready'), None]), \
                 patch.object(m, 'environment', return_value={}), patch.object(m, 'api_ready'), \
                 patch.object(m, 'apply_files', side_effect=lambda data, gid: applied.append(data)):

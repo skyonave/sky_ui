@@ -6,6 +6,8 @@ class PanelStore {
   List<Recipient> recipients = [];
   bool running = false;
   bool deliveryReady = false;
+  Map<String, String> instanceIds = {};
+  Map<String, bool> instanceReadiness = {};
   String serverName = 'Sky UI';
   String address = '';
   Map<String, List<ProtocolDefinition>> protocols = {};
@@ -16,6 +18,8 @@ class PanelStore {
     address = snapshot.address;
     deliveryReady = snapshot.deliveryReady;
     protocols = snapshot.protocols;
+    instanceIds = snapshot.instanceIds;
+    instanceReadiness = snapshot.instanceReadiness;
   }
 
   bool supports(String? core, String? protocol) =>
@@ -30,7 +34,9 @@ class PanelStore {
       ? connections
             .where(
               (c) =>
-                  c.enabled && (!c.shareable || recipientsFor(c.id).isNotEmpty),
+                  c.enabled &&
+                  (instanceReadiness[c.instanceId] ?? deliveryReady) &&
+                  (!c.shareable || recipientsFor(c.id).isNotEmpty),
             )
             .length
       : 0;
@@ -40,7 +46,12 @@ class PanelStore {
               (u) =>
                   u.enabled &&
                   u.connectionIds.any(
-                    (id) => connections.any((c) => c.id == id && c.enabled),
+                    (id) => connections.any(
+                      (c) =>
+                          c.id == id &&
+                          c.enabled &&
+                          (instanceReadiness[c.instanceId] ?? deliveryReady),
+                    ),
                   ),
             )
             .length

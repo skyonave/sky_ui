@@ -3,6 +3,21 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../errors.dart';
 import 'domain.dart';
 
+// Client identity selects the response format, never access permissions.
+final _uriSubscriptionClients = RegExp(
+  r'(?:^|[\s;(])(?:v2box|v2rayng?|v2raytun|happ|streisand|shadowrocket|hiddify(?:next)?|nekobox|nekoray|karing|throne)[\w.-]*(?:[/\s;()]|$)',
+  caseSensitive: false,
+);
+final _clashSubscriptionClients = RegExp(
+  r'(?:^|[\s;(])(?:clash[\w.-]*|mihomo[\w.-]*|flclash[\w.-]*|stash)(?:[/\s;()]|$)',
+  caseSensitive: false,
+);
+
+String subscriptionFormatFor(String userAgent) {
+  if (_uriSubscriptionClients.hasMatch(userAgent)) return 'v2ray';
+  return _clashSubscriptionClients.hasMatch(userAgent) ? 'clash' : 'v2ray';
+}
+
 abstract interface class ClientExporter {
   String get format;
   List<ClientExportRestriction> get restrictions;
@@ -58,6 +73,7 @@ class ClashExporter implements ClientExporter {
     'http',
     'socks',
     'mixed',
+    'amneziawg',
   };
   List<ClientEndpoint> _entries(List<ClientEndpoint> endpoints) {
     if (endpoints.isEmpty)
@@ -130,6 +146,8 @@ class ClashExporter implements ClientExporter {
           ? 'tuic'
           : id == 'shadowsocks'
           ? 'ss'
+          : id == 'amneziawg'
+          ? 'wireguard'
           : id,
       'server': c.server,
       'port': c.port,
@@ -150,6 +168,29 @@ class ClashExporter implements ClientExporter {
           .where((v) => v.isNotEmpty)
           .toList();
     switch (id) {
+      case 'amneziawg':
+        out.addAll({
+          'ip': k['address']!.split('/').first,
+          'private-key': k['privateKey'],
+          'public-key': k['serverPublicKey'],
+          'pre-shared-key': k['presharedKey'],
+          'udp': true,
+          'mtu': int.parse(s['mtu'] ?? '1280'),
+          'remote-dns-resolve': true,
+          'dns': (s['dns'] ?? '').split('\n'),
+          'amnezia-wg-option': {
+            'version': 3,
+            'header-protection-key': k['headerProtectionKey'],
+            for (final e in s.entries.where(
+              (e) => e.key.startsWith('awg.') && e.value.isNotEmpty,
+            ))
+              _awgOption(e.key.substring(4)): e.value == 'true'
+                  ? true
+                  : e.value == 'false'
+                  ? false
+                  : int.tryParse(e.value) ?? e.value,
+          },
+        });
       case 'vless' || 'vmess':
         out['uuid'] = k['uuid'];
         out['network'] = switch (s['transport']) {
@@ -232,6 +273,7 @@ class ClashExporter implements ClientExporter {
         out['reality-opts'] = {
           'public-key': k['publicKey'],
           'short-id': k['shortId'],
+          if (s['realityMlkem'] == 'true') 'support-x25519mlkem768': true,
         };
     }
     return out;
@@ -242,17 +284,49 @@ class ClashExporter implements ClientExporter {
       ShareUriCodec().links(_entries(endpoints));
 }
 
+String _awgOption(String name) => name
+    .replaceAllMapped(RegExp(r'([a-z])([A-Z])'), (m) => '${m[1]}-${m[2]}')
+    .toLowerCase();
+
+String amneziaProfile(ClientEndpoint endpoint) {
+  final s = endpoint.settings, k = endpoint.credentials;
+  final authority = Uri(
+    scheme: 'udp',
+    host: endpoint.server,
+    port: endpoint.port,
+  ).authority;
+  return '[Interface]\nPrivateKey = ${k['privateKey']}\nAddress = ${k['address']}\nDNS = ${(s['dns'] ?? '').split('\n').join(', ')}\nMTU = ${s['mtu']}\n'
+      'HeaderProtectionKey = ${k['headerProtectionKey']}\n'
+      '${s.entries.where((e) => e.key.startsWith('awg.') && e.value.isNotEmpty).map((e) => '${e.key.substring(4)} = ${e.value == 'true'
+          ? 'on'
+          : e.value == 'false'
+          ? 'off'
+          : e.value}').join('\n')}\n\n'
+      '[Peer]\nPublicKey = ${k['serverPublicKey']}\nPresharedKey = ${k['presharedKey']}\nEndpoint = $authority\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = ${s['keepalive']}\n';
+}
+
 /// Individual protocol URIs reused by independent client subscription formats.
 class ShareUriCodec {
   List<ShareLink> links(List<ClientEndpoint> endpoints) {
     final links = <ShareLink>[];
     for (final c in endpoints) {
       final s = c.settings, k = c.credentials, id = c.protocolId;
+      if (id == 'amneziawg') {
+        links.add(
+          ShareLink(
+            name: c.name,
+            uri: '',
+            content: amneziaProfile(c),
+            filename: 'Sky-UI-${c.id}.conf',
+          ),
+        );
+        continue;
+      }
       if (k['fingerprint'] != null || k['clientCertificate'] != null) continue;
       if ((s['clientAlpn'] ?? '').isNotEmpty) continue;
       if (s['xhttpOptions'] != null &&
           (jsonDecode(s['xhttpOptions']!) as Map).keys.any(
-            (key) => !{'path', 'mode'}.contains(key),
+            (key) => !{'path', 'mode', 'host'}.contains(key),
           ))
         continue;
       if (s['protocolOptions'] != null && (id == 'hysteria2' || id == 'tuic')) {
@@ -294,6 +368,8 @@ class ShareUriCodec {
           final x = jsonDecode(s['xhttpOptions']!) as Map;
           params['path'] = x['path'] as String? ?? '/';
           params['mode'] = x['mode'] as String? ?? 'auto';
+          if (x['host'] is String && (x['host'] as String).isNotEmpty)
+            params['host'] = x['host'] as String;
         }
         uri = Uri(
           scheme: id,
@@ -368,6 +444,16 @@ class ShareUriCodec {
           queryParameters: {'sni': s['serverName'] ?? ''},
           fragment: c.name,
         ).toString();
+      } else if (id == 'naive') {
+        uri = Uri(
+          scheme: s['transport'] == 'HTTP/3' ? 'naive+quic' : 'naive+https',
+          userInfo: '${k['username']}:${k['password']}',
+          host: s['serverName']?.isNotEmpty == true
+              ? s['serverName']
+              : c.server,
+          port: c.port,
+          fragment: c.name,
+        ).toString();
       } else if (id == 'http' || id == 'socks' || id == 'mixed') {
         uri = Uri(
           scheme: id == 'http'
@@ -392,7 +478,15 @@ class V2RayExporter implements ClientExporter {
   String get format => 'v2ray';
   @override
   List<ClientExportRestriction> get restrictions => const [];
-  static const protocols = {'vless', 'vmess', 'trojan', 'shadowsocks'};
+  static const protocols = {
+    'vless',
+    'vmess',
+    'trojan',
+    'shadowsocks',
+    'hysteria2',
+    'tuic',
+    'naive',
+  };
 
   @override
   bool canExport(List<ClientEndpoint> endpoints) {

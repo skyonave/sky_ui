@@ -39,6 +39,7 @@ if (( ! verify_only )); then
   (( EUID == 0 )) || fail 'Run the installer with sudo or as root.'
   [[ -d /run/systemd/system ]] || fail 'systemd must be running as the service manager.'
   [[ ! -e /var/lib/sky-ui-maintenance/core-remove-intent.json ]] || fail 'Core removal recovery is required. Start sky-ui-maintenance-recovery.service first.'
+  [[ ! -e /var/lib/sky-ui-maintenance/engine-intent.json ]] || fail 'Engine recovery is required. Start sky-ui-maintenance-recovery.service first.'
   command -v flock >/dev/null || fail 'flock is required.'
   if [[ "${SKY_UI_TRANSACTION_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
     [[ "$(readlink "/proc/self/fd/$SKY_UI_TRANSACTION_LOCK_FD")" == /run/lock/sky-ui-install.lock ]] || fail 'Invalid update transaction lock.'
@@ -83,6 +84,14 @@ rollback() {
       mv -Tf /opt/sky-ui/.rollback-link /opt/sky-ui/current
       install -m 0644 "$previous/deploy/systemd/sky-ui.service" /etc/systemd/system/sky-ui.service
       install -m 0644 "$previous/deploy/systemd/sky-ui-mihomo.service" /etc/systemd/system/sky-ui-mihomo.service
+      for engine in sing-box xray amneziawg; do
+        if [[ -f "$previous/deploy/systemd/sky-ui-$engine.service" ]]; then
+          install -m 0644 "$previous/deploy/systemd/sky-ui-$engine.service" "/etc/systemd/system/sky-ui-$engine.service"
+        else
+          systemctl disable --now "sky-ui-$engine.service" 2>/dev/null || true
+          rm -f -- "/etc/systemd/system/sky-ui-$engine.service"
+        fi
+      done
       install -m 0644 "$previous/deploy/systemd/sky-ui-edge.service" /etc/systemd/system/sky-ui-edge.service
       for unit in sky-ui-maintenance.service sky-ui-maintenance-recovery.service sky-ui-update.service sky-ui-update-recovery.service; do
         if [[ -f "$previous/deploy/systemd/$unit" ]]; then
@@ -148,6 +157,8 @@ payload="$temp/payload"
 for file in VERSION ARCH bin/sky-ui bin/caddy lib/libsqlite3.so web/index.html web/main.dart.js web/styles.css \
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
+  deploy/systemd/sky-ui-sing-box.service deploy/systemd/sky-ui-xray.service deploy/systemd/sky-ui-amneziawg.service \
+  deploy/engine_install.py deploy/amnezia_network.py compatibility/cores/amneziawg.json \
   deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/maintenance.py deploy/panel_releases.py deploy/panel_update.py deploy/core_artifacts.py deploy/core_install.py deploy/sky-ui deploy/skyui deploy/cli.py compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
@@ -169,19 +180,29 @@ if [[ ! -f /etc/sky-ui/managed-by-sky-ui ]]; then
     fail 'Reserved Sky UI accounts already exist without an installation marker.'
   fi
 fi
-if ! command -v pkaction >/dev/null || ! command -v openssl >/dev/null; then
-  command -v apt-get >/dev/null || fail 'Install polkit and openssl before continuing on this distribution.'
+if ! command -v pkaction >/dev/null || ! command -v openssl >/dev/null || ! command -v nft >/dev/null || ! command -v ip >/dev/null; then
+  command -v apt-get >/dev/null || fail 'Install polkit, openssl, nftables and iproute2 before continuing on this distribution.'
   apt-get update
-  apt-get install -y --no-install-recommends polkitd openssl ca-certificates python3
+  apt-get install -y --no-install-recommends polkitd openssl ca-certificates python3 nftables iproute2
 fi
 for command in systemctl getent groupadd useradd install runuser curl python3; do
   command -v "$command" >/dev/null || fail "Missing dependency: $command"
 done
 chmod 0755 "$temp" "$payload" "$payload/bin"
-validation_binary="$(python3 "$payload/deploy/core_install.py" prepare --panel-version "$release_version" --platform "linux-$arch" --output "$temp/core")"
+validation_binary=-
+# Fresh panels acquire a core only after the owner chooses a protocol. Preserve
+# and migrate a previously installed mihomo without downloading an unrelated core.
+if [[ -L /opt/sky-ui/cores/mihomo/current || -f /opt/sky-ui/current/bin/mihomo ]]; then
+  validation_binary="$(python3 "$payload/deploy/core_install.py" prepare --panel-version "$release_version" --platform "linux-$arch" --output "$temp/core")"
+fi
 getent group sky-ui >/dev/null || groupadd --system sky-ui
 getent passwd sky-ui >/dev/null || useradd --system --gid sky-ui --no-create-home --home-dir /var/lib/sky-ui --shell /usr/sbin/nologin sky-ui
 getent passwd sky-ui-core >/dev/null || useradd --system --gid sky-ui --no-create-home --home-dir /var/lib/sky-ui/cores/mihomo --shell /usr/sbin/nologin sky-ui-core
+for engine in sing-box xray; do
+  getent passwd "sky-ui-$engine" >/dev/null || useradd --system --gid sky-ui --no-create-home --home-dir "/var/lib/sky-ui/cores/$engine" --shell /usr/sbin/nologin "sky-ui-$engine"
+done
+getent group sky-ui-build >/dev/null || groupadd --system sky-ui-build
+getent passwd sky-ui-build >/dev/null || useradd --system --gid sky-ui-build --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin sky-ui-build
 getent group sky-ui-edge >/dev/null || groupadd --system sky-ui-edge
 getent passwd sky-ui-edge >/dev/null || useradd --system --gid sky-ui-edge --no-create-home --home-dir /var/lib/sky-ui-edge --shell /usr/sbin/nologin sky-ui-edge
 install -d -m 0755 /opt/sky-ui /opt/sky-ui/releases
@@ -194,6 +215,19 @@ install -d -m 0750 -o root -g sky-ui /var/lib/sky-ui-maintenance /var/lib/sky-ui
 install -d -m 0700 -o root -g root /var/lib/sky-ui-maintenance/work
 install -d -m 0700 -o sky-ui -g sky-ui /var/lib/sky-ui-maintenance/inbox
 install -d -m 0755 -o root -g root /opt/sky-ui/cores /opt/sky-ui/cores/mihomo
+install -d -m 0700 -o root -g root /var/lib/sky-ui-amneziawg-network
+for engine in sing-box xray amneziawg; do
+  install -d -m 0755 -o root -g root "/opt/sky-ui/cores/$engine"
+  install -d -m 0770 -o sky-ui -g sky-ui "/var/lib/sky-ui/cores/$engine"
+  if [[ ! -f "/var/lib/sky-ui/cores/$engine/config.json" ]]; then
+    case "$engine" in
+      xray) printf '%s\n' '{"log":{"loglevel":"warning"},"inbounds":[],"outbounds":[{"protocol":"freedom","tag":"direct"}]}' >"$temp/engine.json" ;;
+      sing-box) printf '%s\n' '{"log":{"level":"info","timestamp":true},"inbounds":[],"outbounds":[{"type":"direct","tag":"direct"}]}' >"$temp/engine.json" ;;
+      amneziawg) printf '%s\n' '{"version":"3.1","interfaces":[]}' >"$temp/engine.json" ;;
+    esac
+    install -m 0660 -o sky-ui -g sky-ui "$temp/engine.json" "/var/lib/sky-ui/cores/$engine/config.json"
+  fi
+done
 touch /etc/sky-ui/managed-by-sky-ui
 if [[ ! -f /etc/sky-ui/gateway.secret ]]; then
   od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$temp/gateway.secret"
@@ -289,6 +323,9 @@ if (( edge_was_running )); then systemctl stop sky-ui-edge.service; fi
 if (( api_was_running )); then systemctl stop sky-ui.service; fi
 install -m 0644 "$release/deploy/systemd/sky-ui.service" /etc/systemd/system/sky-ui.service
 install -m 0644 "$release/deploy/systemd/sky-ui-mihomo.service" /etc/systemd/system/sky-ui-mihomo.service
+for engine in sing-box xray amneziawg; do
+  install -m 0644 "$release/deploy/systemd/sky-ui-$engine.service" "/etc/systemd/system/sky-ui-$engine.service"
+done
 install -m 0644 "$release/deploy/systemd/sky-ui-edge.service" /etc/systemd/system/sky-ui-edge.service
 install -m 0644 "$release/deploy/systemd/sky-ui-certificates.service" /etc/systemd/system/sky-ui-certificates.service
 install -m 0644 "$release/deploy/systemd/sky-ui-certificates.timer" /etc/systemd/system/sky-ui-certificates.timer

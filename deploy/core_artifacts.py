@@ -7,11 +7,13 @@ import json
 from pathlib import Path
 import platform
 import re
+import tarfile
+import zipfile
 import urllib.parse
 import urllib.request
 
 CATALOG_BASE = 'https://raw.githubusercontent.com/skyonave/sky_ui/main/compatibility/cores'
-REPOSITORIES = {'mihomo': 'MetaCubeX/mihomo', 'sing-box': 'SagerNet/sing-box', 'xray': 'XTLS/Xray-core'}
+REPOSITORIES = {'mihomo': 'MetaCubeX/mihomo', 'sing-box': 'SagerNet/sing-box', 'xray': 'XTLS/Xray-core', 'amneziawg': 'amnezia-vpn/amneziawg-go'}
 TAG = re.compile(r'v[0-9]+\.[0-9]+\.[0-9]+')
 
 
@@ -30,7 +32,7 @@ def target_platform():
 
 def download(url, limit):
     allowed = {'raw.githubusercontent.com', 'github.com', 'api.github.com',
-               'release-assets.githubusercontent.com', 'objects.githubusercontent.com'}
+               'release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'codeload.github.com', 'go.dev', 'dl.google.com'}
 
     def check(target):
         parsed = urllib.parse.urlparse(target)
@@ -80,7 +82,9 @@ def verified_release(core, panel_version, platform_key, selected=None, *, fetch=
         chosen = next((item for item in approved if selected is None or item[0] == selected), None)
         require(chosen is not None, 'core_release_unverified')
         tag, asset = chosen
-        return tag, f"https://github.com/{REPOSITORIES[core]}/releases/download/{tag}/{asset['asset']}", asset['sha256']
+        url = (f"https://github.com/{REPOSITORIES[core]}/archive/refs/tags/{tag}.tar.gz" if core == 'amneziawg'
+               else f"https://github.com/{REPOSITORIES[core]}/releases/download/{tag}/{asset['asset']}")
+        return tag, url, asset['sha256']
     except ArtifactError:
         raise
     except Exception:
@@ -88,11 +92,26 @@ def verified_release(core, panel_version, platform_key, selected=None, *, fetch=
 
 
 def artifact_files(core, tag, url, expected, platform_key, *, fetch=download):
-    require(core == 'mihomo', 'core_unsupported')
-    compressed = fetch(url, 40 * 1024 * 1024)
+    require(core in REPOSITORIES, 'core_unsupported')
+    compressed = fetch(url, 64 * 1024 * 1024)
     require(hashlib.sha256(compressed).hexdigest() == expected, 'release_checksum_failed')
-    with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as archive:
-        binary = archive.read(100 * 1024 * 1024 + 1)
+    if core == 'amneziawg':
+        # This upstream publishes source tags, not standalone Linux binaries.
+        return {'source.tar.gz': compressed, 'LICENSE': fetch(f'https://raw.githubusercontent.com/{REPOSITORIES[core]}/{tag}/LICENSE', 1048576),
+                'artifact.json': json.dumps({'coreId': core, 'version': tag, 'platform': platform_key, 'archiveSha256': expected, 'source': url}).encode()}
+    if core == 'xray':
+        with zipfile.ZipFile(io.BytesIO(compressed)) as archive:
+            info = archive.getinfo('xray')
+            require(info.file_size <= 100 * 1024 * 1024 and not info.is_dir(), 'archive_invalid')
+            binary = archive.read(info)
+    elif core == 'sing-box':
+        with tarfile.open(fileobj=io.BytesIO(compressed), mode='r:gz') as archive:
+            entries = [entry for entry in archive.getmembers() if Path(entry.name).name == 'sing-box']
+            require(len(entries) == 1 and entries[0].isfile() and entries[0].size <= 100 * 1024 * 1024, 'archive_invalid')
+            binary = archive.extractfile(entries[0]).read()
+    else:
+        with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as archive:
+            binary = archive.read(100 * 1024 * 1024 + 1)
     machine = {'linux-amd64': 62, 'linux-arm64': 183}.get(platform_key)
     require(machine is not None and 64 <= len(binary) <= 100 * 1024 * 1024 and
             binary[:6] == b'\x7fELF\x02\x01' and int.from_bytes(binary[18:20], 'little') == machine,
@@ -100,7 +119,8 @@ def artifact_files(core, tag, url, expected, platform_key, *, fetch=download):
     license_data = fetch(f'https://raw.githubusercontent.com/{REPOSITORIES[core]}/{tag}/LICENSE', 1048576)
     require(bool(license_data.decode('utf-8').strip()), 'license_invalid')
     receipt = {'coreId': core, 'version': tag, 'platform': platform_key,
-               'archiveSha256': expected, 'binarySha256': hashlib.sha256(binary).hexdigest(), 'source': url}
+               'archiveSha256': expected, 'binarySha256': hashlib.sha256(binary).hexdigest(), 'source': url,
+               'sourceCode': f'https://github.com/{REPOSITORIES[core]}/tree/{tag}'}
     return {core: binary, 'LICENSE': license_data, 'artifact.json': json.dumps(receipt).encode()}
 
 

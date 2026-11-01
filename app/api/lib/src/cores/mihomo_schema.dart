@@ -279,11 +279,11 @@ class MihomoSchemas {
       if (full == 'grpc-service-name') when['transport'] = ['gRPC'];
       if (path.first == 'xhttp-config') when['transport'] = ['XHTTP'];
       if (id == 'hysteria2' && full == 'obfs-password')
-        when['native.obfs'] = ['salamander'];
+        when['native.obfs'] = ['salamander', 'gecko'];
       fields.add(
         _field(
           native,
-          group: group,
+          group: id == 'hysteria2' && full == 'obfs' ? 'security' : group,
           when: when,
           defaultValue: _default(id, full),
           advanced: !const {
@@ -367,6 +367,7 @@ class MihomoSchemas {
         : type.startsWith('int') || type.startsWith('uint')
         ? 'integer'
         : 'text';
+    if (name == 'obfs') kind = 'choice';
     if (name.endsWith('padding-scheme') ||
         name.endsWith('ech-key') ||
         name.endsWith('client-auth-cert'))
@@ -428,7 +429,7 @@ class MihomoSchemas {
     'stack' => ['gvisor', 'system', 'mixed'],
     'xhttp-config.mode' => ['auto', 'stream-one', 'stream-up', 'packet-up'],
     'congestion-controller' => ['bbr', 'cubic', 'new_reno'],
-    'obfs' => ['', 'salamander'],
+    'obfs' => ['', 'salamander', 'gecko'],
     'http-mask-mode' => ['legacy', 'stream', 'poll', 'auto'],
     'aead-method' => ['chacha20-poly1305', 'aes-128-gcm', 'none'],
     _ => [],

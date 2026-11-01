@@ -228,7 +228,7 @@ class MihomoConfiguration implements ConfigurationCodec {
         out['field:${f.id}'] = connection.settings[f.id]!;
     }
     for (final id in [
-      if (connection.settings['native.obfs'] == 'salamander')
+      if ({'salamander', 'gecko'}.contains(connection.settings['native.obfs']))
         'native.obfs-password',
     ]) {
       if ((out['field:$id'] ?? '').isEmpty) out['field:$id'] = secureToken();

@@ -1,4 +1,5 @@
 const coreRepositories = {
+  'amneziawg': 'amnezia-vpn/amneziawg-go',
   'mihomo': 'MetaCubeX/mihomo',
   'sing-box': 'SagerNet/sing-box',
   'xray': 'XTLS/Xray-core',

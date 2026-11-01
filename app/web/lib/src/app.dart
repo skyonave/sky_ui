@@ -13,6 +13,7 @@ import 'ui.dart';
 import 'field_help.dart';
 import 'api_client.dart';
 import 'protocol_field.dart';
+import 'panel_update_card.dart';
 
 class SkyApp extends StatefulComponent {
   const SkyApp({
@@ -31,7 +32,7 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.6.0-dev.4',
+    defaultValue: '0.7.0-dev.1',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
@@ -56,8 +57,7 @@ class _SkyAppState extends State<SkyApp> {
       panelData!.synchronized &&
       !runtimeBusy &&
       !maintenanceBusy &&
-      runtime?.platformSupported == true &&
-      runtime?.binaryAvailable == true;
+      runtimes.any((r) => r.platformSupported && r.binaryAvailable);
   final api = ApiClient();
   MaintenanceSnapshot? maintenance;
   MaintenanceJob? maintenanceJob;
@@ -67,15 +67,21 @@ class _SkyAppState extends State<SkyApp> {
   CoreUpdateInfo? coreUpdates;
   PanelUpdateInfo? panelUpdateInfo;
   bool panelUpdateLoading = false;
+  bool panelUpdateManualChecked = false;
   String? panelUpdateError, panelUpdateReloadId, panelUpdateTarget;
   DateTime? panelUpdateChecked;
   bool updatesLoading = false;
   String? updatesError;
   String? coreActionFeedback;
+  String? actionCore;
+  String maintenanceCore = 'mihomo';
+  String selectedLogInstance = 'primary';
+  final engineUpdates = <String, CoreUpdateInfo>{};
   String? updateTag;
   bool get maintenanceBusy =>
       maintenanceSubmitting || maintenanceJob?.busy == true;
   CoreSnapshot? runtime;
+  List<CoreSnapshot> runtimes = [];
   List<CoreLogEntry> runtimeLogs = [];
   SystemSnapshot? system;
   bool systemRefreshing = false,
@@ -99,12 +105,20 @@ class _SkyAppState extends State<SkyApp> {
 
   bool get runtimeOnline => runtime != null && runtimeError == null;
   bool get runtimeRunning =>
-      runtimeOnline && runtime!.processState == CoreProcessState.active;
+      runtimeOnline &&
+      runtimes.any((r) => r.processState == CoreProcessState.active);
+  bool get enginesReady =>
+      runtimeRunning &&
+      runtimes
+          .where((r) => r.processState == CoreProcessState.active)
+          .every((r) => panelData?.instanceReadiness[r.instanceId] == true);
   String get runtimeStatus => !runtimeOnline
       ? t(runtimeError == null ? 'runtime.loading' : 'runtime.offline')
-      : !runtime!.binaryAvailable
+      : !runtimes.any((r) => r.binaryAvailable)
       ? t('core.notInstalled')
-      : t('runtime.state.${runtime!.processState.name}');
+      : runtimeRunning
+      ? t(enginesReady ? 'status.running' : 'runtime.notReady')
+      : t('status.stopped');
 
   bool coreInstalled(String id) => runtimeOnline && runtime!.coreId == id
       ? runtime!.binaryAvailable
@@ -122,13 +136,17 @@ class _SkyAppState extends State<SkyApp> {
     final generation = runtimeGeneration;
     try {
       unawaited(refreshSystem());
-      final values = await Future.wait<Object>([api.core(), api.logs()]);
+      final values = await Future.wait<Object>([
+        api.cores(),
+        api.logs(instanceId: selectedLogInstance),
+      ]);
       if (!mounted || generation != runtimeGeneration) return;
       setState(() {
-        runtime = values[0] as CoreSnapshot;
+        runtimes = values[0] as List<CoreSnapshot>;
+        runtime = runtimes.where((v) => v.instanceId == 'primary').firstOrNull;
         if (!logsLive) runtimeLogs = values[1] as List<CoreLogEntry>;
         runtimeError = null;
-        store.running = runtime!.processState == CoreProcessState.active;
+        store.running = runtimeRunning;
       });
     } on ApiClientException catch (e) {
       if (mounted && generation == runtimeGeneration)
@@ -160,7 +178,9 @@ class _SkyAppState extends State<SkyApp> {
 
   void connectLogs() {
     logStream?.close();
-    final source = web.EventSource('/api/v1/cores/primary/logs/events');
+    final source = web.EventSource(
+      '/api/v1/cores/$selectedLogInstance/logs/events',
+    );
     logStream = source;
     source.addEventListener(
       'auth_expired',
@@ -224,8 +244,8 @@ class _SkyAppState extends State<SkyApp> {
     });
     var success = false;
     try {
-      await api.clearLogs();
-      final entries = await api.logs();
+      await api.clearLogs(instanceId: selectedLogInstance);
+      final entries = await api.logs(instanceId: selectedLogInstance);
       if (mounted) setState(() => runtimeLogs = entries);
       success = true;
     } on ApiClientException catch (e) {
@@ -244,27 +264,38 @@ class _SkyAppState extends State<SkyApp> {
     }
   }
 
-  Future<void> runCoreAction(CoreOperation operation) async {
+  Future<void> runCoreAction(
+    CoreOperation operation, {
+    String instanceId = 'primary',
+  }) async {
+    final target = runtimes
+        .where((r) => r.instanceId == instanceId)
+        .firstOrNull;
     if (dataBusy ||
         maintenanceBusy ||
         runtimeBusy ||
-        !runtimeOnline ||
-        !runtime!.operations.contains(operation))
+        target == null ||
+        !target.operations.contains(operation))
       return;
     runtimeGeneration++;
     dataGeneration++;
     setState(() {
       runtimeBusy = true;
+      actionCore = target.coreId;
       coreActionFeedback = null;
     });
     try {
-      final value = await api.execute(operation);
+      final value = await api.execute(operation, instanceId: instanceId);
       if (mounted)
         setState(() {
-          runtime = value;
+          if (instanceId == 'primary') runtime = value;
+          runtimes = [
+            for (final item in runtimes)
+              if (item.instanceId == instanceId) value else item,
+          ];
           coreActionFeedback = t('core.feedback.${operation.name}');
           runtimeError = null;
-          store.running = value.processState == CoreProcessState.active;
+          store.running = runtimeRunning;
         });
     } on ApiClientException catch (e) {
       if (mounted) {
@@ -287,7 +318,14 @@ class _SkyAppState extends State<SkyApp> {
   String? modal;
   String? editingId;
   String? selectedProtocol;
-  String connectionStep = 'core';
+  String connectionStep = 'protocol';
+  bool dependencyBusy = false;
+  int dependencyGeneration = 0;
+  String? dependencyMessage;
+  List<String> candidateEngines(String protocol) => [
+    for (final id in productProtocol(protocol)?.engines ?? <String>[])
+      if (store.supports(id, protocol)) id,
+  ];
   Map<String, String> connectionErrors = {};
   final advancedGroups = <String>{};
   String? selectedCore;
@@ -495,7 +533,11 @@ class _SkyAppState extends State<SkyApp> {
           generation == shareGeneration &&
           modal == 'share' &&
           sharing?.id == user.id)
-        setState(() => shareData = value);
+        setState(() {
+          shareData = value;
+          if (value.links.length == 1 && value.links.single.content != null)
+            shareSelection = '0';
+        });
     } on ApiClientException catch (e) {
       if (mounted &&
           generation == shareGeneration &&
@@ -526,6 +568,8 @@ class _SkyAppState extends State<SkyApp> {
   void closeModal() {
     if (dataBusy || clearingLogs || ownerBusy || maintenanceSubmitting) return;
     ownerDraft.clear();
+    dependencyGeneration++;
+    dependencyBusy = false;
     shareGeneration++;
     shareLoading = false;
     shareData = null;
@@ -540,7 +584,9 @@ class _SkyAppState extends State<SkyApp> {
   void newConnection([Connection? connection]) {
     if (!canInspect) return;
     editingId = connection?.id;
-    connectionStep = connection == null ? 'core' : 'parameters';
+    dependencyGeneration++;
+    connectionStep = connection == null ? 'protocol' : 'parameters';
+    dependencyMessage = null;
     connectionErrors = {};
     advancedGroups.clear();
     selectedProtocol = connection?.protocolId;
@@ -563,31 +609,34 @@ class _SkyAppState extends State<SkyApp> {
   }
 
   void chooseCore(String coreId) {
-    if (store.protocols[coreId]?.isNotEmpty != true) return;
+    if (!store.supports(coreId, selectedProtocol)) return;
     setState(() {
       selectedCore = coreId;
-      connectionStep = 'protocol';
       connectionErrors = {};
-      selectedProtocol = null;
-      draft = {'name': '', 'port': '8443'};
+      final definition = store.definition(coreId, selectedProtocol!);
+      draft = definition.defaults({
+        for (final f in definition.fields)
+          if (draft[f.id] != null) f.id: draft[f.id]!,
+        'name': draft['name'] ?? '',
+        'port': draft['port'] ?? '8443',
+      });
+      connectionStep = coreInstalled(coreId) ? 'core' : 'dependency';
+      if (coreInstalled(coreId)) advanceConnection();
       error = null;
     });
   }
 
   void chooseProtocol(ProtocolDefinition protocol) {
-    if (!store.supports(selectedCore, protocol.id)) return;
-    protocol = store.definition(selectedCore!, protocol.id);
+    final candidates = candidateEngines(protocol.id);
+    if (candidates.isEmpty) return;
     setState(() {
       selectedProtocol = protocol.id;
-      draft = protocol.defaults({
-        'name': draft['name'] ?? '',
-        'port': draft['port'] ?? '8443',
-      });
+      selectedCore = null;
       connectionErrors = {};
       advancedGroups.clear();
-      connectionStep = 'protocol';
-      advanceConnection();
+      connectionStep = 'core';
     });
+    if (candidates.length == 1) chooseCore(candidates.single);
     Timer(const Duration(milliseconds: 30), () {
       (web.document.querySelector('#field-name') as web.HTMLElement?)?.focus();
     });
@@ -622,7 +671,8 @@ class _SkyAppState extends State<SkyApp> {
       coreId: selectedCore!,
       protocolId: selectedProtocol!,
       port: port,
-      instanceId: old?.instanceId ?? 'primary',
+      instanceId:
+          old?.instanceId ?? store.instanceIds[selectedCore] ?? 'primary',
       enabled: old?.enabled ?? true,
       settings: {
         for (final f in definition.activeFields(draft))
@@ -637,10 +687,7 @@ class _SkyAppState extends State<SkyApp> {
         if (e.fields.isNotEmpty)
           setState(() {
             connectionErrors = e.fields;
-            final field = definition.fields
-                .where((f) => e.fields.containsKey(f.id))
-                .firstOrNull;
-            connectionStep = field?.group ?? 'parameters';
+            connectionStep = 'parameters';
           });
       },
     );
@@ -946,14 +993,9 @@ class _SkyAppState extends State<SkyApp> {
       div([
         span([
           span([], classes: 'status-dot'),
-          Component.text(
-            t(store.running ? 'status.running' : 'status.stopped'),
-          ),
+          Component.text(runtimeStatus),
         ], classes: 'table-summary'),
-        txt(
-          '${runtime?.name ?? '—'} · ${store.serverName}',
-          classes: 'mono muted',
-        ),
+        txt(store.serverName, classes: 'mono muted'),
       ], classes: 'table-footer'),
     ], classes: 'panel connection-panel'),
   ]);
@@ -1306,10 +1348,8 @@ class _SkyAppState extends State<SkyApp> {
         statusRow(
           'nav.core',
           runtimeStatus,
-          runtime?.controllerReady == true
-              ? 'system.coreHint'
-              : 'system.coreNotReady',
-          runtimeRunning && runtime?.controllerReady == true,
+          enginesReady ? 'system.coreHint' : 'system.coreNotReady',
+          enginesReady,
         ),
       ], classes: 'panel system-statuses'),
     ]);
@@ -1452,158 +1492,111 @@ class _SkyAppState extends State<SkyApp> {
     },
   );
 
-  Component corePage() {
-    final value = runtime;
-    final notice = runtimeBusy
-        ? t('runtime.working')
-        : runtimeError != null
-        ? runtimeMessage(runtimeError!)
-        : value?.error != null
-        ? runtimeMessage(value!.error!.code)
-        : coreActionFeedback ?? '';
-    final operation = runtimeRunning ? CoreOperation.stop : CoreOperation.start;
-    bool can(CoreOperation op) =>
-        runtimeOnline &&
-        !runtimeBusy &&
-        !dataBusy &&
-        !maintenanceBusy &&
-        value!.operations.contains(op);
+  Component corePage() => div([
+    heading('core'),
+    maintenanceStatus(),
+    for (final descriptor in coreCatalog) engineCard(descriptor),
+  ], classes: 'core-list');
+
+  Component engineCard(CoreDescriptor descriptor) {
+    final value = runtimes.where((r) => r.coreId == descriptor.id).firstOrNull;
+    final installed = value?.binaryAvailable == true;
+    final running = installed && value!.processState == CoreProcessState.active;
+    final availableUpdate = engineUpdates[descriptor.id]?.available == true;
+    final busy = dataBusy || runtimeBusy || maintenanceBusy || dependencyBusy;
+    final status = !installed
+        ? t('core.notInstalled')
+        : t('runtime.state.${value!.processState.name}');
     return div([
-      heading('core'),
-      if (maintenanceJob?.action == 'update') maintenanceStatus(),
       div([
-        div([
-          div([icon('core')], classes: 'core-large-icon'),
+        div([icon('core')], classes: 'core-large-icon'),
+        h2([Component.text(descriptor.name)]),
+        repositoryLink(descriptor.id),
+        pill(status, positive: running),
+      ], classes: 'core-header'),
+      div([
+        for (final fact in [
+          (t('core.version'), value?.version ?? '—'),
+          (
+            t('core.service'),
+            value?.service ?? 'sky-ui-${descriptor.id}.service',
+          ),
+          (
+            t('runtime.controller'),
+            installed
+                ? t(
+                    value!.controllerReady
+                        ? 'runtime.ready'
+                        : 'runtime.notReady',
+                  )
+                : '—',
+          ),
+          (
+            t('core.memory'),
+            value?.memoryBytes == null
+                ? '—'
+                : '${(value!.memoryBytes! / 1000000).toStringAsFixed(1)} MB',
+          ),
+        ])
           div([
-            txt(t('core.current'), classes: 'eyebrow'),
-            h2([Component.text(value?.name ?? 'mihomo')]),
-          ]),
-          repositoryLink(value?.coreId ?? 'mihomo'),
-          pill(runtimeStatus, positive: runtimeRunning),
-        ], classes: 'core-header'),
-        div([
-          for (final fact in [
-            (t('core.version'), value?.version ?? '—'),
-            (t('core.service'), value?.service ?? 'sky-ui-mihomo.service'),
-            (
-              t('runtime.controller'),
-              !runtimeOnline
-                  ? '—'
-                  : t(
-                      value!.controllerReady
-                          ? 'runtime.ready'
-                          : 'runtime.notReady',
-                    ),
-            ),
-            (
-              t('core.memory'),
-              value?.memoryBytes == null
-                  ? '—'
-                  : '${(value!.memoryBytes! / 1000000).toStringAsFixed(1)} MB',
-            ),
-          ])
-            div([
-              txt(fact.$1, classes: 'muted small'),
-              txt(fact.$2, classes: 'mono'),
-            ], classes: 'core-fact'),
-        ], classes: 'core-facts'),
-        div(
-          [Component.text(notice)],
-          classes: 'runtime-notice ${notice.isEmpty ? 'empty' : ''}',
-          attributes: {'role': 'status', 'aria-live': 'polite'},
-        ),
-        div([
+            txt(fact.$1, classes: 'muted small'),
+            txt(fact.$2, classes: 'mono'),
+          ], classes: 'core-fact'),
+      ], classes: 'core-facts'),
+      div(
+        [
+          if (actionCore == descriptor.id && coreActionFeedback != null)
+            Component.text(coreActionFeedback!)
+          else if (installed && value?.error != null)
+            Component.text(runtimeMessage(value!.error!.code)),
+        ],
+        classes: 'runtime-notice',
+        attributes: {'role': 'status'},
+      ),
+      div([
+        if (installed) ...[
           action(
-            t(runtimeRunning ? 'core.stop' : 'core.start'),
-            () => unawaited(runCoreAction(operation)),
+            t(running ? 'core.stop' : 'core.start'),
+            () => unawaited(
+              runCoreAction(
+                running ? CoreOperation.stop : CoreOperation.start,
+                instanceId: value!.instanceId,
+              ),
+            ),
             glyph: 'power',
-            classes: 'button ${runtimeRunning ? '' : 'primary'}',
-            disabled: !can(operation),
+            disabled: busy || value?.platformSupported != true,
           ),
           action(
             t('core.restart'),
-            () => unawaited(runCoreAction(CoreOperation.restart)),
+            () => unawaited(
+              runCoreAction(
+                CoreOperation.restart,
+                instanceId: value!.instanceId,
+              ),
+            ),
             glyph: 'refresh',
-            disabled: !can(CoreOperation.restart),
+            disabled: busy || value?.platformSupported != true,
           ),
-          action(
-            t('runtime.validate'),
-            () => unawaited(runCoreAction(CoreOperation.validate)),
-            glyph: 'check',
-            disabled: !can(CoreOperation.validate),
-          ),
-          action(
-            t(value?.binaryAvailable == true ? 'core.update' : 'core.install'),
-            () => unawaited(prepareCoreUpdate()),
-            glyph: 'down',
-            disabled:
-                !canInspect ||
-                maintenance?.available != true ||
-                maintenanceBusy ||
-                coreUpdates?.available != true ||
-                updatesError != null,
-          ),
+        ],
+        action(
+          t(installed ? 'core.update' : 'core.install'),
+          () => unawaited(prepareCoreUpdate(descriptor.id)),
+          glyph: 'down',
+          disabled: busy || maintenance?.available != true || !availableUpdate,
+        ),
+        if (installed)
           action(
             t('core.remove'),
-            () => openModal('coreRemove'),
+            () {
+              maintenanceCore = descriptor.id;
+              openModal('coreRemove');
+            },
             glyph: 'trash',
             classes: 'button danger',
-            disabled:
-                !canInspect ||
-                maintenance?.available != true ||
-                maintenanceBusy ||
-                runtimeBusy ||
-                value?.binaryAvailable != true,
+            disabled: busy || maintenance?.available != true,
           ),
-        ], classes: 'core-actions'),
-        maintenanceStatus(),
-        p([
-          Component.text(
-            updatesLoading && coreUpdates == null
-                ? t('core.updatesChecking')
-                : updatesError != null
-                ? runtimeMessage(updatesError!)
-                : coreUpdates == null
-                ? ''
-                : t(
-                    coreUpdates!.available
-                        ? 'core.updatesAvailable'
-                        : 'core.updatesNone',
-                  ),
-          ),
-        ], classes: 'muted small core-update-status'),
-      ], classes: 'panel core-panel live-core'),
-      div([
-        for (final core in const [
-          CoreDescriptor('sing-box', 'sing-box'),
-          CoreDescriptor('xray', 'Xray'),
-        ])
-          div([
-            div([
-              div([icon('core')], classes: 'core-large-icon'),
-              h2([Component.text(core.name)]),
-              repositoryLink(core.id),
-              pill(t('core.notInstalled')),
-            ], classes: 'core-header'),
-            div([
-              for (final key in [
-                'core.version',
-                'core.service',
-                'runtime.controller',
-                'core.memory',
-              ])
-                div([
-                  txt(t(key), classes: 'muted small'),
-                  txt('—', classes: 'mono'),
-                ], classes: 'core-fact'),
-            ], classes: 'core-facts'),
-            div([], classes: 'runtime-notice empty'),
-            div([
-              action(t('core.install'), () {}, glyph: 'plus', disabled: true),
-            ], classes: 'core-actions'),
-          ], classes: 'panel core-panel'),
-      ], classes: 'core-list'),
-    ]);
+      ], classes: 'core-actions'),
+    ], classes: 'panel core-panel');
   }
 
   String level(String value) => switch (value.toLowerCase()) {
@@ -1623,6 +1616,27 @@ class _SkyAppState extends State<SkyApp> {
           txt(
             t(logsLive ? 'logs.live' : 'logs.reconnecting'),
             classes: 'muted small',
+          ),
+          select(
+            [
+              for (final core in runtimes)
+                option(
+                  [Component.text(core.name)],
+                  value: core.instanceId,
+                  selected: selectedLogInstance == core.instanceId,
+                ),
+            ],
+            value: selectedLogInstance,
+            onChange: (values) {
+              setState(() {
+                runtimeGeneration++;
+                selectedLogInstance = values.first;
+                runtimeLogs = [];
+                followingLogs = true;
+              });
+              connectLogs();
+              unawaited(refreshRuntime());
+            },
           ),
           action(
             t('logs.clear'),
@@ -1871,15 +1885,19 @@ class _SkyAppState extends State<SkyApp> {
     }
   }
 
-  Future<void> refreshPanelUpdate() async {
+  Future<void> refreshPanelUpdate({bool refresh = false}) async {
     if (panelUpdateLoading) return;
-    panelUpdateLoading = true;
+    setState(() {
+      panelUpdateLoading = true;
+      if (refresh) panelUpdateManualChecked = false;
+    });
     try {
-      final value = await api.panelUpdate();
+      final value = await api.panelUpdate(refresh: refresh);
       if (mounted)
         setState(() {
           panelUpdateInfo = value;
           panelUpdateError = null;
+          if (refresh) panelUpdateManualChecked = true;
         });
     } on ApiClientException catch (e) {
       if (mounted) setState(() => panelUpdateError = e.code);
@@ -1895,59 +1913,48 @@ class _SkyAppState extends State<SkyApp> {
     final failed =
         maintenanceJob?.action == 'panel-update' &&
         maintenanceJob?.status == 'failed';
-    return div([
-      txt(t('panelUpdate.title'), classes: 'small'),
-      div(
-        [
-          Component.text(
-            updating
-                ? t('panelUpdate.running')
-                : failed
-                ? runtimeMessage(maintenanceJob!.error ?? 'panel_update_failed')
-                : panelUpdateError != null
-                ? t('panelUpdate.checkFailed')
-                : panelUpdateInfo?.available == true
-                ? t('panelUpdate.available', {
-                    'version': panelUpdateInfo!.latestVersion!,
-                  })
-                : panelUpdateInfo == null
-                ? t('panelUpdate.checking')
-                : !panelUpdateInfo!.supported
-                ? t('feature.unavailable')
-                : t('panelUpdate.none'),
-          ),
-        ],
-        classes: 'sidebar-update-status muted small',
-        attributes: {'role': 'status', 'aria-live': 'polite'},
-      ),
-      action(
-        t('panelUpdate.update'),
-        () {
-          panelUpdateTarget = panelUpdateInfo?.tag;
-          openModal('panelUpdate');
-        },
-        glyph: 'down',
-        classes:
-            'button ${panelUpdateInfo?.available == true ? 'primary' : ''}',
-        disabled:
-            updating ||
-            maintenanceBusy ||
-            panelUpdateLoading ||
-            panelUpdateError != null ||
-            panelUpdateInfo?.available != true ||
-            maintenance?.available != true,
-      ),
-    ], classes: 'sidebar-update');
+    return PanelUpdateCard(
+      info: panelUpdateInfo,
+      checking: panelUpdateLoading,
+      updating: updating,
+      busy: maintenanceBusy,
+      checkedManually: panelUpdateManualChecked,
+      checkError: panelUpdateError == null
+          ? null
+          : t('panelUpdate.checkFailed'),
+      updateError: failed && !panelUpdateManualChecked
+          ? runtimeMessage(maintenanceJob!.error ?? 'panel_update_failed')
+          : null,
+      updateEnabled: maintenance?.available == true,
+      onCheck: () => refreshPanelUpdate(refresh: true),
+      onUpdate: () {
+        panelUpdateTarget = panelUpdateInfo?.tag;
+        panelUpdateManualChecked = false;
+        openModal('panelUpdate');
+      },
+    );
   }
 
   Future<void> refreshCoreUpdates() async {
     if (updatesLoading) return;
     updatesLoading = true;
     try {
-      final value = await api.updates(runtime?.coreId ?? 'mihomo');
+      final values = await Future.wait(
+        coreCatalog.map((c) async {
+          try {
+            return await api.updates(c.id);
+          } on ApiClientException {
+            return null;
+          }
+        }),
+      );
       if (mounted)
         setState(() {
-          coreUpdates = value;
+          engineUpdates.clear();
+          for (final value in values.whereType<CoreUpdateInfo>()) {
+            engineUpdates[value.coreId] = value;
+          }
+          coreUpdates = engineUpdates['mihomo'];
           updatesError = null;
         });
     } on ApiClientException catch (e) {
@@ -1961,13 +1968,14 @@ class _SkyAppState extends State<SkyApp> {
     }
   }
 
-  Future<void> prepareCoreUpdate() async {
+  Future<void> prepareCoreUpdate([String core = 'mihomo']) async {
     await refreshCoreUpdates();
-    if (!mounted || coreUpdates?.available != true || updatesError != null)
-      return;
-    updateNotes = coreUpdates;
+    final value = engineUpdates[core];
+    if (!mounted || value?.available != true || updatesError != null) return;
+    maintenanceCore = core;
+    updateNotes = value;
     updateTag = updateNotes!.versions.first;
-    openModal(runtime?.binaryAvailable == true ? 'coreUpdate' : 'coreInstall');
+    openModal(coreInstalled(core) ? 'coreUpdate' : 'coreInstall');
   }
 
   Future<void> submitMaintenance(String action) async {
@@ -1976,6 +1984,9 @@ class _SkyAppState extends State<SkyApp> {
     try {
       final job = await api.maintain(
         action,
+        core: ['install', 'remove', 'update'].contains(action)
+            ? maintenanceCore
+            : null,
         backupId: action == 'restore' ? maintenanceBackupId : null,
         tag: action == 'panel-update'
             ? panelUpdateTarget
@@ -2370,7 +2381,10 @@ class _SkyAppState extends State<SkyApp> {
                   onChange: (value) => setState(() => updateTag = value.first),
                 ),
               ]),
-              txt('${runtime?.version ?? '—'} → $updateTag', classes: 'mono'),
+              txt(
+                '$maintenanceCore · ${runtimes.where((c) => c.coreId == maintenanceCore).firstOrNull?.version ?? '—'} → $updateTag',
+                classes: 'mono',
+              ),
               p([
                 Component.text(
                   t(
@@ -2407,18 +2421,14 @@ class _SkyAppState extends State<SkyApp> {
         if (modal != 'share')
           div([
             if (modal == 'connection' &&
-                selectedCore != null &&
-                connectionStep != 'core' &&
-                !(editingId != null &&
-                    connectionSteps.indexOf(connectionStep) == 2))
+                connectionSteps.indexOf(connectionStep) > 0 &&
+                editingId == null)
               action(
                 t('common.back'),
                 () => setState(() {
                   final previous = connectionSteps.indexOf(connectionStep) - 1;
                   if (previous >= 0) {
                     connectionStep = connectionSteps[previous];
-                    if (connectionStep == 'core') selectedCore = null;
-                    if (connectionStep == 'protocol') selectedProtocol = null;
                   }
                   connectionErrors = {};
                   error = null;
@@ -2446,7 +2456,9 @@ class _SkyAppState extends State<SkyApp> {
                   classes: 'button danger',
                   disabled: ownerBusy,
                 ),
-              if (modal == 'connection' && selectedProtocol != null)
+              if (modal == 'connection' &&
+                  selectedCore != null &&
+                  !{'core', 'protocol', 'dependency'}.contains(connectionStep))
                 action(
                   t(
                     connectionStep == 'review'
@@ -2545,8 +2557,11 @@ class _SkyAppState extends State<SkyApp> {
         ? store.definition(selectedCore!, selectedProtocol!)
         : null;
     return [
-      'core',
       'protocol',
+      if (selectedProtocol == null ||
+          candidateEngines(selectedProtocol!).length > 1)
+        'core',
+      if (selectedCore != null && !coreInstalled(selectedCore!)) 'dependency',
       if (definition == null ||
           definition.fields.any((f) => f.group == 'transport'))
         'transport',
@@ -2565,7 +2580,11 @@ class _SkyAppState extends State<SkyApp> {
       for (final f
           in definition
               .activeFields(draft)
-              .where((f) => f.group == connectionStep))
+              .where(
+                (f) => connectionStep == 'parameters'
+                    ? !isStepChoice(f, definition)
+                    : f.group == connectionStep && isStepChoice(f, definition),
+              ))
         if (f.validate(draft[f.id] ?? '', draft) case final String e) f.id: e,
     };
     if (connectionStep == 'parameters') {
@@ -2577,11 +2596,13 @@ class _SkyAppState extends State<SkyApp> {
     }
     if (connectionErrors.isNotEmpty) return;
     final steps = connectionSteps;
-    var index = steps.indexOf(connectionStep) + 1;
+    var index = connectionStep == 'core' && !steps.contains('core')
+        ? 1
+        : steps.indexOf(connectionStep) + 1;
     while (index < steps.length - 1) {
       final fields = definition
           .activeFields(draft)
-          .where((f) => f.group == steps[index])
+          .where((f) => f.group == steps[index] && isStepChoice(f, definition))
           .toList();
       if (fields.isNotEmpty &&
           !fields.every((f) => !f.advanced && f.options.length == 1))
@@ -2593,42 +2614,143 @@ class _SkyAppState extends State<SkyApp> {
     error = null;
   }
 
+  bool isStepChoice(ProtocolField field, ProtocolDefinition definition) => {
+    definition.clientFieldBindings['transport'],
+    definition.clientFieldBindings['security'],
+    if (definition.id == 'hysteria2') 'native.obfs',
+    if (definition.id == 'hysteria2') 'obfs',
+  }.contains(field.id);
+
+  Future<void> installDependency() async {
+    if (dependencyBusy || selectedCore == null) return;
+    final core = selectedCore!, protocol = selectedProtocol;
+    final generation = ++dependencyGeneration;
+    bool current() =>
+        mounted &&
+        generation == dependencyGeneration &&
+        modal == 'connection' &&
+        selectedCore == core &&
+        selectedProtocol == protocol;
+    setState(() {
+      dependencyBusy = true;
+      error = null;
+      dependencyMessage = t('builder.installChecking');
+    });
+    try {
+      final update = await api.updates(core);
+      if (!current()) return;
+      if (!update.available || update.versions.isEmpty)
+        throw const ApiClientException('core_release_unverified');
+      final job = await api.maintain(
+        'install',
+        core: core,
+        tag: update.versions.first,
+      );
+      if (!current()) return;
+      setState(() {
+        maintenanceJob = job;
+        dependencyMessage = t(
+          core == 'amneziawg' ? 'builder.installingAwg' : 'builder.installing',
+        );
+      });
+      final deadline = DateTime.now().add(const Duration(minutes: 12));
+      while (DateTime.now().isBefore(deadline)) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+        if (!current()) return;
+        MaintenanceSnapshot status;
+        try {
+          status = await api.maintenance();
+        } on ApiClientException catch (e) {
+          if (e.code == 'auth_required') rethrow;
+          continue; // The maintenance worker briefly stops the API while installing.
+        }
+        if (!current()) return;
+        setState(() {
+          maintenance = status;
+          maintenanceJob = status.job;
+        });
+        if (status.job?.id != job.id || status.job!.busy) continue;
+        if (status.job!.status != 'completed')
+          throw ApiClientException(status.job!.error ?? 'maintenance_failed');
+        final snapshots = await api.cores();
+        final data = await api.panel();
+        if (!mounted ||
+            modal != 'connection' ||
+            selectedCore != core ||
+            selectedProtocol != protocol)
+          return;
+        setState(() {
+          runtimes = snapshots;
+          panelData = data;
+          store.apply(data);
+          draftRevision = data.revision;
+          dependencyMessage = null;
+        });
+        chooseCore(core);
+        return;
+      }
+      throw const ApiClientException('maintenance_timeout');
+    } on ApiClientException catch (e) {
+      if (current()) setState(() => error = runtimeMessage(e.code));
+    } finally {
+      if (current()) setState(() => dependencyBusy = false);
+    }
+  }
+
   Component connectionForm() {
+    if (connectionStep == 'protocol')
+      return div([
+        div([
+          for (final protocol in productProtocols)
+            productProtocolCard(protocol),
+        ], classes: 'protocol-grid'),
+      ]);
     if (connectionStep == 'core')
       return div([
         div([
-          for (final core in coreCatalog)
+          for (final id in candidateEngines(selectedProtocol!))
             button(
-              [icon('core'), txt(core.name)],
+              [
+                icon('core'),
+                txt(coreName(id)),
+                if (id == candidateEngines(selectedProtocol!).first)
+                  txt(t('builder.recommended'), classes: 'recommended-badge'),
+                txt(
+                  t(
+                    coreInstalled(id)
+                        ? 'builder.engineInstalled'
+                        : 'builder.engineRequired',
+                  ),
+                  classes: 'muted small',
+                ),
+              ],
               classes: 'protocol-option core-option',
               type: ButtonType.button,
-              disabled:
-                  dataBusy ||
-                  !coreInstalled(core.id) ||
-                  store.protocols[core.id]?.any((p) => p.available) != true,
-              onClick: () => chooseCore(core.id),
+              disabled: dataBusy || dependencyBusy,
+              onClick: () => chooseCore(id),
             ),
         ], classes: 'protocol-grid core-grid'),
       ]);
-    if (connectionStep == 'protocol')
+    if (connectionStep == 'dependency')
       return div([
-        txt(coreName(selectedCore!), classes: 'protocol-tag'),
-        div([
-          for (final inventory
-              in (store.protocols[selectedCore!] ??
-                      protocolsForCore(selectedCore!))
-                  .where(
-                    (p) =>
-                        store.definition(selectedCore!, p.id).category ==
-                        'proxy',
-                  ))
-            protocolCard(store.definition(selectedCore!, inventory.id)),
-        ], classes: 'protocol-grid'),
-      ]);
+        h3([Component.text(coreName(selectedCore!))]),
+        p([Component.text(t('builder.installRequired'))]),
+        if (dependencyMessage != null) p([Component.text(dependencyMessage!)]),
+        action(
+          t(dependencyBusy ? 'builder.installing' : 'builder.installContinue'),
+          () => unawaited(installDependency()),
+          classes: 'button primary',
+          disabled: dependencyBusy || maintenanceBusy,
+        ),
+      ], classes: 'builder-content');
     final definition = store.definition(selectedCore!, selectedProtocol!);
     final fields = definition
         .activeFields(draft)
-        .where((f) => f.group == connectionStep)
+        .where(
+          (f) => connectionStep == 'parameters'
+              ? !isStepChoice(f, definition)
+              : f.group == connectionStep && isStepChoice(f, definition),
+        )
         .toList();
     return div([
       div([
@@ -2763,6 +2885,42 @@ class _SkyAppState extends State<SkyApp> {
     ], classes: 'protocol-card ${available ? 'available' : 'unavailable'}');
   }
 
+  Component productProtocolCard(ProductProtocol protocol) {
+    final available = candidateEngines(protocol.id).isNotEmpty;
+    return div([
+      button(
+        [
+          span([
+            icon('connections'),
+            txt(protocol.name),
+            icon('chevron'),
+          ], classes: 'protocol-card-heading'),
+          span([
+            Component.text(t(protocol.descriptionKey)),
+          ], classes: 'protocol-description'),
+          if (!available)
+            txt(
+              t(protocol.tentative ? 'builder.planned' : 'feature.unavailable'),
+              classes: 'availability-chip',
+            ),
+        ],
+        type: ButtonType.button,
+        classes: 'protocol-select',
+        disabled: dataBusy || !available,
+        onClick: () => chooseProtocol(
+          ProtocolDefinition(protocol.id, protocol.name, const []),
+        ),
+      ),
+      FieldHelp(
+        id: 'about-${protocol.id}',
+        label: protocol.name,
+        description: t(protocol.detailsKey),
+        buttonLabel: t('common.help', {'name': protocol.name}),
+        key: ValueKey('product:${protocol.id}'),
+      ),
+    ], classes: 'protocol-card ${available ? 'available' : 'unavailable'}');
+  }
+
   void changeField(ProtocolField f, String value) => setState(() {
     draft[f.id] = value;
     if (selectedCore != null && selectedProtocol != null)
@@ -2892,10 +3050,11 @@ class _SkyAppState extends State<SkyApp> {
     if (shareLoading) return p([Component.text(t('runtime.loading'))]);
     if (shareData == null) return div([]);
     final selected = int.tryParse(shareSelection) ?? -1;
+    final artifact = selected >= 0 && selected < shareData!.links.length
+        ? shareData!.links[selected]
+        : null;
     final url = selected >= 0 && selected < shareData!.links.length
-        ? shareData!.links[selected].uri
-        : selected == -2
-        ? shareData!.subscriptionUrls['v2ray'] ?? shareData!.subscriptionUrl
+        ? shareData!.links[selected].payload
         : shareData!.subscriptionUrl;
     final qr = QrImage(
       QrCode.fromData(data: url, errorCorrectLevel: QrErrorCorrectLevel.M),
@@ -2908,15 +3067,9 @@ class _SkyAppState extends State<SkyApp> {
       select(
         [
           option(
-            [Component.text(t('share.clashSubscription'))],
+            [Component.text(t('share.subscription'))],
             value: '-1',
             selected: shareSelection == '-1',
-          ),
-          option(
-            [Component.text(t('share.v2raySubscription'))],
-            value: '-2',
-            selected: shareSelection == '-2',
-            disabled: !shareData!.subscriptionUrls.containsKey('v2ray'),
           ),
           for (var i = 0; i < shareData!.links.length; i++)
             option(
@@ -2962,7 +3115,9 @@ class _SkyAppState extends State<SkyApp> {
         ),
       ], classes: 'qr-code'),
       txt(
-        selected < 0
+        artifact?.content != null
+            ? 'AmneziaWG 3.1 · .conf'
+            : selected < 0
             ? t('share.format')
             : t('share.uriFormat', {
                 'protocol': Uri.parse(url).scheme.toUpperCase(),
@@ -2988,6 +3143,19 @@ class _SkyAppState extends State<SkyApp> {
           }
         }),
       ], classes: 'copy-field'),
+      if (artifact?.content != null)
+        action(t('maintenance.download'), () {
+          final blob = web.Blob(
+            [url.toJS].toJS,
+            web.BlobPropertyBag(type: 'text/plain;charset=utf-8'),
+          );
+          final objectUrl = web.URL.createObjectURL(blob);
+          final link = web.HTMLAnchorElement()
+            ..href = objectUrl
+            ..download = artifact!.filename ?? 'Sky-UI.conf';
+          link.click();
+          web.URL.revokeObjectURL(objectUrl);
+        }, glyph: 'down'),
     ], classes: 'share-content');
   }
 }

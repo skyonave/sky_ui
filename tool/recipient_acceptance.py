@@ -20,6 +20,7 @@ def main():
 
     def request(path, method='GET', value=None, expected=200, anonymous=False):
         headers = {} if anonymous else {'Cookie': cookie, 'X-Sky-UI-CSRF': csrf, 'Origin': origin}
+        headers['User-Agent'] = 'mihomo/acceptance'
         if value is not None:
             headers['Content-Type'] = 'application/json'
         req = urllib.request.Request(origin + path, method=method, headers=headers,

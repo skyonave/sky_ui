@@ -12,7 +12,7 @@ class Adapter extends FakeAdapter {
   bool invalidCandidate = false;
   @override
   Future<void> validate(ManagedCore core) async {
-    if (invalidCandidate && core.configuration.endsWith('.validate'))
+    if (invalidCandidate && File(core.configuration).parent.parent.path.endsWith('${Platform.pathSeparator}staging'))
       throw const ApiException('configuration_invalid', status: 422);
     await super.validate(core);
   }
@@ -578,6 +578,99 @@ void main() {
     },
   );
   test(
+    'one subscription URL negotiates formats and preserves revocation',
+    () async {
+      final connectionId = (await connection()).connections.single.id;
+      final user = (await recipient(connectionId)).recipients.single;
+      final share = await panel.share(user.id);
+      final path = Uri.parse(share.subscriptionUrl).path;
+      expect(path, matches(RegExp(r'^/s/[A-Za-z0-9_-]{43}$')));
+      final server = await serve(
+        createApplication(config, manager, panel: panel),
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final client = HttpClient()..findProxy = (_) => 'DIRECT';
+      Future<({int status, String body, String? type, String? vary})> fetch(
+        String suffix,
+        String agent, {
+        String method = 'GET',
+      }) async {
+        final request = await client.openUrl(
+          method,
+          Uri.parse('http://127.0.0.1:${server.port}$path$suffix'),
+        );
+        request.headers.set('user-agent', agent);
+        final response = await request.close();
+        return (
+          status: response.statusCode,
+          body: await utf8.decoder.bind(response).join(),
+          type: response.headers.value('content-type'),
+          vary: response.headers.value('vary'),
+        );
+      }
+
+      try {
+        for (final agent in [
+          'V2Box/10.1',
+          'v2rayNG/1.10',
+          'Happ/1.63.1',
+          'Hiddify/4.1',
+          'Karing/1.2',
+          '',
+        ]) {
+          final result = await fetch('', agent);
+          expect(result.status, 200);
+          expect(result.type, startsWith('text/plain'));
+          expect(result.vary, 'User-Agent');
+          expect(
+            utf8.decode(base64Decode(result.body)).trim(),
+            share.links.single.uri,
+          );
+        }
+        for (final agent in [
+          'clash.meta',
+          'clash-verge/2.4',
+          'FlClash/0.8',
+          'Stash/3.6',
+        ]) {
+          final result = await fetch('', agent);
+          expect(result.status, 200);
+          expect(result.type, startsWith('application/yaml'));
+          final profile = jsonDecode(result.body) as Map;
+          expect((profile['proxies'] as List).single['type'], 'vless');
+          expect(
+            (profile['proxies'] as List).single['uuid'],
+            Uri.parse(share.links.single.uri).userInfo,
+          );
+        }
+        expect(
+          (await fetch('.yaml', 'V2Box/10.1')).type,
+          startsWith('application/yaml'),
+        );
+        expect(
+          (await fetch('.txt', 'clash.meta')).type,
+          startsWith('text/plain'),
+        );
+        final head = await fetch('', 'clash.meta', method: 'HEAD');
+        expect(head.status, 200);
+        expect(head.body, isEmpty);
+        await panel.saveRecipient(
+          repository.revision,
+          user.copyWith(enabled: false),
+          id: user.id,
+        );
+        for (final suffix in ['', '.yaml', '.txt']) {
+          expect((await fetch(suffix, 'clash.meta')).status, 404);
+          expect((await fetch(suffix, 'V2Box/10.1')).status, 404);
+        }
+      } finally {
+        client.close(force: true);
+        await server.close(force: true);
+      }
+    },
+  );
+  test(
     'gateway credential is required for loopback access, including subscription routing',
     () async {
       final c = (await connection()).connections.single;
@@ -673,7 +766,7 @@ void main() {
       }
 
       try {
-        for (final target in [path, path.replaceFirst('.yaml', '.txt')]) {
+        for (final target in [path, '$path.yaml', '$path.txt']) {
           expect(await status('GET', target), 200);
           expect(await status('HEAD', target), 200);
           expect(await status('POST', target), 403);

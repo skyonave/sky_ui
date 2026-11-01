@@ -6,11 +6,14 @@
 
 ### Core support
 
-| Core | Tested version | Supported |
+| Core | Tested version | Protocols |
 | --- | --- | --- |
-| [mihomo](https://github.com/MetaCubeX/mihomo) | v1.19.33 | ✅ |
-| [sing-box](https://github.com/SagerNet/sing-box) | N/A | ❌ |
-| [Xray](https://github.com/XTLS/Xray-core) | N/A | ❌ |
+| [mihomo](https://github.com/MetaCubeX/mihomo) | v1.19.33 | VLESS, Hysteria 2, Shadowsocks, TUIC v5, Mieru, TrustTunnel |
+| [sing-box](https://github.com/SagerNet/sing-box) | v1.14.4 | VLESS, NaiveProxy, Hysteria 2, Shadowsocks, TUIC v5 |
+| [Xray](https://github.com/XTLS/Xray-core) | v26.10.31 | VLESS, Shadowsocks |
+| [AmneziaWG Go](https://github.com/amnezia-vpn/amneziawg-go) | v3.1.20260828 | AmneziaWG 3.1 |
+
+Linux amd64. Verified versions are listed in the [compatibility catalog](compatibility/cores).
 
 
 ## English
@@ -26,7 +29,7 @@ Linux:
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/main/install.sh)"
 ```
 
-The installer downloads the panel release and a verified core separately. Existing cores are preserved when reinstalling the panel. The setup wizard creates the administrator and configures IP access or an optional domain. Let's Encrypt certificates renew automatically. Domain access requires DNS pointing to your server and open TCP ports 80 and 443.
+The installer downloads the panel. Choose a protocol when creating a connection; the panel installs its engine if needed. Engines run together and are preserved when reinstalling the panel. The setup wizard creates the administrator and configures IP access or an optional domain. Let's Encrypt certificates renew automatically. Domain access requires DNS pointing to your server and open TCP ports 80 and 443.
 
 Run `sudo skyui setup` to change the address or recover administrator access. Run `sudo skyui --help` for local management, backups and HTTPS settings. `sudo skyui uninstall` removes the installation and its data after confirmation.
 
@@ -47,7 +50,7 @@ Linux:
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/main/install.sh)"
 ```
 
-Установщик скачает панель и проверенное ядро отдельно. При повторной установке ядро сохраняется. Мастер создаст администратора и предложит доступ по IP или домену. Сертификаты Let's Encrypt продлеваются автоматически. Для домена направь DNS на сервер и открой TCP-порты 80 и 443.
+Установщик скачает панель. При создании подключения выбери протокол, а панель установит нужное ядро, если его нет. Разные ядра работают одновременно и сохраняются при повторной установке панели. Мастер создаст администратора и предложит доступ по IP или домену. Сертификаты Let's Encrypt продлеваются автоматически. Для домена направь DNS на сервер и открой TCP-порты 80 и 443.
 
 `sudo skyui setup` меняет адрес и восстанавливает доступ администратора. Все команды управления, резервного копирования и HTTPS доступны в `sudo skyui --help`. `sudo skyui uninstall` удаляет установку и её данные.
 

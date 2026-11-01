@@ -2,6 +2,15 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../config.dart';
 import 'domain.dart';
 
+/// Protocols with per-recipient address/resource allocation opt in explicitly.
+abstract interface class GrantAllocator {
+  Map<String, String> allocateGrant(
+    PanelData data,
+    StoredConnection connection,
+    Map<String, String> credentials,
+  );
+}
+
 abstract interface class ConfigurationCodec {
   String get coreId;
   List<ProtocolDefinition> get protocols;

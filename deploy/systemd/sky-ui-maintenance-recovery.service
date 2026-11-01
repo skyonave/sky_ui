@@ -2,7 +2,7 @@
 Description=Sky UI interrupted maintenance recovery
 DefaultDependencies=no
 After=local-fs.target
-Before=sky-ui.service sky-ui-mihomo.service sky-ui-edge.service
+Before=sky-ui.service sky-ui-mihomo.service sky-ui-sing-box.service sky-ui-xray.service sky-ui-amneziawg.service sky-ui-edge.service
 ConditionPathExists=/var/lib/sky-ui-maintenance
 
 [Service]

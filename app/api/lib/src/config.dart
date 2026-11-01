@@ -11,7 +11,7 @@ String _bundleVersion() {
     if (RegExp(r'^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?$').hasMatch(value))
       return value;
   }
-  return '0.6.0-dev.4';
+  return '0.7.0-dev.1';
 }
 
 class ServerConfig {
@@ -43,6 +43,21 @@ class ServerConfig {
   final bool requireOwnerAuth;
   final String certificatesDirectory;
   final bool networkAdministration;
+
+  List<ManagedCore> get proxyCores => [
+    for (final id in ['sing-box', 'xray', 'amneziawg'])
+      ManagedCore(
+        id: id,
+        coreId: id,
+        service: 'sky-ui-$id.service',
+        binary: '/opt/sky-ui/cores/$id/current/$id',
+        directory: '$dataDirectory/cores/$id',
+        configuration: '$dataDirectory/cores/$id/config.json',
+        // No control socket is exposed for engines that do not need one.
+        controller: Uri.parse('http://127.0.0.1:0'),
+        secret: '',
+      ),
+  ];
 
   static Future<ServerConfig> fromEnvironment([
     Map<String, String>? environment,

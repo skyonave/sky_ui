@@ -14,14 +14,17 @@ class MaintenanceService {
   final CommandRunner runner;
   final String directory;
   final bool supported;
+  bool _submitting = false;
   static final idPattern = RegExp(r'^[a-f0-9]{32}$');
   File get _request => File('$directory/inbox/request.json');
   bool get available => supported && Directory('$directory/inbox').existsSync();
   bool get busy {
     if (!available) return false;
+    if (_submitting) return true;
     if (File('$directory/restore-intent.json').existsSync() ||
         File('$directory/update-intent.json').existsSync() ||
         File('$directory/core-remove-intent.json').existsSync() ||
+        File('$directory/engine-intent.json').existsSync() ||
         File('$directory/panel-update-intent.json').existsSync())
       return true;
     if (_request.existsSync()) return true;
@@ -76,9 +79,23 @@ class MaintenanceService {
     String? core,
     String? tag,
   }) async {
+    if (busy) throw const ApiException('maintenance_busy', status: 409);
+    _submitting = true;
+    try {
+      return await _submit(action, backupId: backupId, core: core, tag: tag);
+    } finally {
+      _submitting = false;
+    }
+  }
+
+  Future<MaintenanceJob> _submit(
+    String action, {
+    String? backupId,
+    String? core,
+    String? tag,
+  }) async {
     if (!available)
       throw const ApiException('maintenance_unavailable', status: 501);
-    if (busy) throw const ApiException('maintenance_busy', status: 409);
     if (![
           'backup',
           'restore',
@@ -88,13 +105,13 @@ class MaintenanceService {
           'panel-update',
         ].contains(action) ||
         (action == 'restore' && !idPattern.hasMatch(backupId ?? '')) ||
-        (action == 'remove' && core != 'mihomo') ||
+        (action == 'remove' && !coreRepositories.containsKey(core)) ||
         (action == 'panel-update' &&
             !RegExp(
               r'^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.\-]+)?$',
             ).hasMatch(tag ?? '')) ||
         (['update', 'install'].contains(action) &&
-            (core != 'mihomo' ||
+            (!coreRepositories.containsKey(core) ||
                 !RegExp(r'^v\d+\.\d+\.\d+$').hasMatch(tag ?? '')))) {
       throw const ApiException('request_invalid', status: 400);
     }

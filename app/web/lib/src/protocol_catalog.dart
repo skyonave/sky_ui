@@ -37,6 +37,7 @@ const coreCatalog = [
   CoreDescriptor('mihomo', 'mihomo'),
   CoreDescriptor('sing-box', 'sing-box'),
   CoreDescriptor('xray', 'Xray'),
+  CoreDescriptor('amneziawg', 'AmneziaWG'),
 ];
 
 // Inbound inventories from official documentation, checked 2026-10-31.
@@ -108,4 +109,4 @@ List<ProtocolDefinition> protocolsForCore(String coreId) => [
 ];
 
 String coreName(String coreId) =>
-    coreCatalog.firstWhere((c) => c.id == coreId).name;
+    coreCatalog.where((c) => c.id == coreId).firstOrNull?.name ?? coreId;

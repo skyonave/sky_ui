@@ -30,8 +30,9 @@ class PanelUpdates {
   DateTime? _checked;
   Future<PanelUpdateInfo>? _pending;
 
-  Future<PanelUpdateInfo> get() async {
-    if (_cached != null &&
+  Future<PanelUpdateInfo> get({bool refresh = false}) async {
+    if (!refresh &&
+        _cached != null &&
         DateTime.now().difference(_checked!) < const Duration(minutes: 5))
       return _cached!;
     return _pending ??= _read()

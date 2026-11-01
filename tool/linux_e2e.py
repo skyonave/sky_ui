@@ -197,7 +197,7 @@ def revoked(port, destination):
 
 
 def fetch_profile(url):
-    status, body = request(url)
+    status, body = request(url, headers={'User-Agent':'mihomo/acceptance'})
     assert status == 200, 'Anonymous bearer subscription failed.'
     result = json.loads(body)
     assert 'listeners' not in result and 'secret' not in result and 'private-key' not in body.decode()

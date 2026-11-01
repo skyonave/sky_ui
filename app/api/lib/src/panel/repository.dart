@@ -147,7 +147,15 @@ class PanelRepository {
             digest(token),
           ]).firstOrNull?['id']
           as String?;
-  void commit(PanelData data, String configuration) => transaction(() {
+  String? instanceHash(String id) =>
+      metadata('configurationHash:$id') ??
+      (id == 'primary' ? configurationHash : null);
+
+  void commit(
+    PanelData data,
+    String configuration, {
+    Map<String, String> configurations = const {},
+  }) => transaction(() {
     _db.execute('DELETE FROM grants');
     _db.execute('DELETE FROM recipients');
     _db.execute('DELETE FROM connections');
@@ -185,6 +193,9 @@ class PanelRepository {
     _set('revision', '${revision + 1}');
     _set('configurationHash', digest(configuration));
     _set('configuration', configuration);
+    for (final entry in configurations.entries) {
+      _set('configurationHash:${entry.key}', digest(entry.value));
+    }
     clearPending();
   });
   void close() => _db.close();

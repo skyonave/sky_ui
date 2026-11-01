@@ -72,15 +72,19 @@ class ApiClient {
       (await _request('/api/v1/updates/$core'))['data'] as Map,
     ),
   );
-  Future<PanelUpdateInfo> panelUpdate() async => PanelUpdateInfo.fromJson(
-    Map<String, dynamic>.from(
-      (await _request('/api/v1/panel-update'))['data'] as Map,
-    ),
-  );
+  Future<PanelUpdateInfo> panelUpdate({bool refresh = false}) async =>
+      PanelUpdateInfo.fromJson(
+        Map<String, dynamic>.from(
+          (await _request(
+                '/api/v1/panel-update${refresh ? '?refresh=true' : ''}',
+              ))['data']
+              as Map,
+        ),
+      );
 
-  Future<void> clearLogs() async {
+  Future<void> clearLogs({String instanceId = 'primary'}) async {
     await _request(
-      '/api/v1/cores/primary/logs',
+      '/api/v1/cores/$instanceId/logs',
       method: 'DELETE',
       payload: {'confirmed': true},
     );
@@ -96,6 +100,7 @@ class ApiClient {
     String action, {
     String? backupId,
     String? tag,
+    String? core,
   }) async => MaintenanceJob.fromJson(
     Map<String, dynamic>.from(
       (await _request(
@@ -103,6 +108,7 @@ class ApiClient {
             post: true,
             payload: {
               'action': action,
+              if (core != null) 'core': core,
               'confirmed': true,
               if (backupId != null) 'backupId': backupId,
               if (tag != null) 'tag': tag,
@@ -169,27 +175,36 @@ class ApiClient {
     }
   }
 
-  Future<CoreSnapshot> core() async => CoreSnapshot.fromJson(
-    Map<String, dynamic>.from(
-      (await _request('/api/v1/cores/primary'))['data'] as Map,
-    ),
-  );
-  Future<List<CoreLogEntry>> logs() async =>
-      ((await _request('/api/v1/cores/primary/logs'))['data'] as List)
+  Future<List<CoreSnapshot>> cores() async =>
+      ((await _request('/api/v1/cores'))['data'] as List)
+          .map(
+            (v) => CoreSnapshot.fromJson(Map<String, dynamic>.from(v as Map)),
+          )
+          .toList();
+  Future<CoreSnapshot> core({String instanceId = 'primary'}) async =>
+      CoreSnapshot.fromJson(
+        Map<String, dynamic>.from(
+          (await _request('/api/v1/cores/$instanceId'))['data'] as Map,
+        ),
+      );
+  Future<List<CoreLogEntry>> logs({String instanceId = 'primary'}) async =>
+      ((await _request('/api/v1/cores/$instanceId/logs'))['data'] as List)
           .map(
             (v) => CoreLogEntry.fromJson(Map<String, dynamic>.from(v as Map)),
           )
           .toList();
-  Future<CoreSnapshot> execute(CoreOperation operation) async =>
-      CoreSnapshot.fromJson(
-        Map<String, dynamic>.from(
-          (await _request(
-                '/api/v1/cores/primary/actions/${operation.name}',
-                post: true,
-              ))['data']
-              as Map,
-        ),
-      );
+  Future<CoreSnapshot> execute(
+    CoreOperation operation, {
+    String instanceId = 'primary',
+  }) async => CoreSnapshot.fromJson(
+    Map<String, dynamic>.from(
+      (await _request(
+            '/api/v1/cores/$instanceId/actions/${operation.name}',
+            post: true,
+          ))['data']
+          as Map,
+    ),
+  );
 
   Future<PanelSnapshot> panel() async => PanelSnapshot.fromJson(
     Map<String, dynamic>.from((await _request('/api/v1/panel'))['data'] as Map),
