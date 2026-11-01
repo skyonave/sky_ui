@@ -14,6 +14,7 @@ import 'field_help.dart';
 import 'api_client.dart';
 import 'protocol_field.dart';
 import 'panel_update_card.dart';
+import 'core_install_progress.dart';
 
 class SkyApp extends StatefulComponent {
   const SkyApp({
@@ -32,7 +33,7 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.7.0-dev.2',
+    defaultValue: '0.7.0-dev.3',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
@@ -322,6 +323,8 @@ class _SkyAppState extends State<SkyApp> {
   bool dependencyBusy = false;
   int dependencyGeneration = 0;
   String? dependencyMessage;
+  String? dependencyJobId;
+  bool dependencyReconnecting = false;
   List<String> candidateEngines(String protocol) => [
     for (final id in productProtocol(protocol)?.engines ?? <String>[])
       if (store.supports(id, protocol)) id,
@@ -596,6 +599,8 @@ class _SkyAppState extends State<SkyApp> {
     dependencyGeneration++;
     connectionStep = connection == null ? 'protocol' : 'parameters';
     dependencyMessage = null;
+    dependencyJobId = null;
+    dependencyReconnecting = false;
     connectionErrors = {};
     advancedGroups.clear();
     selectedProtocol = connection?.protocolId;
@@ -2699,6 +2704,8 @@ class _SkyAppState extends State<SkyApp> {
       if (!current()) return;
       setState(() {
         maintenanceJob = job;
+        dependencyJobId = job.id;
+        dependencyReconnecting = false;
         dependencyMessage = t(
           core == 'amneziawg' ? 'builder.installingAwg' : 'builder.installing',
         );
@@ -2712,23 +2719,21 @@ class _SkyAppState extends State<SkyApp> {
           status = await api.maintenance();
         } on ApiClientException catch (e) {
           if (e.code == 'auth_required') rethrow;
+          if (current()) setState(() => dependencyReconnecting = true);
           continue; // The maintenance worker briefly stops the API while installing.
         }
         if (!current()) return;
         setState(() {
           maintenance = status;
           maintenanceJob = status.job;
+          dependencyReconnecting = false;
         });
         if (status.job?.id != job.id || status.job!.busy) continue;
         if (status.job!.status != 'completed')
           throw ApiClientException(status.job!.error ?? 'maintenance_failed');
         final snapshots = await api.cores();
         final data = await api.panel();
-        if (!mounted ||
-            modal != 'connection' ||
-            selectedCore != core ||
-            selectedProtocol != protocol)
-          return;
+        if (!current()) return;
         setState(() {
           runtimes = snapshots;
           panelData = data;
@@ -2786,9 +2791,27 @@ class _SkyAppState extends State<SkyApp> {
         h3([Component.text(coreName(selectedCore!))]),
         p([Component.text(t('builder.installRequired'))]),
         if (dependencyMessage != null) p([Component.text(dependencyMessage!)]),
+        if (dependencyBusy ||
+            (dependencyJobId != null &&
+                maintenanceJob?.id == dependencyJobId) ||
+            maintenanceJob?.core == selectedCore &&
+                ['install', 'update'].contains(maintenanceJob?.action))
+          CoreInstallProgress(
+            core: selectedCore!,
+            job:
+                (dependencyJobId != null &&
+                        maintenanceJob?.id == dependencyJobId) ||
+                    maintenanceJob?.core == selectedCore
+                ? maintenanceJob
+                : null,
+            busy: dependencyBusy || maintenanceJob?.busy == true,
+            reconnecting: dependencyReconnecting,
+          ),
         action(
           t(dependencyBusy ? 'builder.installing' : 'builder.installContinue'),
-          () => unawaited(installDependency()),
+          () => coreInstalled(selectedCore!)
+              ? setState(() => chooseCore(selectedCore!))
+              : unawaited(installDependency()),
           classes: 'button primary',
           disabled: dependencyBusy || maintenanceBusy,
         ),

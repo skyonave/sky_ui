@@ -30,7 +30,7 @@ def target_platform():
     return {'x86_64': 'linux-amd64', 'aarch64': 'linux-arm64'}.get(platform.machine())
 
 
-def download(url, limit, *, on_progress=None):
+def download(url, limit, *, on_progress=None, on_size=None):
     allowed = {'raw.githubusercontent.com', 'github.com', 'api.github.com',
                'release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'codeload.github.com', 'go.dev', 'dl.google.com'}
 
@@ -50,6 +50,10 @@ def download(url, limit, *, on_progress=None):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), OfficialRedirect())
     with opener.open(request, timeout=30) as response:
         check(response.url)
+        length = getattr(response,'headers',{}).get('Content-Length')
+        total = int(length) if length is not None and str(length).isdigit() else None
+        if total is not None: require(total <= limit,'download_too_large')
+        if on_size: on_size(total)
         data = bytearray()
         while True:
             chunk = response.read(min(262144, limit + 1 - len(data)))

@@ -9,7 +9,7 @@ import signal
 import subprocess
 import time
 
-STAGES = ('discovery', 'download', 'verify', 'backup', 'prepare', 'install', 'activate', 'health', 'rollback', 'complete')
+STAGES = ('discovery', 'download', 'verify', 'backup', 'prepare', 'toolchain', 'build', 'validate', 'install', 'activate', 'health', 'rollback', 'complete')
 
 
 def now():
@@ -35,7 +35,11 @@ class Reporter:
         self.save()
 
     def download(self, received, total, artifact):
-        self.progress.update(stage='download', bytesReceived=received, bytesTotal=total, artifact=artifact)
+        self.transfer(received,total,artifact)
+
+    def transfer(self,received,total,artifact,stage='download'):
+        if total is None: total=self.progress.get('bytesTotal')
+        self.progress.update(stage=stage, bytesReceived=received, bytesTotal=total, artifact=artifact)
         if time.monotonic() - self.last_write >= .25 or received == total: self.save()
 
     def failed(self, code, **values):
@@ -57,7 +61,8 @@ def run_installer(m, args, reporter, *, pass_fds=(), timeout=480):
     directory.mkdir(mode=0o700, exist_ok=True)
     m.core_install.trusted(directory, directory=True)
     os.chmod(directory, 0o700)
-    log = directory / ('update-' + reporter.result['id'] + '.log')
+    prefix = 'update-' if reporter.result['action']=='panel-update' else 'maintenance-'
+    log = directory / (prefix + reporter.result['id'] + '.log')
     process = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         pass_fds=pass_fds, start_new_session=True, env={
             'PATH':'/usr/sbin:/usr/bin:/sbin:/bin', 'HOME':'/root', 'SAFE_PATHS':'/var/lib/sky-ui-certificates'})

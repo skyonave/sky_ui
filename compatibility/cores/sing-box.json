@@ -1,5 +1,5 @@
 {
   "schemaVersion": 1,
   "coreId": "sing-box",
-  "releases": [{"version":"v1.14.4","verified":true,"panelVersions":["0.7.0-dev.1", "0.7.0-dev.2"],"verifiedAt":"2026-11-02","platforms":{"linux-amd64":{"verified":true,"asset":"sing-box-1.14.4-linux-amd64.tar.gz","sha256":"699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968"}}}]
+  "releases": [{"version":"v1.14.4","verified":true,"panelVersions":["0.7.0-dev.1", "0.7.0-dev.2", "0.7.0-dev.3"],"verifiedAt":"2026-11-02","platforms":{"linux-amd64":{"verified":true,"asset":"sing-box-1.14.4-linux-amd64.tar.gz","sha256":"699a1b510aa4396b2176d32d1181920399ebf1e267835da6f3b598d0f7c24968"}}}]
 }

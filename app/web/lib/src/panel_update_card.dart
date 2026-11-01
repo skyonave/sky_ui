@@ -186,6 +186,7 @@ class PanelUpdateDetails extends StatelessComponent {
   @override
   Component build(BuildContext context) {
     final p = job?.progress;
+    final coreJob = ['install', 'update', 'remove'].contains(job?.action);
     final values = <String, String>{
       'panelUpdate.sourceVersion':
           p?.currentVersion ?? info?.currentVersion ?? '—',
@@ -196,7 +197,9 @@ class PanelUpdateDetails extends StatelessComponent {
       ),
       'panelUpdate.stageLabel': p == null
           ? '—'
-          : t('panelUpdate.stage.${p.failedStage ?? p.stage}'),
+          : t(
+              '${coreJob ? 'coreProgress' : 'panelUpdate'}.stage.${p.failedStage ?? p.stage}',
+            ),
       'panelUpdate.rollback': p?.rolledBack == null
           ? '—'
           : t(

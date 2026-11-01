@@ -34,9 +34,12 @@ class MaintenanceJob {
     required this.status,
     this.error,
     this.progress,
+    this.core,
+    this.tag,
   });
   final String id, action, status;
   final String? error;
+  final String? core, tag;
   final PanelUpdateProgress? progress;
   bool get busy => status == 'queued' || status == 'running';
   factory MaintenanceJob.fromJson(Map<String, dynamic> v) => MaintenanceJob(
@@ -44,6 +47,8 @@ class MaintenanceJob {
     action: v['action'] as String,
     status: v['status'] as String,
     error: v['error'] as String?,
+    core: v['core'] as String?,
+    tag: v['tag'] as String?,
     progress: v['progress'] is Map
         ? PanelUpdateProgress.fromJson(
             Map<String, dynamic>.from(v['progress'] as Map),
@@ -55,6 +60,8 @@ class MaintenanceJob {
     'action': action,
     'status': status,
     'error': error,
+    if (core != null) 'core': core,
+    if (tag != null) 'tag': tag,
     if (progress != null) 'progress': progress!.toJson(),
   };
 }

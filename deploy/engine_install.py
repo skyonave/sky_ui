@@ -22,7 +22,7 @@ GO_TOOLCHAINS = {
 }
 
 
-def build_awg(source, work, tag, m):
+def build_awg(source, work, tag, m, reporter=None):
     """Build the verified upstream source as an account with no panel data access."""
     account = pwd.getpwnam('sky-ui-build')
     tree = work / 'source'
@@ -50,7 +50,10 @@ def build_awg(source, work, tag, m):
     (tree / 'version.go').write_text('package main\nconst Version = ' + json.dumps(tag[1:]) + '\n')
     os.chown(tree / 'version.go', account.pw_uid, account.pw_gid)
     filename, checksum = GO_TOOLCHAINS[artifacts.target_platform()]
-    compiler = artifacts.download('https://go.dev/dl/' + filename, 96 * 1024 * 1024)
+    if reporter: reporter.stage('toolchain', bytesReceived=0, bytesTotal=None, artifact=filename)
+    compiler = artifacts.download('https://go.dev/dl/' + filename, 96 * 1024 * 1024,
+        **({'on_progress':lambda received:reporter.transfer(received,None,filename,'toolchain'),
+            'on_size':lambda size:reporter.stage('toolchain',bytesTotal=size)} if reporter else {}))
     m.require(hashlib.sha256(compiler).hexdigest() == checksum, 'release_checksum_failed')
     with tarfile.open(fileobj=io.BytesIO(compiler), mode='r:gz') as archive:
         for entry in archive:
@@ -62,14 +65,26 @@ def build_awg(source, work, tag, m):
                 target.parent.mkdir(parents=True, mode=0o755, exist_ok=True)
                 target.write_bytes(archive.extractfile(entry).read())
                 target.chmod(0o755 if entry.mode & 0o111 else 0o644)
+    # The worker's umask is 077. Explicitly make root-owned SDK directories
+    # traversable by the separate build account; files remain read-only to it.
+    for directory, _, _ in os.walk(work / 'go'):
+        Path(directory).chmod(0o755)
     go = str(work / 'go/bin/go')
-    m.run(['nice', '-n', '10', 'runuser', '-u', 'sky-ui-build', '--', '/usr/bin/env',
+    args = ['nice', '-n', '10', 'runuser', '-u', 'sky-ui-build', '--', '/usr/bin/env',
            'HOME=' + str(work), 'GOCACHE=' + str(work / 'cache'),
            'GOMODCACHE=' + str(work / 'modules'), 'GOTOOLCHAIN=local', 'CGO_ENABLED=0',
            'GOPROXY=https://proxy.golang.org,direct', 'GOSUMDB=sum.golang.org',
-           'GOMAXPROCS=1', 'GOFLAGS=-p=1',
+           'GOMAXPROCS=1', 'GOMEMLIMIT=128MiB', 'GOFLAGS=-p=1',
            go, '-C', str(tree), 'build', '-trimpath',
-           '-o', str(work / 'amneziawg'), '.'], timeout=480)
+           '-o', str(work / 'amneziawg'), '.']
+    if reporter:
+        from update_progress import run_installer, InstallerFailure
+        reporter.stage('build', bytesReceived=None, bytesTotal=None, artifact=None, command='go build')
+        try: run_installer(m,args,reporter,timeout=480)
+        except InstallerFailure as error:
+            reporter.progress['exitCode']=error.exit_code
+            raise m.MaintenanceError('core_build_failed')
+    else: m.run(args, timeout=480)
     return m.read_regular(work / 'amneziawg', 100 * 1024 * 1024)
 
 
@@ -136,7 +151,7 @@ def restart_ready(core, m):
     await_ready(core, m)
 
 
-def change(action, core, tag, gid, uid, m):
+def change(action, core, tag, gid, uid, m, *, reporter=None, before_activation=None):
     m.require(core in ENGINES, 'core_unsupported')
     root = m.CORES / core
     m.core_install.trusted(root, directory=True)
@@ -170,12 +185,21 @@ def change(action, core, tag, gid, uid, m):
     selected, url, checksum = m.verified_release(core, tag)
     m.require(selected == tag, 'release_changed')
     try:
-        files = artifacts.artifact_files(core, tag, url, checksum, artifacts.target_platform(), fetch=m.download)
+        if reporter: reporter.stage('download', bytesReceived=0, bytesTotal=None)
+        fetch = m.download
+        if reporter:
+            def fetch(url, limit):
+                name = url.rsplit('/',1)[-1]
+                reporter.stage('download',bytesReceived=0,bytesTotal=None,artifact=name)
+                return m.download(url,limit,on_progress=lambda received:reporter.transfer(received,None,name),
+                    on_size=lambda size:reporter.stage('download',bytesTotal=size))
+        files = artifacts.artifact_files(core, tag, url, checksum, artifacts.target_platform(), fetch=fetch)
     except artifacts.ArtifactError as error:
         raise m.MaintenanceError(str(error))
     if core == 'amneziawg':
         with tempfile.TemporaryDirectory(prefix='sky-ui-build-') as temporary:
-            files[core] = build_awg(files.pop('source.tar.gz'), Path(temporary), tag, m)
+            if reporter: files[core] = build_awg(files.pop('source.tar.gz'), Path(temporary), tag, m, reporter)
+            else: files[core] = build_awg(files.pop('source.tar.gz'), Path(temporary), tag, m)
         receipt = json.loads(files['artifact.json'])
         receipt['binarySha256'] = hashlib.sha256(files[core]).hexdigest()
         files['artifact.json'] = json.dumps(receipt).encode()
@@ -188,10 +212,13 @@ def change(action, core, tag, gid, uid, m):
     for name, data in files.items():
         m.require(name in (core, 'LICENSE', 'artifact.json'), 'archive_invalid')
         m.atomic(slot / name, data, 0o755 if name == core else 0o644)
+    if reporter: reporter.stage('validate', bytesReceived=None, bytesTotal=None, artifact=None, command=None)
+    if before_activation: before_activation()
     validate(slot / core, core, m)
     running = m.active(unit)
     m.atomic(m.STATE / 'engine-intent.json', json.dumps({'action': action, 'core': core, 'previous': str(previous) if previous else None, 'running': running}).encode(), 0o600)
     try:
+        if reporter: reporter.stage('activate')
         m.switch_link(root / 'current', slot)
         if running:
             restart_ready(core, m)

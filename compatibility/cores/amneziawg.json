@@ -1,5 +1,5 @@
 {
   "schemaVersion": 1,
   "coreId": "amneziawg",
-  "releases": [{"version":"v3.1.20260828","verified":true,"panelVersions":["0.7.0-dev.1", "0.7.0-dev.2"],"verifiedAt":"2026-11-02","platforms":{"linux-amd64":{"verified":true,"asset":"v3.1.20260828.tar.gz","sha256":"24c656cfb80ff6855702710eaf2e3729fa710bf6bfdbbbdfba01984ccd17de95"}}}]
+  "releases": [{"version":"v3.1.20260828","verified":true,"panelVersions":["0.7.0-dev.1", "0.7.0-dev.2", "0.7.0-dev.3"],"verifiedAt":"2026-11-02","platforms":{"linux-amd64":{"verified":true,"asset":"v3.1.20260828.tar.gz","sha256":"24c656cfb80ff6855702710eaf2e3729fa710bf6bfdbbbdfba01984ccd17de95"}}}]
 }

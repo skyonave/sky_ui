@@ -385,9 +385,9 @@ def api_ready(env):
     raise MaintenanceError('api_not_ready')
 
 
-def download(url, limit):
+def download(url, limit, **options):
     try:
-        return core_artifacts.download(url, limit)
+        return core_artifacts.download(url, limit, **options)
     except core_artifacts.ArtifactError as error:
         raise MaintenanceError(str(error))
 
@@ -460,10 +460,10 @@ def remove_core(core, gid, uid):
     return {'core': core, 'installed': False}
 
 
-def install_core(core, tag, gid):
+def install_core(core, tag, gid, *, reporter=None, before_activation=None):
     if core != 'mihomo':
         import engine_install
-        return engine_install.change('install', core, tag, gid, pwd.getpwnam('sky-ui').pw_uid, SimpleNamespace(**globals()))
+        return engine_install.change('install', core, tag, gid, pwd.getpwnam('sky-ui').pw_uid, SimpleNamespace(**globals()), reporter=reporter, before_activation=before_activation)
     require(core == 'mihomo', 'core_unsupported')
     root = CORES / core
     core_install.trusted(root, directory=True)
@@ -477,17 +477,20 @@ def install_core(core, tag, gid):
             selected, url, sha = core_artifacts.verified_release(core, panel_version,
                 core_artifacts.target_platform(), tag, fetch=download)
             files = core_artifacts.artifact_files(core, selected, url, sha,
-                core_artifacts.target_platform(), fetch=download)
+                core_artifacts.target_platform(), fetch=progress_fetch(reporter))
             prepared.mkdir(mode=0o755)
             os.chmod(prepared, 0o755)
             for name, data in files.items():
                 atomic(prepared / name, data, 0o755 if name == core else 0o644)
+            if reporter: reporter.stage('validate',bytesReceived=None,bytesTotal=None,artifact=None)
+            if before_activation: before_activation()
             core_install.validate(prepared / core, DATA / 'cores/mihomo/config.yaml', DATA / 'cores/mihomo')
             marker = root / 'removed.json'
             if marker.exists():
                 core_install.trusted(marker)
                 marker.unlink()
             try:
+                if reporter: reporter.stage('activate')
                 core_install.activate(prepared, root=root)
             except Exception:
                 atomic(marker, json.dumps({'coreId': core, 'removed': True}).encode(), 0o644)
@@ -497,15 +500,25 @@ def install_core(core, tag, gid):
     return {'core': core, 'version': tag, 'installed': True}
 
 
-def update_core(core, tag, gid):
+def progress_fetch(reporter):
+    if reporter is None: return download
+    def fetch(url,limit):
+        name=url.rsplit('/',1)[-1]
+        reporter.stage('download',bytesReceived=0,bytesTotal=None,artifact=name)
+        return download(url,limit,on_progress=lambda received:reporter.transfer(received,None,name),
+            on_size=lambda size:reporter.stage('download',bytesTotal=size))
+    return fetch
+
+
+def update_core(core, tag, gid, *, reporter=None, before_activation=None):
     if core != 'mihomo':
         import engine_install
-        return engine_install.change('update', core, tag, gid, pwd.getpwnam('sky-ui').pw_uid, SimpleNamespace(**globals()))
+        return engine_install.change('update', core, tag, gid, pwd.getpwnam('sky-ui').pw_uid, SimpleNamespace(**globals()),reporter=reporter,before_activation=before_activation)
     require(core == 'mihomo', 'core_unsupported')
     latest, url, expected = latest_mihomo(tag)
     require(tag == latest, 'release_changed')
     try:
-        files = core_artifacts.artifact_files(core, tag, url, expected, core_artifacts.target_platform(), fetch=download)
+        files = core_artifacts.artifact_files(core, tag, url, expected, core_artifacts.target_platform(), fetch=progress_fetch(reporter))
     except core_artifacts.ArtifactError as error:
         raise MaintenanceError(str(error))
     binary = files['mihomo']
@@ -520,6 +533,8 @@ def update_core(core, tag, gid):
     except MaintenanceError:
         raise MaintenanceError('binary_probe_failed')
     require(re.search(r'\bv?' + re.escape(tag[1:]) + r'\b', found), 'binary_version_mismatch')
+    if reporter: reporter.stage('validate',bytesReceived=None,bytesTotal=None,artifact=None)
+    if before_activation: before_activation()
     candidate_validate(slot / 'mihomo', DATA / 'cores/mihomo/config.yaml', DATA / 'cores/mihomo')
     link = root / 'current'
     previous = link.resolve(strict=True)
@@ -527,6 +542,7 @@ def update_core(core, tag, gid):
     running = active('sky-ui-mihomo.service')
     atomic(STATE / 'update-intent.json', json.dumps({'path': str(previous)}).encode())
     try:
+        if reporter: reporter.stage('activate')
         switch_link(link, slot)
         if running:
             run(['systemctl', 'restart', 'sky-ui-mihomo.service'])
@@ -620,18 +636,32 @@ def main():
     job = consume_request(STATE / 'inbox/request.json', owner.pw_uid, remove=False)
     require(job['action'] != 'panel-update', 'request_invalid')
     result = {key: job[key] for key in ['id', 'action']}
+    for key in ('core','tag'):
+        if key in job: result[key]=job[key]
     result['status'] = 'running'
     output = STATE / 'result.json'
     atomic(output, json.dumps(result).encode(), gid=owner.pw_gid)
     (STATE / 'inbox/request.json').unlink()
     api_running = active('sky-ui.service')
-    try:
-        # The API is stopped after the durable job is visible, so configuration
-        # writes cannot race snapshots, restores or binary activation.
-        if api_running:
-            time.sleep(1)
-            run(['systemctl', 'stop', 'sky-ui.service'])
+    api_stopped = False
+    reporter = None
+    if job['action'] in ('install','update'):
+        from update_progress import Reporter
+        reporter=Reporter(SimpleNamespace(**globals()),result,None,job['tag'],owner.pw_gid)
+    def before_activation():
+        nonlocal api_stopped
+        if api_running and not api_stopped:
+            run(['systemctl','stop','sky-ui.service'])
+            api_stopped=True
         assert_configuration_settled()
+    try:
+        # Downloads/source compilation keep reads and progress polling available.
+        # The durable running receipt gates API writes; stop and revalidate the
+        # latest configuration only at the short activation boundary.
+        if reporter is None and api_running:
+            time.sleep(1)
+            before_activation()
+        if reporter is None: assert_configuration_settled()
         if job['action'] == 'backup':
             result['data'] = create_backup(owner.pw_gid)
         elif job['action'] == 'restore':
@@ -639,14 +669,15 @@ def main():
         elif job['action'] == 'remove':
             result['data'] = remove_core(job['core'], owner.pw_gid, owner.pw_uid)
         elif job['action'] == 'install':
-            result['data'] = install_core(job['core'], job['tag'], owner.pw_gid)
+            result['data'] = install_core(job['core'], job['tag'], owner.pw_gid,reporter=reporter,before_activation=before_activation)
         else:
-            result['data'] = update_core(job['core'], job['tag'], owner.pw_gid)
+            result['data'] = update_core(job['core'], job['tag'], owner.pw_gid,reporter=reporter,before_activation=before_activation)
         result['status'] = 'completed'
     except Exception as error:
-        result.update(status='failed', error=str(error) if isinstance(error, MaintenanceError) else 'maintenance_failed')
+        result.update(status='failed', error=str(error) if isinstance(error, (MaintenanceError,core_artifacts.ArtifactError)) else 'maintenance_failed')
+        if reporter: reporter.failed(result['error'],failedStage=reporter.progress['stage'])
     finally:
-        if api_running and not any((STATE / name).exists() for name in
+        if api_stopped and not any((STATE / name).exists() for name in
                 ('restore-intent.json', 'update-intent.json', 'core-remove-intent.json', 'engine-intent.json')):
             try:
                 run(['systemctl', 'reset-failed', 'sky-ui.service'])
@@ -654,6 +685,11 @@ def main():
                 api_ready(environment())
             except Exception:
                 result.update(status='failed', error='api_not_ready')
+                if reporter: reporter.failed('api_not_ready',failedStage='health')
+        if reporter and result['status']=='completed':
+            from update_progress import now
+            reporter.progress['finishedAt']=now()
+            reporter.stage('complete')
         atomic(output, json.dumps(result).encode(), gid=owner.pw_gid)
 
 

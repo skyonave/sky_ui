@@ -64,6 +64,8 @@ class MaintenanceService {
         id: request['id'] as String,
         action: request['action'] as String,
         status: 'queued',
+        core: request['core'] as String?,
+        tag: request['tag'] as String?,
       );
     }
     return MaintenanceSnapshot(
@@ -156,7 +158,13 @@ class MaintenanceService {
       if (await _request.exists()) await _request.delete();
       rethrow;
     }
-    return MaintenanceJob(id: id, action: action, status: 'queued');
+    return MaintenanceJob(
+      id: id,
+      action: action,
+      status: 'queued',
+      core: core,
+      tag: tag,
+    );
   }
 
   Future<File> archive(String id) async {

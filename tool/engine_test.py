@@ -7,12 +7,61 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+import os
+import io
+import tarfile
+import hashlib
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'deploy'))
 import amnezia_network as awg
+import engine_install as engine
+import maintenance as maintenance
 
 
 class EngineTests(unittest.TestCase):
+    def test_root_sdk_directories_are_executable_under_private_worker_umask(self):
+        def archive(files):
+            output=io.BytesIO()
+            with tarfile.open(fileobj=output,mode='w:gz') as tar:
+                for name,data in files.items():
+                    item=tarfile.TarInfo(name);item.size=len(data);item.mode=0o755 if '/bin/' in name else 0o644
+                    tar.addfile(item,io.BytesIO(data))
+            return output.getvalue()
+        sdk=archive({'go/bin/go':b'fixture','go/pkg/tool/compile':b'fixture'})
+        source=archive({'upstream/go.mod':b'module fixture\n'})
+        account=SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary)
+            def compile_probe(args,**kwargs):
+                self.assertEqual((root/'go').stat().st_mode & 0o777,0o755)
+                self.assertEqual((root/'go/bin').stat().st_mode & 0o777,0o755)
+                self.assertEqual((root/'go/pkg/tool').stat().st_mode & 0o777,0o755)
+                (root/'amneziawg').write_bytes(b'compiled fixture')
+            previous=os.umask(0o077)
+            try:
+                with patch.object(engine.pwd,'getpwnam',return_value=account),patch.object(engine.artifacts,'download',return_value=sdk), \
+                     patch.dict(engine.GO_TOOLCHAINS,{'linux-amd64':('fixture.tar.gz',hashlib.sha256(sdk).hexdigest())}), \
+                     patch.object(engine.artifacts,'target_platform',return_value='linux-amd64'):
+                    result=engine.build_awg(source,root,'v3.1.20260828',SimpleNamespace(run=compile_probe,require=maintenance.require,read_regular=maintenance.read_regular))
+                self.assertEqual(result,b'compiled fixture')
+            finally:os.umask(previous)
+
+    def test_engine_validation_uses_configuration_after_activation_freeze(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);cores=root/'cores';state=root/'state';data=root/'data'
+            (cores/'sing-box').mkdir(parents=True);state.mkdir();data.mkdir()
+            events=[]
+            def artifacts(*args,**kwargs):
+                events.append('download');return {'sing-box':b'fixture','LICENSE':b'fixture','artifact.json':b'{}'}
+            with patch.multiple(maintenance,CORES=cores,STATE=state,DATA=data), \
+                 patch.object(maintenance,'verified_release',return_value=('v1.14.4','fixture','hash')), \
+                 patch.object(maintenance,'active',return_value=False),patch.object(engine.artifacts,'artifact_files',side_effect=artifacts), \
+                 patch.object(engine,'validate',side_effect=lambda *args:events.append('validate')):
+                engine.change('install','sing-box','v1.14.4',os.getgid(),os.getuid(),SimpleNamespace(**vars(maintenance)),before_activation=lambda:events.append('freeze'))
+            self.assertEqual(events,['download','freeze','validate'])
+
     def setUp(self):
         key = base64.b64encode(bytes(range(32))).decode()
         options = {name: str(bounds[0]) for name, bounds in awg.BOUNDS.items()}

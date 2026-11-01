@@ -76,7 +76,32 @@ initial = call('cores')[0]['data']
 assert len(initial) == 4 and not any(c['binaryAvailable'] for c in initial)
 print('PASS: fresh panel has four managed engine slots and no bundled engine.',flush=True)
 for core in CORES:
-    run('env','PYTHONPATH=/test-fixtures','skyui','install-core',core,input='INSTALL\n')
+    if core=='amneziawg' and os.environ.get('SKY_UI_PROGRESS_FIXTURE')=='1':
+        # The offline fixture holds its cached, separately cold-tested build.
+        # Exercise the real worker/API boundary while that stage is in flight.
+        fixture=Path('/test-fixtures')
+        (fixture/'progress-hold').touch()
+        (fixture/'progress-release').unlink(missing_ok=True)
+        with (fixture/'progress-cli.log').open('w') as output:
+            child=subprocess.Popen(['env','PYTHONPATH=/test-fixtures','skyui','install-core',core],stdin=subprocess.PIPE,stdout=output,stderr=output,text=True)
+            child.stdin.write('INSTALL\n');child.stdin.close()
+            try:
+                deadline=time.monotonic()+30
+                while time.monotonic()<deadline:
+                    job=call('maintenance')[0]['data']['job']
+                    if job and job.get('progress',{}).get('stage')=='build': break
+                    time.sleep(.2)
+                else:raise AssertionError('No build progress through the owner API')
+                assert job['core']==core and job['status']=='running'
+                assert job['progress']['command']=='go build'
+                assert call('auth/session')[0]['data']['authenticated']
+                assert call('recipients','POST',{},expected=409)[0]['error']['code']=='maintenance_busy'
+                print('PASS: live build telemetry and authenticated reads; writes return maintenance_busy.',flush=True)
+            finally:
+                (fixture/'progress-release').touch()
+                assert child.wait(timeout=90)==0,'Held install failed'
+    else:
+        run('env','PYTHONPATH=/test-fixtures','skyui','install-core',core,input='INSTALL\n')
     ready(); assert call('auth/session')[0]['data']['authenticated']
     assert next(c for c in call('cores')[0]['data'] if c['coreId']==core)['binaryAvailable']
 print('PASS: scoped installs, stopped state and owner session preservation.',flush=True)

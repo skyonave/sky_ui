@@ -538,6 +538,20 @@ textarea { width: 100%; resize: vertical; padding: 10px; color: var(--text); bac
 .update-details { display: grid; gap: 0; margin: 0; }
 .update-detail-row { display: grid; grid-template-columns: 144px minmax(0,1fr); gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .update-detail-row dd { margin: 0; overflow-wrap: anywhere; }
+.core-install-progress { min-height: 208px; padding: 18px; margin: 20px 0; border: 1px solid var(--line); border-radius: 5px; display: grid; gap: 12px; }
+.core-install-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.core-install-steps { display: flex; gap: 8px; flex-wrap: wrap; }
+.core-install-step { display: flex; align-items: center; gap: 6px; padding: 5px 8px; color: var(--faint); }
+.core-install-step.active { color: var(--accent); background: var(--accent-bg); border-radius: 3px; }
+.core-install-step.done { color: var(--text); }
+.core-install-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.core-install-fill { height: 100%; background: var(--accent); }
+.core-install-fill.indeterminate { width: 28% !important; animation: core-install-activity 2s linear infinite; }
+@keyframes core-install-activity { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
+@media(prefers-reduced-motion: reduce) { .core-install-fill.indeterminate { animation: none; transform: none; } }
+.core-install-artifact { min-height: 24px; overflow-wrap: anywhere; }
+.core-install-details summary { cursor: pointer; color: var(--muted); }
+.core-install-details summary:hover { color: var(--text); }
 @media (max-width: 1000px) {
   .sidebar-update { padding: 0; border: 0; display: block; }
   .sidebar-update > :not(.update-actions) { display: none; }
