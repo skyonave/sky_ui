@@ -12,9 +12,18 @@ import 'i18n.dart';
 import 'ui.dart';
 import 'field_help.dart';
 import 'api_client.dart';
+import 'protocol_field.dart';
 
 class SkyApp extends StatefulComponent {
-  const SkyApp({super.key});
+  const SkyApp({
+    required this.owner,
+    required this.onSignedOut,
+    required this.onOwnerChanged,
+    super.key,
+  });
+  final OwnerState owner;
+  final void Function() onSignedOut;
+  final void Function(OwnerState) onOwnerChanged;
   @override
   State<SkyApp> createState() => _SkyAppState();
 }
@@ -22,7 +31,10 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   final store = PanelStore();
   PanelSnapshot? panelData;
-  bool dataBusy = false;
+  bool dataBusy = false, ownerBusy = false, ownerSessionsLoading = false;
+  final ownerDraft = <String, String>{};
+  List<OwnerSession> ownerSessions = [];
+  String? revokeSessionId;
   bool dataRefreshing = false;
   int dataGeneration = 0;
   int draftRevision = 0;
@@ -125,6 +137,15 @@ class _SkyAppState extends State<SkyApp> {
     logStream?.close();
     final source = web.EventSource('/api/v1/cores/primary/logs/events');
     logStream = source;
+    source.addEventListener(
+      'auth_expired',
+      ((web.Event _) {
+        if (mounted && logStream == source) {
+          source.close();
+          component.onSignedOut();
+        }
+      }).toJS,
+    );
     source.addEventListener(
       'open',
       ((web.Event _) {
@@ -291,6 +312,9 @@ class _SkyAppState extends State<SkyApp> {
   String? modal;
   String? editingId;
   String? selectedProtocol;
+  String connectionStep = 'core';
+  Map<String, String> connectionErrors = {};
+  final advancedGroups = <String>{};
   String? selectedCore;
   String? error;
   String? toast;
@@ -318,6 +342,11 @@ class _SkyAppState extends State<SkyApp> {
   @override
   void initState() {
     super.initState();
+    api.csrfToken = component.owner.csrf;
+    api.onUnauthorized = () {
+      if (mounted) component.onSignedOut();
+    };
+    unawaited(refreshOwnerSessions());
     store.running = false;
     unawaited(refreshRuntime());
     unawaited(refreshPanel());
@@ -325,6 +354,7 @@ class _SkyAppState extends State<SkyApp> {
     runtimeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       unawaited(refreshRuntime());
       unawaited(refreshPanel());
+      if (page == 'settings') unawaited(refreshOwnerSessions());
     });
     final route = web.window.location.hash.replaceFirst('#', '');
     if (pages.contains(route)) page = route;
@@ -418,6 +448,7 @@ class _SkyAppState extends State<SkyApp> {
     Future<PanelSnapshot> Function() request, {
     bool dismiss = false,
     void Function()? optimistic,
+    void Function(ApiClientException)? onError,
   }) async {
     if (!canEdit) return false;
     final previous = panelData!;
@@ -442,6 +473,7 @@ class _SkyAppState extends State<SkyApp> {
       notify(t('common.saved'));
       success = true;
     } on ApiClientException catch (e) {
+      onError?.call(e);
       if (mounted) {
         setState(() {
           store.apply(previous);
@@ -507,7 +539,8 @@ class _SkyAppState extends State<SkyApp> {
   }
 
   void closeModal() {
-    if (dataBusy || clearingLogs) return;
+    if (dataBusy || clearingLogs || ownerBusy) return;
+    ownerDraft.clear();
     releaseGeneration++;
     shareGeneration++;
     shareLoading = false;
@@ -523,6 +556,9 @@ class _SkyAppState extends State<SkyApp> {
   void newConnection([Connection? connection]) {
     if (!canInspect) return;
     editingId = connection?.id;
+    connectionStep = connection == null ? 'core' : 'parameters';
+    connectionErrors = {};
+    advancedGroups.clear();
     selectedProtocol = connection?.protocolId;
     selectedCore = connection?.coreId;
     draft = connection == null
@@ -531,6 +567,8 @@ class _SkyAppState extends State<SkyApp> {
             'name': connection.name,
             'port': '${connection.port}',
             ...connection.settings,
+            for (final key in connection.configuredSecrets)
+              '_stored:$key': 'true',
           };
     if (connection != null) {
       for (final f in store.protocol(connection.protocolId).fields) {
@@ -544,6 +582,8 @@ class _SkyAppState extends State<SkyApp> {
     if (store.protocols[coreId]?.isNotEmpty != true) return;
     setState(() {
       selectedCore = coreId;
+      connectionStep = 'protocol';
+      connectionErrors = {};
       selectedProtocol = null;
       draft = {'name': '', 'port': '8443'};
       error = null;
@@ -555,11 +595,14 @@ class _SkyAppState extends State<SkyApp> {
     protocol = store.definition(selectedCore!, protocol.id);
     setState(() {
       selectedProtocol = protocol.id;
-      draft = {
+      draft = protocol.defaults({
         'name': draft['name'] ?? '',
         'port': draft['port'] ?? '8443',
-        for (final f in protocol.fields) f.id: f.defaultValue,
-      };
+      });
+      connectionErrors = {};
+      advancedGroups.clear();
+      connectionStep = 'protocol';
+      advanceConnection();
     });
     Timer(const Duration(milliseconds: 30), () {
       (web.document.querySelector('#field-name') as web.HTMLElement?)?.focus();
@@ -575,7 +618,8 @@ class _SkyAppState extends State<SkyApp> {
     final definition = store.definition(selectedCore!, selectedProtocol!);
     final name = draft['name']?.trim() ?? '';
     final port = int.tryParse(draft['port'] ?? '');
-    if (name.isEmpty || port == null || port < 1 || port > 65535) {
+    if (name.isEmpty ||
+        (definition.usesPort && (port == null || port < 1 || port > 65535))) {
       setState(
         () => error = t(
           name.isEmpty ? 'common.invalidName' : 'common.invalidPort',
@@ -583,9 +627,7 @@ class _SkyAppState extends State<SkyApp> {
       );
       return;
     }
-    if (definition.fields.any(
-      (f) => f.required && (draft[f.id] ?? '').trim().isEmpty,
-    )) {
+    if (definition.validateFields(draft).isNotEmpty) {
       setState(() => error = t('common.required'));
       return;
     }
@@ -599,13 +641,24 @@ class _SkyAppState extends State<SkyApp> {
       instanceId: old?.instanceId ?? 'primary',
       enabled: old?.enabled ?? true,
       settings: {
-        for (final f in definition.fields) f.id: draft[f.id] ?? f.defaultValue,
+        for (final f in definition.activeFields(draft))
+          f.id: draft[f.id] ?? f.initialValue(draft),
       },
     );
     final id = editingId;
     await changePanel(
       () => api.saveConnection(draftRevision, value, id: id),
       dismiss: true,
+      onError: (e) {
+        if (e.fields.isNotEmpty)
+          setState(() {
+            connectionErrors = e.fields;
+            final field = definition.fields
+                .where((f) => e.fields.containsKey(f.id))
+                .firstOrNull;
+            connectionStep = field?.group ?? 'parameters';
+          });
+      },
     );
   }
 
@@ -729,7 +782,7 @@ class _SkyAppState extends State<SkyApp> {
           if (page == 'settings') settingsPage(),
           el('footer', [
             txt(
-              '${t('app.name')} / ${const String.fromEnvironment('SKY_UI_VERSION', defaultValue: '0.2.0-dev')}',
+              '${t('app.name')} / ${const String.fromEnvironment('SKY_UI_VERSION', defaultValue: '0.4.0-dev.1')}',
             ),
           ], classes: 'page-footer'),
         ], classes: 'main-content ${page == 'logs' ? 'logs-layout' : ''}'),
@@ -820,12 +873,12 @@ class _SkyAppState extends State<SkyApp> {
             ),
         ], classes: 'sidebar-core-list'),
         div([
-          txt('sky', classes: 'owner-name'),
+          txt(component.owner.username ?? '', classes: 'owner-name'),
           iconButton(
             'logout',
-            t('admin.logoutUnavailable'),
-            () {},
-            disabled: true,
+            t('auth.signOut'),
+            () => unawaited(signOut()),
+            disabled: ownerBusy,
           ),
         ], classes: 'owner'),
       ], classes: 'sidebar-bottom'),
@@ -1000,7 +1053,9 @@ class _SkyAppState extends State<SkyApp> {
                       type: ButtonType.button,
                     ),
                     txt(
-                      c.port == null ? '—' : '${store.address}:${c.port}',
+                      c.port == null
+                          ? '—'
+                          : '${store.address}:${c.assignedPorts.firstOrNull ?? c.port}${c.assignedPorts.length > 1 ? ' (+${c.assignedPorts.length - 1})' : ''}',
                       classes: 'endpoint',
                     ),
                   ]),
@@ -1032,7 +1087,7 @@ class _SkyAppState extends State<SkyApp> {
                         ? 'data.applying'
                         : !c.enabled
                         ? 'status.disabled'
-                        : store.recipientsFor(c.id).isEmpty
+                        : c.shareable && store.recipientsFor(c.id).isEmpty
                         ? 'status.unassigned'
                         : !store.deliveryReady
                         ? 'status.stopped'
@@ -1042,7 +1097,7 @@ class _SkyAppState extends State<SkyApp> {
                       !dataBusy &&
                       c.enabled &&
                       store.deliveryReady &&
-                      store.recipientsFor(c.id).isNotEmpty,
+                      (!c.shareable || store.recipientsFor(c.id).isNotEmpty),
                 ),
               ]),
               el('td', [
@@ -1156,7 +1211,11 @@ class _SkyAppState extends State<SkyApp> {
                             ], classes: 'access-name'),
                           ],
                           classes: 'access-tag',
-                          attributes: {'title': c.name},
+                          attributes: {
+                            'title': user.connectionPorts[c.id] == null
+                                ? c.name
+                                : '${c.name} · :${user.connectionPorts[c.id]}',
+                          },
                         ),
                       if (user.connectionIds.isEmpty)
                         txt('—', classes: 'muted'),
@@ -1779,9 +1838,30 @@ class _SkyAppState extends State<SkyApp> {
     ], classes: 'panel settings-panel'),
     div([
       h2([Component.text(t('admin.title'))]),
-      plannedSetting('admin.username', 'common.edit'),
-      plannedSetting('admin.password', 'admin.changePassword'),
-      plannedSetting('admin.sessions', 'admin.manageSessions'),
+
+      div([
+        div([
+          txt(t('admin.username')),
+          pill(component.owner.username ?? ''),
+        ], classes: 'setting-label'),
+        action(t('common.edit'), () => editOwner(false), disabled: ownerBusy),
+      ], classes: 'setting-row'),
+      div([
+        txt(t('admin.password')),
+        action(
+          t('admin.changePassword'),
+          () => editOwner(true),
+          disabled: ownerBusy,
+        ),
+      ], classes: 'setting-row'),
+      div([
+        txt(t('admin.sessions')),
+        action(t('admin.revokeOthers'), () {
+          revokeSessionId = null;
+          openModal('revokeSession');
+        }, disabled: ownerBusy || ownerSessions.length < 2),
+      ], classes: 'setting-row'),
+      sessionList(),
     ], classes: 'panel settings-panel'),
     div([
       h2([Component.text(t('settings.system'))]),
@@ -1790,6 +1870,206 @@ class _SkyAppState extends State<SkyApp> {
       plannedSetting('settings.logging', 'settings.configure'),
     ], classes: 'panel settings-panel'),
   ]);
+
+  Future<void> refreshOwnerSessions() async {
+    if (ownerSessionsLoading || ownerBusy) return;
+    ownerSessionsLoading = true;
+    try {
+      final values = await api.ownerSessions();
+      if (mounted) setState(() => ownerSessions = values);
+    } on ApiClientException catch (e) {
+      if (mounted && e.code != 'auth_required') notify(runtimeMessage(e.code));
+    } finally {
+      ownerSessionsLoading = false;
+    }
+  }
+
+  Future<void> signOut() async {
+    if (ownerBusy) return;
+    setState(() => ownerBusy = true);
+    try {
+      await api.logout();
+      if (mounted) component.onSignedOut();
+    } on ApiClientException catch (e) {
+      if (mounted) notify(runtimeMessage(e.code));
+    } finally {
+      if (mounted) setState(() => ownerBusy = false);
+    }
+  }
+
+  void editOwner(bool password) {
+    ownerDraft.clear();
+    ownerDraft['username'] = component.owner.username ?? '';
+    openModal(password ? 'ownerPassword' : 'ownerName');
+  }
+
+  Component ownerField(
+    String id,
+    String labelKey, {
+    bool secret = false,
+    String? autocomplete,
+  }) => label([
+    txt(t(labelKey)),
+    input<String>(
+      value: ownerDraft[id] ?? '',
+      type: secret ? InputType.password : InputType.text,
+      disabled: ownerBusy,
+      onInput: (v) => ownerDraft[id] = v,
+      attributes: {
+        'autocomplete': autocomplete ?? 'off',
+        'maxlength': secret ? '72' : '32',
+      },
+    ),
+  ]);
+  Component ownerForm() => div([
+    if (modal == 'ownerName')
+      ownerField('username', 'admin.username', autocomplete: 'username'),
+    ownerField(
+      'currentPassword',
+      'admin.currentPassword',
+      secret: true,
+      autocomplete: 'current-password',
+    ),
+    if (modal == 'ownerPassword') ...[
+      ownerField(
+        'password',
+        'admin.newPassword',
+        secret: true,
+        autocomplete: 'new-password',
+      ),
+      ownerField(
+        'confirmation',
+        'admin.confirmPassword',
+        secret: true,
+        autocomplete: 'new-password',
+      ),
+      p([Component.text(t('admin.passwordHint'))], classes: 'muted small'),
+    ],
+    p([Component.text(t('admin.rotationHint'))], classes: 'muted small'),
+  ], classes: 'owner-form');
+  Future<void> saveOwner() async {
+    if (ownerBusy) return;
+    if ((ownerDraft['currentPassword'] ?? '').isEmpty) {
+      setState(() => error = t('common.required'));
+      return;
+    }
+    if (modal == 'ownerPassword' &&
+        ownerDraft['password'] != ownerDraft['confirmation']) {
+      setState(() => error = t('admin.passwordMismatch'));
+      return;
+    }
+    final payload = <String, Object?>{
+      'currentPassword': ownerDraft['currentPassword'],
+      if (modal == 'ownerName') 'username': ownerDraft['username']?.trim(),
+      if (modal == 'ownerPassword') 'password': ownerDraft['password'] ?? '',
+    };
+    setState(() => ownerBusy = true);
+    try {
+      final owner = await api.changeOwner(payload);
+      if (mounted) {
+        ownerDraft.clear();
+        component.onOwnerChanged(owner);
+      }
+    } on ApiClientException catch (e) {
+      if (mounted) setState(() => error = runtimeMessage(e.code));
+    } finally {
+      if (mounted) setState(() => ownerBusy = false);
+    }
+  }
+
+  Future<void> revokeOwnerSessions() async {
+    if (ownerBusy) return;
+    final id = revokeSessionId;
+    setState(() => ownerBusy = true);
+    try {
+      if (id == null) {
+        await api.revokeOtherSessions();
+      } else {
+        await api.revokeSession(id);
+      }
+      if (!mounted) return;
+      if (id == component.owner.sessionId) {
+        component.onSignedOut();
+        return;
+      }
+      setState(() => ownerBusy = false);
+      closeModal();
+      await refreshOwnerSessions();
+    } on ApiClientException catch (e) {
+      if (mounted) setState(() => error = runtimeMessage(e.code));
+    } finally {
+      if (mounted) setState(() => ownerBusy = false);
+    }
+  }
+
+  String sessionDevice(String ua) {
+    final browser = ua.contains('Edg/')
+        ? 'Edge'
+        : ua.contains('Firefox/')
+        ? 'Firefox'
+        : ua.contains('Chrome/')
+        ? 'Chrome'
+        : ua.contains('Safari/')
+        ? 'Safari'
+        : ua.contains('Dart/') || ua.contains('Python')
+        ? 'CLI'
+        : 'Browser';
+    final os = ua.contains('Windows')
+        ? 'Windows'
+        : ua.contains('Android')
+        ? 'Android'
+        : ua.contains('iPhone')
+        ? 'iOS'
+        : ua.contains('Mac OS')
+        ? 'macOS'
+        : ua.contains('Linux')
+        ? 'Linux'
+        : '';
+    return os.isEmpty ? browser : '$browser · $os';
+  }
+
+  String sessionTime(DateTime date) {
+    final value = date.toLocal();
+    return '${value.day.toString().padLeft(2, '0')}.${value.month.toString().padLeft(2, '0')} ${value.hour.toString().padLeft(2, '0')}:${value.minute.toString().padLeft(2, '0')}';
+  }
+
+  Component sessionList() => div([
+    if (ownerSessions.isEmpty)
+      p([Component.text(t('runtime.loading'))], classes: 'muted'),
+    if (ownerSessions.isNotEmpty)
+      el('table', [
+        el('thead', [
+          el('tr', [
+            for (final key in [
+              'admin.device',
+              'admin.ip',
+              'admin.lastSeen',
+              'admin.actions',
+            ])
+              el('th', [Component.text(t(key))]),
+          ]),
+        ]),
+        el('tbody', [
+          for (final session in ownerSessions)
+            el('tr', [
+              el('td', [
+                txt(sessionDevice(session.agent)),
+                if (session.current)
+                  txt(t('admin.currentSession'), classes: 'muted small'),
+              ]),
+              el('td', [txt(session.ip, classes: 'mono')]),
+              el('td', [txt(sessionTime(session.lastSeen), classes: 'mono')]),
+              el('td', [
+                iconButton('logout', t('admin.revoke'), () {
+                  revokeSessionId = session.id;
+                  openModal('revokeSession');
+                }, disabled: ownerBusy),
+              ]),
+            ]),
+        ]),
+      ], classes: 'session-table'),
+  ], classes: 'session-container');
+
   Component plannedSetting(String title, String actionKey) => div([
     div([
       txt(t(title)),
@@ -1820,35 +2100,45 @@ class _SkyAppState extends State<SkyApp> {
                   'share' => 'share.title',
                   'clearLogs' => 'logs.clearTitle',
                   'releases' => 'core.releases',
+                  'ownerName' => 'admin.editName',
+                  'ownerPassword' => 'admin.changePassword',
+                  'revokeSession' => 'admin.revokeTitle',
                   _ => 'modal.deleteTitle',
                 }),
               ),
             ], id: 'modal-title'),
             if (modal == 'connection')
               div([
-                for (var step = 0; step < 3; step++) ...[
-                  if (step > 0) icon('chevron'),
-                  txt(
-                    '${step + 1}  ${t(['modal.stepCore', 'modal.step1', 'modal.step2'][step])}',
+                for (final step in connectionSteps)
+                  button(
+                    [Component.text(t('builder.step.$step'))],
                     classes:
-                        step ==
-                            (selectedCore == null
-                                ? 0
-                                : selectedProtocol == null
-                                ? 1
-                                : 2)
-                        ? 'accent'
-                        : 'muted',
+                        'step-button ${step == connectionStep
+                            ? 'active'
+                            : connectionSteps.indexOf(step) < connectionSteps.indexOf(connectionStep)
+                            ? 'complete'
+                            : ''}',
+                    type: ButtonType.button,
+                    disabled:
+                        dataBusy ||
+                        connectionSteps.indexOf(step) >
+                            connectionSteps.indexOf(connectionStep) ||
+                        editingId != null &&
+                            (step == 'core' || step == 'protocol'),
+                    onClick: () => setState(() {
+                      connectionStep = step;
+                      connectionErrors = {};
+                      error = null;
+                    }),
                   ),
-                ],
-              ], classes: 'steps'),
+              ], classes: 'steps builder-steps'),
           ]),
           iconButton(
             'close',
             t('common.close'),
             closeModal,
             classes: 'icon-button modal-close',
-            disabled: dataBusy || clearingLogs,
+            disabled: dataBusy || clearingLogs || ownerBusy,
           ),
         ], classes: 'modal-header'),
         div([
@@ -1857,6 +2147,17 @@ class _SkyAppState extends State<SkyApp> {
           if (modal == 'share') shareContent(),
           if (modal == 'clearLogs') p([Component.text(t('logs.clearHint'))]),
           if (modal == 'releases') releaseContent(),
+          if (modal == 'ownerName' || modal == 'ownerPassword') ownerForm(),
+          if (modal == 'revokeSession')
+            p([
+              Component.text(
+                t(
+                  revokeSessionId == null
+                      ? 'admin.revokeOthersHint'
+                      : 'admin.revokeHint',
+                ),
+              ),
+            ]),
           if (modal == 'delete')
             p([
               Component.text(t('modal.deleteHint', {'name': deleteName!})),
@@ -1872,33 +2173,57 @@ class _SkyAppState extends State<SkyApp> {
           div([
             if (modal == 'connection' &&
                 selectedCore != null &&
-                editingId == null)
+                connectionStep != 'core' &&
+                !(editingId != null &&
+                    connectionSteps.indexOf(connectionStep) == 2))
               action(
                 t('common.back'),
                 () => setState(() {
-                  if (selectedProtocol != null) {
-                    selectedProtocol = null;
-                  } else {
-                    selectedCore = null;
+                  final previous = connectionSteps.indexOf(connectionStep) - 1;
+                  if (previous >= 0) {
+                    connectionStep = connectionSteps[previous];
+                    if (connectionStep == 'core') selectedCore = null;
+                    if (connectionStep == 'protocol') selectedProtocol = null;
                   }
+                  connectionErrors = {};
                   error = null;
                 }),
                 classes: 'button ghost',
-                disabled: dataBusy || clearingLogs,
+                disabled: dataBusy || clearingLogs || ownerBusy,
               ),
             div([
               action(
                 t('common.cancel'),
                 closeModal,
-                disabled: dataBusy || clearingLogs,
+                disabled: dataBusy || clearingLogs || ownerBusy,
               ),
+              if (modal == 'ownerName' || modal == 'ownerPassword')
+                action(
+                  t('common.save'),
+                  () => unawaited(saveOwner()),
+                  classes: 'button primary',
+                  disabled: ownerBusy,
+                ),
+              if (modal == 'revokeSession')
+                action(
+                  t('admin.revoke'),
+                  () => unawaited(revokeOwnerSessions()),
+                  classes: 'button danger',
+                  disabled: ownerBusy,
+                ),
               if (modal == 'connection' && selectedProtocol != null)
                 action(
-                  t(editingId == null ? 'common.create' : 'common.save'),
-                  saveConnection,
+                  t(
+                    connectionStep == 'review'
+                        ? (editingId == null ? 'common.create' : 'common.save')
+                        : 'builder.next',
+                  ),
+                  connectionStep == 'review'
+                      ? saveConnection
+                      : () => setState(advanceConnection),
                   classes: 'button primary',
                   disabled:
-                      !canEdit ||
+                      (connectionStep == 'review' ? !canEdit : !canInspect) ||
                       !store.supports(selectedCore, selectedProtocol),
                 ),
               if (modal == 'recipient')
@@ -1935,128 +2260,305 @@ class _SkyAppState extends State<SkyApp> {
     ),
   ], classes: 'modal-overlay');
 
+  List<String> get connectionSteps {
+    final definition = selectedCore != null && selectedProtocol != null
+        ? store.definition(selectedCore!, selectedProtocol!)
+        : null;
+    return [
+      'core',
+      'protocol',
+      if (definition == null ||
+          definition.fields.any((f) => f.group == 'transport'))
+        'transport',
+      if (definition == null ||
+          definition.fields.any((f) => f.group == 'security'))
+        'security',
+      'parameters',
+      'review',
+    ];
+  }
+
+  void advanceConnection() {
+    if (selectedCore == null || selectedProtocol == null) return;
+    final definition = store.definition(selectedCore!, selectedProtocol!);
+    connectionErrors = {
+      for (final f
+          in definition
+              .activeFields(draft)
+              .where((f) => f.group == connectionStep))
+        if (f.validate(draft[f.id] ?? '', draft) case final String e) f.id: e,
+    };
+    if (connectionStep == 'parameters') {
+      if ((draft['name'] ?? '').trim().isEmpty)
+        connectionErrors['name'] = 'required';
+      final port = int.tryParse(draft['port'] ?? '');
+      if (definition.usesPort && (port == null || port < 1 || port > 65535))
+        connectionErrors['port'] = 'range_invalid';
+    }
+    if (connectionErrors.isNotEmpty) return;
+    final steps = connectionSteps;
+    var index = steps.indexOf(connectionStep) + 1;
+    while (index < steps.length - 1) {
+      final fields = definition
+          .activeFields(draft)
+          .where((f) => f.group == steps[index])
+          .toList();
+      if (fields.isNotEmpty &&
+          !fields.every((f) => !f.advanced && f.options.length == 1))
+        break;
+      if (steps[index] == 'parameters') break;
+      index++;
+    }
+    connectionStep = steps[index.clamp(0, steps.length - 1)];
+    error = null;
+  }
+
   Component connectionForm() {
-    if (selectedCore == null)
+    if (connectionStep == 'core')
       return div([
         div([
           for (final core in coreCatalog)
             button(
-              [
-                div([
-                  icon('core'),
-                  icon('chevron'),
-                ], classes: 'protocol-option-top'),
-                Component.text(core.name),
-              ],
+              [icon('core'), txt(core.name)],
               classes: 'protocol-option core-option',
               type: ButtonType.button,
               disabled:
-                  dataBusy || store.protocols[core.id]?.isNotEmpty != true,
+                  dataBusy ||
+                  store.protocols[core.id]?.any((p) => p.available) != true,
               onClick: () => chooseCore(core.id),
             ),
         ], classes: 'protocol-grid core-grid'),
       ]);
-    if (selectedProtocol == null)
+    if (connectionStep == 'protocol')
       return div([
         txt(coreName(selectedCore!), classes: 'protocol-tag'),
         div([
-          for (final protocol in protocolsForCore(selectedCore!))
-            button(
-              [
-                icon('connections'),
-                Component.text(protocol.name),
-                icon('chevron'),
-              ],
-              classes: 'protocol-option protocol-choice',
-              type: ButtonType.button,
-              disabled: dataBusy || !store.supports(selectedCore, protocol.id),
-              onClick: () => chooseProtocol(protocol),
-            ),
+          for (final inventory
+              in (store.protocols[selectedCore!] ??
+                      protocolsForCore(selectedCore!))
+                  .where(
+                    (p) =>
+                        store.definition(selectedCore!, p.id).category ==
+                        'proxy',
+                  ))
+            protocolCard(store.definition(selectedCore!, inventory.id)),
         ], classes: 'protocol-grid'),
       ]);
     final definition = store.definition(selectedCore!, selectedProtocol!);
-    if (!store.supports(selectedCore, selectedProtocol))
-      return div([
-        txt(definition.name, classes: 'protocol-tag'),
-        p([Component.text(t('protocol.unavailable'))], classes: 'notice'),
-      ]);
+    final fields = definition
+        .activeFields(draft)
+        .where((f) => f.group == connectionStep)
+        .toList();
     return div([
       div([
         txt(coreName(selectedCore!), classes: 'protocol-tag'),
         txt(definition.name, classes: 'protocol-tag'),
+        for (final id in ['transport', 'security'])
+          if (draft[id]?.isNotEmpty == true)
+            txt(draft[id]!, classes: 'protocol-tag'),
       ], classes: 'selected-protocol'),
-      if (runtime?.platformSupported == false)
+      for (final restriction in definition.exportRestrictions.where(
+        (r) => r.matches(definition.clientValues(draft)),
+      ))
         p([
-          Component.text(runtimeMessage('platform_unsupported')),
-        ], classes: 'notice'),
-      h3([Component.text(t('modal.general'))], classes: 'form-section-title'),
-      div([
-        field(const ProtocolField('name', required: true)),
-        if (definition.usesPort)
-          field(const ProtocolField('port', required: true)),
-      ], classes: 'form-grid'),
-      h3([
-        Component.text(t('modal.protocolSettings')),
-      ], classes: 'form-section-title'),
-      div([
-        for (final f in definition.fields) field(f),
-        if (draft['transport'] == 'WebSocket')
-          field(const ProtocolField('path', defaultValue: '/connect')),
-        if (draft['transport'] == 'gRPC')
-          field(const ProtocolField('serviceName', defaultValue: 'tunnel')),
-        if (draft['obfs'] == 'salamander')
-          field(const ProtocolField('obfsPassword', secret: true)),
-      ], classes: 'form-grid'),
-    ]);
+          Component.text(t(restriction.reasonKey)),
+        ], classes: 'builder-notice'),
+      if (connectionStep == 'review' && definition.deliveryHintKey != null)
+        p([
+          Component.text(t(definition.deliveryHintKey!)),
+        ], classes: 'muted small'),
+      if (connectionStep == 'review') ...[
+        h3([
+          Component.text(t('builder.review')),
+        ], classes: 'form-section-title'),
+        el('dl', [
+          for (final entry in <String, String>{
+            t('field.name'): draft['name'] ?? '',
+            t('builder.address'): definition.usesPort
+                ? '${store.address}:${draft['port']}'
+                : store.address,
+            for (final f
+                in definition
+                    .activeFields(draft)
+                    .where(
+                      (f) => !f.advanced && (draft[f.id] ?? '').isNotEmpty,
+                    ))
+              t(f.labelKey): f.secret ? '••••••••' : draft[f.id]!,
+          }.entries)
+            div([
+              el('dt', [Component.text(entry.key)]),
+              el('dd', [Component.text(entry.value)]),
+            ], classes: 'review-row'),
+        ], classes: 'connection-review'),
+        p([
+          Component.text(
+            t(
+              !definition.shareable
+                  ? 'builder.systemInput'
+                  : definition.isolatedBindings
+                  ? 'builder.isolatedPorts'
+                  : 'builder.credentialsAuto',
+            ),
+          ),
+        ], classes: 'muted small'),
+      ] else ...[
+        if (connectionStep == 'parameters') ...[
+          h3([
+            Component.text(t('modal.general')),
+          ], classes: 'form-section-title'),
+          div([
+            field(const ProtocolField('name', required: true, maxLength: 80)),
+            if (definition.usesPort)
+              field(
+                const ProtocolField(
+                  'port',
+                  kind: 'integer',
+                  minimum: 1,
+                  maximum: 65535,
+                  required: true,
+                ),
+              ),
+          ], classes: 'form-grid'),
+        ],
+        for (final f in fields.where((f) => f.kind == 'choice' && !f.advanced))
+          field(f),
+        div([
+          for (final f in fields.where(
+            (f) => f.kind != 'choice' && !f.advanced,
+          ))
+            field(f),
+        ], classes: 'form-grid'),
+        if (fields.any((f) => f.advanced)) ...[
+          action(
+            t('builder.advanced'),
+            () => setState(() {
+              if (!advancedGroups.add(connectionStep))
+                advancedGroups.remove(connectionStep);
+            }),
+            glyph: 'chevron',
+            classes: 'button ghost advanced-toggle',
+          ),
+          if (advancedGroups.contains(connectionStep))
+            div([
+              for (final f in fields.where((f) => f.advanced)) field(f),
+            ], classes: 'form-grid'),
+        ],
+      ],
+    ], classes: 'builder-content');
+  }
+
+  Component protocolCard(ProtocolDefinition definition) {
+    final available = store.supports(selectedCore, definition.id);
+    return div([
+      button(
+        [
+          span([
+            icon('connections'),
+            txt(definition.name),
+            icon('chevron'),
+          ], classes: 'protocol-card-heading'),
+          span([
+            Component.text(t(definition.descriptionKey)),
+          ], classes: 'protocol-description'),
+          if (!available)
+            txt(
+              t(definition.unavailableKey ?? 'feature.unavailable'),
+              classes: 'availability-chip',
+            ),
+        ],
+        classes: 'protocol-select',
+        type: ButtonType.button,
+        disabled: dataBusy || !available,
+        attributes: {'aria-label': definition.name},
+        onClick: () => chooseProtocol(definition),
+      ),
+      FieldHelp(
+        id: 'about-${definition.id}',
+        label: definition.name,
+        description: t(definition.detailsKey),
+        buttonLabel: t('common.help', {'name': definition.name}),
+        key: ValueKey('about:$selectedCore:${definition.id}'),
+      ),
+    ], classes: 'protocol-card ${available ? 'available' : 'unavailable'}');
+  }
+
+  void changeField(ProtocolField f, String value) => setState(() {
+    draft[f.id] = value;
+    if (selectedCore != null && selectedProtocol != null)
+      draft = store
+          .definition(selectedCore!, selectedProtocol!)
+          .defaults(draft);
+    if (selectedCore != null && selectedProtocol != null) {
+      final definition = store.definition(selectedCore!, selectedProtocol!);
+      if (f.id == definition.clientFieldBindings['transport']) {
+        final securityId = definition.clientFieldBindings['security'];
+        final security = definition.fields
+            .where((field) => field.id == securityId)
+            .firstOrNull;
+        if (security != null &&
+            definition.exportRestrictions.any(
+              (rule) => rule.matches(definition.clientValues(draft)),
+            )) {
+          for (final option in security.allowedOptions(draft)) {
+            final candidate = definition.defaults({
+              ...draft,
+              security.id: option,
+            });
+            if (!definition.exportRestrictions.any(
+              (rule) => rule.matches(definition.clientValues(candidate)),
+            )) {
+              draft = candidate;
+              break;
+            }
+          }
+        }
+      }
+    }
+    connectionErrors.remove(f.id);
+    error = null;
+  });
+  Map<String, String> blockedChoices(ProtocolField f) {
+    if (selectedCore == null || selectedProtocol == null) return const {};
+    final definition = store.definition(selectedCore!, selectedProtocol!);
+    if (f.id != definition.clientFieldBindings['security']) return const {};
+    return {
+      for (final option in f.options)
+        if (definition.exportRestrictions.any(
+          (rule) => rule.matches(
+            definition.clientValues(
+              definition.defaults({...draft, f.id: option}),
+            ),
+          ),
+        ))
+          option: 'builder.profileUnavailable',
+    };
   }
 
   Component field(ProtocolField f) {
-    draft.putIfAbsent(f.id, () => f.defaultValue);
-    final controlId = 'field-${f.id}';
-    return div([
-      div([
-        el(
-          'label',
-          [
-            Component.text(t(f.labelKey)),
-            if (f.required) txt(' *', classes: 'muted'),
-          ],
-          attributes: {'for': controlId},
-        ),
-        FieldHelp(
-          id: 'help-${f.id}',
-          label: t(f.labelKey),
-          description: t(f.helpKey),
-          buttonLabel: t('common.help', {'name': t(f.labelKey)}),
-          key: ValueKey('help:$selectedCore:$selectedProtocol:${f.id}'),
-        ),
-      ], classes: 'field-label'),
-      if (f.options.isNotEmpty)
-        select(
-          [
-            for (final v in f.options) option([Component.text(v)], value: v),
-          ],
-          id: controlId,
-          value: draft[f.id],
-          onChange: (v) => setState(() => draft[f.id] = v.first),
-          disabled: dataBusy || clearingLogs,
-          key: ValueKey('$selectedProtocol-${f.id}'),
-        )
-      else
-        input<String>(
-          id: controlId,
-          value: draft[f.id],
-          disabled: dataBusy || clearingLogs,
-          type: f.secret ? InputType.password : InputType.text,
-          onInput: (v) => draft[f.id] = v,
-          attributes: {
-            'maxlength': f.id == 'name' ? '80' : '512',
-            if (f.id == 'port') 'inputmode': 'numeric',
-            if (f.required) 'aria-required': 'true',
-          },
-          key: ValueKey('$selectedProtocol-${f.id}'),
-        ),
-    ], classes: 'field');
+    draft.putIfAbsent(f.id, () => f.initialValue(draft));
+    final original = store.connections
+        .where((c) => c.id == editingId)
+        .firstOrNull;
+    return ProtocolFieldView(
+      field: f,
+      values: draft,
+      error: connectionErrors[f.id],
+      busy: dataBusy,
+      prefix: '$selectedCore-$selectedProtocol-',
+      configured: original?.configuredSecrets.contains(f.id) == true,
+      blockedOptions: blockedChoices(f),
+      guideScope: selectedProtocol ?? '',
+      onChanged: (value, rebuild) {
+        if (rebuild) {
+          changeField(f, value);
+        } else {
+          draft[f.id] = value;
+          if (connectionErrors.containsKey(f.id))
+            setState(() => connectionErrors.remove(f.id));
+        }
+      },
+      key: ValueKey('field:$selectedCore:$selectedProtocol:${f.id}'),
+    );
   }
 
   Component recipientForm() => div([
@@ -2064,7 +2566,7 @@ class _SkyAppState extends State<SkyApp> {
       Component.text(t('users.name')),
       input<String>(
         value: draft['name'],
-        disabled: dataBusy || clearingLogs,
+        disabled: dataBusy || clearingLogs || ownerBusy,
         onInput: (v) => draft['name'] = v,
         attributes: {
           'autofocus': '',
@@ -2075,12 +2577,12 @@ class _SkyAppState extends State<SkyApp> {
     ]),
     h3([Component.text(t('users.access'))], classes: 'form-section-title'),
     div([
-      for (final c in store.connections)
+      for (final c in store.connections.where((c) => c.shareable))
         label([
           input<bool>(
             type: InputType.checkbox,
             checked: grants.contains(c.id),
-            disabled: dataBusy || clearingLogs,
+            disabled: dataBusy || clearingLogs || ownerBusy,
             onChange: (v) => setState(() {
               if (v) {
                 grants.add(c.id);
@@ -2122,9 +2624,17 @@ class _SkyAppState extends State<SkyApp> {
       ]),
       select(
         [
-          option([Component.text(t('users.subscription'))], value: '-1'),
+          option(
+            [Component.text(t('users.subscription'))],
+            value: '-1',
+            selected: shareSelection == '-1',
+          ),
           for (var i = 0; i < shareData!.links.length; i++)
-            option([Component.text(shareData!.links[i].name)], value: '$i'),
+            option(
+              [Component.text(shareData!.links[i].name)],
+              value: '$i',
+              selected: shareSelection == '$i',
+            ),
         ],
         value: shareSelection,
         onChange: (v) => setState(() => shareSelection = v.first),

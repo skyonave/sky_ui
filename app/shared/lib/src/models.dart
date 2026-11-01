@@ -8,6 +8,9 @@ class Connection {
     this.instanceId = 'primary',
     this.enabled = true,
     this.settings = const {},
+    this.shareable = true,
+    this.configuredSecrets = const [],
+    this.assignedPorts = const [],
   });
   final String id;
   final String name;
@@ -17,8 +20,11 @@ class Connection {
   final int? port;
   final bool enabled;
   final Map<String, String> settings;
+  final bool shareable;
+  final List<String> configuredSecrets;
+  final List<int> assignedPorts;
 
-  Connection copyWith({bool? enabled}) => Connection(
+  Connection copyWith({bool? enabled, List<int>? assignedPorts}) => Connection(
     id: id,
     name: name,
     coreId: coreId,
@@ -27,6 +33,9 @@ class Connection {
     port: port,
     enabled: enabled ?? this.enabled,
     settings: settings,
+    shareable: shareable,
+    configuredSecrets: configuredSecrets,
+    assignedPorts: assignedPorts ?? this.assignedPorts,
   );
   Map<String, Object?> toJson() => {
     'id': id,
@@ -37,6 +46,9 @@ class Connection {
     'port': port,
     'enabled': enabled,
     'settings': settings,
+    'shareable': shareable,
+    'configuredSecrets': configuredSecrets,
+    'assignedPorts': assignedPorts,
   };
   factory Connection.fromJson(Map<String, dynamic> json) => Connection(
     id: json['id'] as String,
@@ -47,6 +59,11 @@ class Connection {
     port: json['port'] as int?,
     enabled: json['enabled'] as bool,
     settings: Map<String, String>.from(json['settings'] as Map),
+    shareable: json['shareable'] as bool? ?? true,
+    configuredSecrets: List<String>.from(
+      json['configuredSecrets'] as List? ?? [],
+    ),
+    assignedPorts: List<int>.from(json['assignedPorts'] as List? ?? []),
   );
 }
 
@@ -56,29 +73,36 @@ class Recipient {
     required this.name,
     this.enabled = true,
     this.connectionIds = const [],
+    this.connectionPorts = const {},
   });
   final String id;
   final String name;
   final bool enabled;
   final List<String> connectionIds;
+  final Map<String, int> connectionPorts;
 
   Recipient copyWith({bool? enabled}) => Recipient(
     id: id,
     name: name,
     enabled: enabled ?? this.enabled,
     connectionIds: connectionIds,
+    connectionPorts: connectionPorts,
   );
   Map<String, Object?> toJson() => {
     'id': id,
     'name': name,
     'enabled': enabled,
     'connectionIds': connectionIds,
+    'connectionPorts': connectionPorts,
   };
   factory Recipient.fromJson(Map<String, dynamic> json) => Recipient(
     id: json['id'] as String,
     name: json['name'] as String,
     enabled: json['enabled'] as bool,
     connectionIds: List<String>.from(json['connectionIds'] as List),
+    connectionPorts: Map<String, int>.from(
+      json['connectionPorts'] as Map? ?? {},
+    ),
   );
 }
 

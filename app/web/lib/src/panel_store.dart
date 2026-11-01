@@ -19,7 +19,7 @@ class PanelStore {
   }
 
   bool supports(String? core, String? protocol) =>
-      protocols[core]?.any((p) => p.id == protocol) ?? false;
+      protocols[core]?.any((p) => p.id == protocol && p.available) ?? false;
   ProtocolDefinition definition(String core, String id) =>
       protocols[core]?.where((p) => p.id == id).firstOrNull ??
       protocolsForCore(core).firstWhere((p) => p.id == id);
@@ -28,7 +28,10 @@ class PanelStore {
       protocolCatalog.firstWhere((p) => p.id == id);
   int get activeConnections => deliveryReady
       ? connections
-            .where((c) => c.enabled && recipientsFor(c.id).isNotEmpty)
+            .where(
+              (c) =>
+                  c.enabled && (!c.shareable || recipientsFor(c.id).isNotEmpty),
+            )
             .length
       : 0;
   int get activeRecipients => deliveryReady

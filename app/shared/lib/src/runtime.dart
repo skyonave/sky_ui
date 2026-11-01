@@ -13,13 +13,23 @@ enum CoreDesiredState { unknown, running, stopped }
 enum CoreOperation { status, validate, start, stop, restart, logs }
 
 class ApiError {
-  const ApiError(this.code, {this.parameters = const {}});
+  const ApiError(
+    this.code, {
+    this.parameters = const {},
+    this.fields = const {},
+  });
   final String code;
   final Map<String, Object?> parameters;
-  Map<String, Object?> toJson() => {'code': code, 'parameters': parameters};
+  final Map<String, String> fields;
+  Map<String, Object?> toJson() => {
+    'code': code,
+    'parameters': parameters,
+    if (fields.isNotEmpty) 'fields': fields,
+  };
   factory ApiError.fromJson(Map<String, dynamic> json) => ApiError(
     json['code'] as String,
     parameters: Map<String, Object?>.from(json['parameters'] as Map? ?? {}),
+    fields: Map<String, String>.from(json['fields'] as Map? ?? {}),
   );
 }
 

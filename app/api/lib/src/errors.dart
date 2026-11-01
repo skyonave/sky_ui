@@ -1,10 +1,11 @@
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 class ApiException implements Exception {
-  const ApiException(this.code, {this.status = 503});
+  const ApiException(this.code, {this.status = 503, this.fields = const {}});
   final String code;
   final int status;
-  ApiError get error => ApiError(code);
+  final Map<String, String> fields;
+  ApiError get error => ApiError(code, fields: fields);
 }
 
 String redact(String value, Iterable<String> secrets) {

@@ -5,11 +5,63 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:web/web.dart' as web;
 
 class ApiClientException implements Exception {
-  const ApiClientException(this.code);
+  const ApiClientException(this.code, {this.fields = const {}});
   final String code;
+  final Map<String, String> fields;
 }
 
 class ApiClient {
+  String? csrfToken;
+  void Function()? onUnauthorized;
+  Future<OwnerState> owner() async => OwnerState.fromJson(
+    Map<String, dynamic>.from(
+      (await _request('/api/v1/auth/session'))['data'] as Map,
+    ),
+  );
+  Future<OwnerState> login(String username, String password) async =>
+      OwnerState.fromJson(
+        Map<String, dynamic>.from(
+          (await _request(
+                '/api/v1/auth/login',
+                post: true,
+                payload: {'username': username, 'password': password},
+              ))['data']
+              as Map,
+        ),
+      );
+  Future<void> logout() async {
+    await _request('/api/v1/auth/logout', post: true);
+  }
+
+  Future<OwnerState> changeOwner(Map<String, Object?> values) async =>
+      OwnerState.fromJson(
+        Map<String, dynamic>.from(
+          (await _request(
+                '/api/v1/auth/owner',
+                method: 'PUT',
+                payload: values,
+              ))['data']
+              as Map,
+        ),
+      );
+  Future<List<OwnerSession>> ownerSessions() async =>
+      ((await _request('/api/v1/auth/sessions'))['data'] as List)
+          .map(
+            (v) => OwnerSession.fromJson(Map<String, dynamic>.from(v as Map)),
+          )
+          .toList();
+  Future<void> revokeSession(String id) async {
+    await _request('/api/v1/auth/sessions/$id', method: 'DELETE', payload: {});
+  }
+
+  Future<void> revokeOtherSessions() async {
+    await _request(
+      '/api/v1/auth/sessions/revoke-others',
+      post: true,
+      payload: {'confirmed': true},
+    );
+  }
+
   Future<SystemSnapshot> system() async => SystemSnapshot.fromJson(
     Map<String, dynamic>.from(
       (await _request('/api/v1/system'))['data'] as Map,
@@ -47,7 +99,10 @@ class ApiClient {
               credentials: 'same-origin',
               cache: 'no-store',
               headers:
-                  <String, String>{'Content-Type': 'application/json'}.jsify()
+                  <String, String>{
+                        'Content-Type': 'application/json',
+                        if (csrfToken != null) 'X-Sky-UI-CSRF': csrfToken!,
+                      }.jsify()
                       as JSObject,
               body: (post || payload != null)
                   ? jsonEncode(payload ?? {}).toJS
@@ -60,10 +115,17 @@ class ApiClient {
               as Map<String, dynamic>;
       if (!response.ok) {
         final error = data['error'];
+        if (response.status == 401 &&
+            error is Map &&
+            error['code'] == 'auth_required')
+          onUnauthorized?.call();
         throw ApiClientException(
           error is Map && error['code'] is String
               ? error['code'] as String
               : 'api_unavailable',
+          fields: error is Map
+              ? Map<String, String>.from(error['fields'] as Map? ?? {})
+              : const {},
         );
       }
       return data;

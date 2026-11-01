@@ -95,6 +95,12 @@ class PanelData {
     id: value.id,
     name: value.name,
     enabled: value.enabled,
+    connectionPorts: {
+      for (final grant in grants.where(
+        (g) => g.recipientId == value.id && g.credentials['port'] != null,
+      ))
+        grant.connectionId: int.parse(grant.credentials['port']!),
+    },
     connectionIds: grants
         .where((g) => g.recipientId == value.id)
         .map((g) => g.connectionId)
@@ -108,6 +114,10 @@ class PanelData {
       )
       .toList();
   List<StoredConnection> get listeningConnections => connections
-      .where((c) => c.value.enabled && activeGrants(c.value.id).isNotEmpty)
+      .where(
+        (c) =>
+            c.value.enabled &&
+            (!c.value.shareable || activeGrants(c.value.id).isNotEmpty),
+      )
       .toList();
 }

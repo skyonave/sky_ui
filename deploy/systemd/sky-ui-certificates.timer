@@ -1,0 +1,11 @@
+[Unit]
+Description=Sky UI TLS certificate renewal propagation
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=1min
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

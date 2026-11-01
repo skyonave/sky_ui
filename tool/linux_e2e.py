@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Destructive-to-test-records integration check for an otherwise empty Sky UI test VPS."""
 import argparse
-import base64
 import contextlib
 import getpass
 import json
@@ -29,6 +28,7 @@ origin = environment['SKY_UI_WEB_ORIGIN'].rstrip('/')
 api_origin = 'http://127.0.0.1:' + environment['SKY_UI_PORT']
 gateway = Path(environment['SKY_UI_GATEWAY_SECRET_FILE']).read_text().strip()
 http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+owner_cookie = owner_csrf = None
 tag = 'qa-' + secrets.token_hex(8)
 binary = '/opt/sky-ui/current/bin/mihomo'
 
@@ -46,7 +46,10 @@ def request(url, method='GET', payload=None, headers=None):
 
 
 def api(path, method='GET', payload=None, expected=200):
-    status, body = request(api_origin + '/api/v1/' + path, method, payload, {'X-Sky-UI-Gateway': gateway})
+    headers = {'X-Sky-UI-Gateway': gateway}
+    if owner_cookie:
+        headers.update({'Cookie': owner_cookie, 'X-Sky-UI-CSRF': owner_csrf})
+    status, body = request(api_origin + '/api/v1/' + path, method, payload, headers)
     assert status == expected, f'API {method} {path.split("/")[0]} returned {status}, expected {expected}.'
     parsed = json.loads(body)
     return parsed.get('data', parsed)
@@ -201,17 +204,23 @@ def fetch_profile(url):
     return result
 
 
+assert request(origin + '/api/v1/panel')[0] == 401
+assert request(api_origin + '/api/v1/panel')[0] == 401
+owner = input('Owner username: ').strip()
+password = getpass.getpass('Owner password (not stored): ')
+login_request = urllib.request.Request(origin + '/api/v1/auth/login', method='POST',
+    data=json.dumps({'username': owner, 'password': password}).encode(),
+    headers={'Origin': origin, 'Content-Type': 'application/json'})
+del password
+with http.open(login_request, timeout=30) as response:
+    assert response.status == 200, 'Owner sign-in failed.'
+    owner_csrf = json.loads(response.read())['data']['csrf']
+    owner_cookie = response.headers['Set-Cookie'].split(';', 1)[0]
+del login_request
+assert request(origin + '/api/v1/panel', headers={'Cookie': owner_cookie})[0] == 200
 initial = state()
 assert not initial['connections'] and not initial['recipients'], 'Refusing to test a nonempty installation.'
 assert api('cores/primary')['controllerReady'], 'Start the managed core before this test.'
-owner = Path('/etc/sky-ui/admin.hash').read_text().split()[0]
-password = getpass.getpass('Owner password (not stored): ')
-authorization = 'Basic ' + base64.b64encode((owner + ':' + password).encode()).decode()
-del password
-assert request(origin + '/api/v1/panel')[0] == 401
-assert request(origin + '/api/v1/panel', headers={'Authorization': authorization})[0] == 200
-del authorization
-assert request(api_origin + '/api/v1/panel')[0] == 401
 print('Owner gate and internal gateway authentication: PASS', flush=True)
 
 try:

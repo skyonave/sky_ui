@@ -23,26 +23,12 @@ cat >"$output" <<CADDY
     }
 }
 (sky_ui_protected) {
-    @subscription {
-        method GET HEAD
-        path_regexp subscription ^/s/[A-Za-z0-9_-]{43}\\.yaml$
-    }
-    handle @subscription {
-        reverse_proxy 127.0.0.1:$port {
-            header_up Host 127.0.0.1:$port
-            header_up -Authorization
-            header_up X-Sky-UI-Gateway $gateway_secret
-        }
-    }
-    handle {
-        basic_auth {
-            $admin_user $admin_hash
-        }
-        reverse_proxy 127.0.0.1:$port {
-            header_up Host 127.0.0.1:$port
-            header_up -Authorization
-            header_up X-Sky-UI-Gateway $gateway_secret
-        }
+    reverse_proxy 127.0.0.1:$port {
+        flush_interval -1
+        header_up Host 127.0.0.1:$port
+        header_up -Authorization
+        header_up X-Sky-UI-Gateway $gateway_secret
+        header_up X-Sky-UI-Client-IP {remote_host}
     }
 }
 https://$ip_address {

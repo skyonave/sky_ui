@@ -8,6 +8,7 @@ StartLimitBurst=3
 Type=simple
 User=sky-ui-core
 Group=sky-ui
+Environment=SAFE_PATHS=/var/lib/sky-ui-certificates
 WorkingDirectory=/var/lib/sky-ui/cores/mihomo
 ExecStartPre=/opt/sky-ui/current/bin/mihomo -t -d /var/lib/sky-ui/cores/mihomo -f /var/lib/sky-ui/cores/mihomo/config.yaml
 ExecStart=/opt/sky-ui/current/bin/mihomo -d /var/lib/sky-ui/cores/mihomo -f /var/lib/sky-ui/cores/mihomo/config.yaml

@@ -26,6 +26,7 @@ void main() {
       stateDirectory: directory.path,
     );
     final config = ServerConfig(
+      requireOwnerAuth: false,
       port: 0,
       webOrigin: Uri.parse('http://127.0.0.1:39241'),
       publicDirectory: directory.path,

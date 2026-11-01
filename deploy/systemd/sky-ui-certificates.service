@@ -1,0 +1,17 @@
+[Unit]
+Description=Sky UI validated TLS certificate publisher
+After=sky-ui-edge.service
+ConditionPathExists=/etc/sky-ui/access.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/sky-ui/current/deploy/certificate_sync.py
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ReadWritePaths=/var/lib/sky-ui-certificates
+RestrictAddressFamilies=AF_UNIX
+CapabilityBoundingSet=CAP_DAC_READ_SEARCH CAP_CHOWN

@@ -25,21 +25,35 @@ flock -n 9 || fail 'Установка или настройка уже выпо
 exec 3<>/dev/tty
 temp="$(mktemp -d /etc/sky-ui/.setup.XXXXXXXX)"
 trap 'rm -rf -- "$temp"' EXIT
-for name in server.env Caddyfile access.conf admin.hash; do
+for name in server.env Caddyfile access.conf admin.hash owner.seed; do
   if [[ -f "/etc/sky-ui/$name" ]]; then cp "/etc/sky-ui/$name" "$temp/old-$name"; fi
 done
 edge_was_running=0
 if systemctl is-active --quiet sky-ui-edge.service; then edge_was_running=1; fi
 changed=0
+owner_dir="$(sed -n 's/^SKY_UI_DATA_DIR=//p' /etc/sky-ui/server.env)"
+[[ "$owner_dir" == /* && "$owner_dir" != / ]] || fail 'Некорректная папка данных.'
+owner_db="$owner_dir/owner.sqlite"
+if [[ -f "$owner_db" ]]; then
+  python3 - "$owner_db" "$temp/old-owner.sqlite" <<'PY'
+import sqlite3,sys
+with sqlite3.connect(sys.argv[1]) as source,sqlite3.connect(sys.argv[2]) as target:
+    source.backup(target)
+PY
+fi
 rollback() {
   trap - ERR
   set +e
   if (( changed )); then
-    for name in server.env Caddyfile access.conf admin.hash; do
+    systemctl stop sky-ui.service
+    rm -f -- "$owner_db" "$owner_db-wal" "$owner_db-shm"
+    if [[ -f "$temp/old-owner.sqlite" ]]; then install -m 0600 -o sky-ui -g sky-ui "$temp/old-owner.sqlite" "$owner_db"; fi
+    for name in server.env Caddyfile access.conf admin.hash owner.seed; do
       if [[ -f "$temp/old-$name" ]]; then cp "$temp/old-$name" "/etc/sky-ui/$name"; else rm -f -- "/etc/sky-ui/$name"; fi
     done
     chown root:sky-ui /etc/sky-ui/server.env
     chmod 0640 /etc/sky-ui/server.env
+    if [[ -f /etc/sky-ui/owner.seed ]]; then chown sky-ui:sky-ui /etc/sky-ui/owner.seed; chmod 0600 /etc/sky-ui/owner.seed; fi
     if [[ -f /etc/sky-ui/Caddyfile ]]; then chown root:sky-ui-edge /etc/sky-ui/Caddyfile; chmod 0640 /etc/sky-ui/Caddyfile; fi
     systemctl restart sky-ui.service
     if (( edge_was_running )); then systemctl reload-or-restart sky-ui-edge.service; else systemctl disable --now sky-ui-edge.service; fi
@@ -71,7 +85,7 @@ create_admin() {
   printf '\n' >&3
   if [[ -z "$password" ]]; then password="$(openssl rand -hex 18)"; generated=1
   else
-    (( ${#password} >= 12 )) || fail 'Пароль должен содержать не менее 12 символов.'
+    (( ${#password} >= 12 && $(printf '%s' "$password" | wc -c) <= 72 )) || fail 'Пароль: от 12 символов, не более 72 bytes в UTF-8.'
     read -rsp 'Повторите пароль: ' repeated <&3
     printf '\n' >&3
     [[ "$password" == "$repeated" ]] || fail 'Пароли не совпадают.'
@@ -125,6 +139,7 @@ awk '!/^SKY_UI_WEB_ORIGIN=/ && !/^SKY_UI_EXTRA_ORIGIN=/' /etc/sky-ui/server.env 
 printf 'SKY_UI_WEB_ORIGIN=https://%s\nSKY_UI_EXTRA_ORIGIN=%s\n' "$primary" "$extra" >>"$temp/server.env"
 changed=1
 install -m 0600 "$temp/admin.hash" /etc/sky-ui/admin.hash
+install -m 0600 -o sky-ui -g sky-ui "$temp/admin.hash" /etc/sky-ui/owner.seed
 install -m 0640 -o root -g sky-ui-edge "$temp/Caddyfile" /etc/sky-ui/Caddyfile
 install -m 0640 -o root -g sky-ui "$temp/server.env" /etc/sky-ui/server.env
 printf '%s\n%s\n' "$ip_address" "$domain" >/etc/sky-ui/access.conf
@@ -136,11 +151,12 @@ for host in "$ip_address" "$domain"; do
   [[ -n "$host" ]] || continue
   ready=0
   for attempt in $(seq 1 45); do
-    code="$(curl --noproxy '*' --silent --connect-timeout 2 --max-time 4 --resolve "$host:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$host/api/v1/health" 2>/dev/null || true)"
+    code="$(curl --noproxy '*' --silent --connect-timeout 2 --max-time 4 --resolve "$host:443:127.0.0.1" -o /dev/null -w '%{http_code}' "https://$host/api/v1/panel" 2>/dev/null || true)"
     if [[ "$code" == 401 ]]; then ready=1; break; fi
     sleep 2
   done
   if (( ! ready )); then printf 'HTTPS для %s не готов. Проверьте DNS и доступность портов 80/443.\n' "$host" >&2; false; fi
 done
 changed=0
-printf 'Готово: https://%s\nЛогин: %s\nПовторная настройка: sudo sky-ui setup\n' "$primary" "$admin_user" >&3
+printf 'Готово: https://%s\nПовторная настройка: sudo sky-ui setup\n' "$primary" >&3
+systemctl start sky-ui-certificates.service

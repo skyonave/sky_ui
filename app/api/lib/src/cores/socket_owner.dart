@@ -66,3 +66,32 @@ Future<bool> peerBelongsTo(Socket socket, int uid) async {
   }
   return false;
 }
+
+Future<bool> boundSocketBelongsTo(
+  String host,
+  int port,
+  int uid, {
+  required bool udp,
+}) async {
+  final expected = InternetAddress.tryParse(host);
+  if (expected == null) return false;
+  final address = _normalized(expected.rawAddress);
+  try {
+    for (final name in udp ? ['udp', 'udp6'] : ['tcp', 'tcp6']) {
+      final file = File('/proc/net/$name');
+      if (!await file.exists()) continue;
+      for (final line in (await file.readAsLines()).skip(1)) {
+        final fields = line.trim().split(RegExp(r'\s+'));
+        if (fields.length < 10 || fields[3] != (udp ? '07' : '0A')) continue;
+        final local = fields[1].split(':');
+        if (int.parse(local[1], radix: 16) == port &&
+            _kernelAddress(local[0]) == address &&
+            int.parse(fields[7]) == uid)
+          return true;
+      }
+    }
+  } on FileSystemException {
+    throw const ApiException('listener_identity_unavailable');
+  }
+  return false;
+}

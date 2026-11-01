@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../config.dart';
 import '../core_manager.dart';
@@ -25,6 +26,7 @@ class PanelService {
   final ConfigurationCodec codec;
   final ClientExporter exporter;
   bool busy = false;
+  final _portRandom = Random.secure();
 
   Future<void> initialize() => manager.exclusive((control) async {
     final pending = repository.pending;
@@ -85,13 +87,31 @@ class PanelService {
     }
     return PanelSnapshot(
       revision: repository.revision,
-      connections: data.connections.map((c) => c.value).toList(),
+      connections: data.connections
+          .map(
+            (c) => c.value.copyWith(
+              assignedPorts: data
+                  .activeGrants(c.value.id)
+                  .where(
+                    (g) =>
+                        g.connectionId == c.value.id &&
+                        g.credentials.containsKey('port'),
+                  )
+                  .map((g) => int.parse(g.credentials['port']!))
+                  .toList(),
+            ),
+          )
+          .toList(),
       recipients: data.recipients.map(data.publicRecipient).toList(),
       serverName: data.serverName,
       address: data.address,
       synchronized: synchronized,
       deliveryReady: ready,
-      protocols: {codec.coreId: codec.protocols},
+      protocols: {
+        codec.coreId: codec.protocols
+            .map((p) => p.withExportRestrictions(exporter.restrictions))
+            .toList(),
+      },
       errorCode: repository.pending != null
           ? 'configuration_rollback_failed'
           : synchronized
@@ -175,12 +195,25 @@ class PanelService {
       wasRunning = observation.state == CoreProcessState.active;
       previous = await File(manager.core.configuration).readAsString();
       final candidate = codec.compile(after, manager.core, previous);
-      if (candidate != previous) {
+      final validation = codec.compile(
+        after,
+        manager.core,
+        previous,
+        validationOnly: true,
+      );
+      if (validation != candidate || candidate != previous)
         await _staged(
-          candidate,
-          'candidate.validate',
+          validation,
+          'draft.validate',
           (file) => control.validateCandidate(file.path),
         );
+      if (candidate != previous) {
+        if (validation != candidate)
+          await _staged(
+            candidate,
+            'candidate.validate',
+            (file) => control.validateCandidate(file.path),
+          );
         await codec.preflight(before, after, wasRunning);
         repository.prepare(DeploymentIntent(previous, candidate, wasRunning));
         prepared = true;
@@ -235,14 +268,55 @@ class PanelService {
       throw const ApiException('connection_identity_immutable', status: 422);
     }
     final name = _name(input.name);
-    final port = input.port;
-    if (port == null || port < 1 || port > 65535)
+    final definition = codec.protocols
+        .where((p) => p.id == input.protocolId && p.available)
+        .firstOrNull;
+    if (definition == null)
+      throw const ApiException('protocol_unavailable', status: 422);
+    final port = definition.usesPort ? input.port : null;
+    if (definition.usesPort && (port == null || port < 1 || port > 65535))
       throw const ApiException('port_invalid', status: 422);
-    if ({22, 80, 443, config.port, manager.core.controller.port}.contains(port))
+    if (port != null &&
+        {22, 80, 443, config.port, manager.core.controller.port}.contains(port))
       throw const ApiException('port_reserved', status: 422);
-    if (data.connections.any((c) => c.value.id != id && c.value.port == port))
+    if (port != null &&
+        (data.connections.any(
+              (c) => c.value.id != id && c.value.port == port,
+            ) ||
+            data.grants.any(
+              (g) => g.connectionId != id && g.credentials['port'] == '$port',
+            )))
       throw const ApiException('port_in_use', status: 422);
-    final settings = codec.validateSettings(input);
+    if (definition.isolatedBindings &&
+        old != null &&
+        old.value.port != port &&
+        data.grants.any((g) => g.credentials['port'] == '$port'))
+      throw const ApiException('port_in_use', status: 422);
+    final secretInput = {...input.settings};
+    for (final f
+        in definition
+            .activeFields(definition.defaults(input.settings))
+            .where((f) => f.secret)) {
+      if ((secretInput[f.id] ?? '').isEmpty &&
+          old?.secrets['field:${f.id}'] != null)
+        secretInput[f.id] = old!.secrets['field:${f.id}']!;
+    }
+    final settings = codec.validateSettings(
+      Connection(
+        id: input.id,
+        name: input.name,
+        coreId: input.coreId,
+        protocolId: input.protocolId,
+        instanceId: input.instanceId,
+        port: input.port,
+        enabled: input.enabled,
+        settings: secretInput,
+      ),
+    );
+    final secretIds = definition.fields
+        .where((f) => f.secret)
+        .map((f) => f.id)
+        .toSet();
     final value = Connection(
       id: id ?? newId('c'),
       name: name,
@@ -252,11 +326,60 @@ class PanelService {
       port: port,
       enabled: input.enabled,
       settings: settings,
+      shareable: definition.shareable,
     );
-    final record = StoredConnection(
+    final secrets = await codec.connectionSecrets(
       value,
-      old?.secrets ?? await codec.connectionSecrets(value),
+      previous: old?.secrets ?? const {},
     );
+    for (final key in secretIds) {
+      if ((settings[key] ?? '').isNotEmpty)
+        secrets['field:$key'] = settings[key]!;
+    }
+    final safeValue = Connection(
+      id: value.id,
+      name: value.name,
+      coreId: value.coreId,
+      instanceId: value.instanceId,
+      protocolId: value.protocolId,
+      port: value.port,
+      enabled: value.enabled,
+      shareable: value.shareable,
+      settings: Map.from(settings)
+        ..removeWhere((key, _) => secretIds.contains(key)),
+      configuredSecrets: secretIds
+          .where((key) => secrets.containsKey('field:$key'))
+          .toList(),
+    );
+    final record = StoredConnection(safeValue, secrets);
+    for (var i = 0; i < data.grants.length; i++) {
+      final grant = data.grants[i];
+      if (grant.connectionId != value.id) continue;
+      data.grants[i] = AccessGrant(
+        id: grant.id,
+        recipientId: grant.recipientId,
+        connectionId: grant.connectionId,
+        credentials: await codec.grantCredentials(
+          record,
+          previous: grant.credentials,
+        ),
+      );
+    }
+    if (definition.isolatedBindings &&
+        old != null &&
+        old.value.port != value.port) {
+      for (var i = 0; i < data.grants.length; i++) {
+        final grant = data.grants[i];
+        if (grant.connectionId == value.id &&
+            grant.credentials['port'] == '${old.value.port}')
+          data.grants[i] = AccessGrant(
+            id: grant.id,
+            recipientId: grant.recipientId,
+            connectionId: grant.connectionId,
+            credentials: {...grant.credentials, 'port': '${value.port}'},
+          );
+      }
+    }
     if (old == null) {
       data.connections.add(record);
     } else {
@@ -280,7 +403,11 @@ class PanelService {
       throw const ApiException('not_found', status: 404);
     final selected = input.connectionIds.toSet();
     if (selected.length != input.connectionIds.length ||
-        selected.any((c) => !data.connections.any((v) => v.value.id == c))) {
+        selected.any(
+          (c) => !data.connections.any(
+            (v) => v.value.id == c && v.value.shareable,
+          ),
+        )) {
       throw const ApiException('grant_invalid', status: 422);
     }
     final user = StoredRecipient(
@@ -303,16 +430,71 @@ class PanelService {
       ))
         continue;
       final c = data.connections.firstWhere((c) => c.value.id == connectionId);
+      final definition = codec.protocols.firstWhere(
+        (p) => p.id == c.value.protocolId,
+      );
+      final credentials = await codec.grantCredentials(c);
+      if (definition.isolatedBindings)
+        credentials['port'] = '${await _allocateGrantPort(data, c)}';
       data.grants.add(
         AccessGrant(
           id: newId('g'),
           recipientId: user.id,
           connectionId: connectionId,
-          credentials: await codec.grantCredentials(c),
+          credentials: credentials,
         ),
       );
     }
   });
+
+  Future<int> _allocateGrantPort(
+    PanelData data,
+    StoredConnection connection,
+  ) async {
+    final reserved = {
+      22,
+      80,
+      443,
+      config.port,
+      manager.core.controller.port,
+      for (final c in data.connections)
+        if (c.value.id != connection.value.id && c.value.port != null)
+          c.value.port!,
+      for (final g in data.grants)
+        if (g.credentials['port'] != null) int.parse(g.credentials['port']!),
+    };
+    for (var attempt = 0; attempt < 200; attempt++) {
+      final candidate = attempt == 0
+          ? connection.value.port!
+          : 20000 + _portRandom.nextInt(40000);
+      if (reserved.contains(candidate)) continue;
+      ServerSocket? tcp;
+      RawDatagramSocket? udp;
+      try {
+        if (candidate >= 1024) {
+          tcp = await ServerSocket.bind(
+            connection.value.settings['listen'] ?? '::',
+            candidate,
+            shared: false,
+          );
+          udp = await RawDatagramSocket.bind(
+            connection.value.settings['listen'] ?? '::',
+            candidate,
+            reuseAddress: false,
+            reusePort: false,
+          );
+        }
+        return candidate;
+      } on SocketException {
+        reserved.add(candidate);
+      } finally {
+        await tcp?.close();
+        udp?.close();
+      }
+    }
+    throw const ApiException('port_unavailable', status: 422);
+  }
+
   Future<PanelSnapshot> deleteRecipient(int revision, String id) =>
       _change(revision, (data) async {
         if (!data.recipients.any((u) => u.id == id))

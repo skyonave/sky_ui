@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:dart_frog/dart_frog.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
+import 'package:sky_ui_api/src/auth/owner_auth.dart';
 
 Future<void> main(List<String> args) async {
   if (args.contains('--version')) {
@@ -9,7 +10,9 @@ Future<void> main(List<String> args) async {
     return;
   }
   final config = await ServerConfig.fromEnvironment();
-  const runner = NativeCommandRunner();
+  final runner = NativeCommandRunner(
+    environment: {'SAFE_PATHS': config.certificatesDirectory},
+  );
   final adapter = MihomoAdapter(runner);
   final supervisor = SystemdSupervisor(runner);
   final manager = CoreManager(
@@ -20,11 +23,23 @@ Future<void> main(List<String> args) async {
   );
   await manager.initialize();
   await Directory(config.dataDirectory).create(recursive: true);
+  final ownerAuth = OwnerAuth(
+    '${config.dataDirectory}/owner.sqlite',
+    secure: config.webOrigin.scheme == 'https',
+  );
+  await ownerAuth.initialize(config.ownerSeedFile);
   final repository = PanelRepository(
     '${config.dataDirectory}/panel.sqlite',
     defaultAddress: config.webOrigin.host,
   );
-  final codec = MihomoConfiguration(supervisor: supervisor);
+  final codec = MihomoConfiguration(
+    supervisor: supervisor,
+    core: config.core,
+    runner: runner,
+    certificatesDirectory: config.certificatesDirectory,
+    publicAddress: config.webOrigin.host,
+    networkAdministration: config.networkAdministration,
+  );
   final panel = PanelService(
     config: config,
     manager: manager,
@@ -34,7 +49,7 @@ Future<void> main(List<String> args) async {
   );
   await panel.initialize();
   final server = await serve(
-    createApplication(config, manager, panel: panel),
+    createApplication(config, manager, panel: panel, auth: ownerAuth),
     InternetAddress.loopbackIPv4,
     config.port,
     poweredByHeader: null,
@@ -71,6 +86,7 @@ Future<void> main(List<String> args) async {
     await manager.exclusive((_) async {});
     await adapter.close();
     repository.close();
+    ownerAuth.close();
   }
 
   ProcessSignal.sigint.watch().listen((_) async {

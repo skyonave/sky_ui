@@ -1,4 +1,4 @@
 import 'package:jaspr/client.dart';
-import 'package:sky_ui_web/src/app.dart';
+import 'package:sky_ui_web/src/auth_gate.dart';
 
-void main() => runApp(const SkyApp(), attachTo: '#app');
+void main() => runApp(const OwnerGate(), attachTo: '#app');

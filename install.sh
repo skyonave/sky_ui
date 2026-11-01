@@ -57,6 +57,7 @@ rollback() {
   trap - ERR
   set +e
   if (( changed )); then
+    systemctl stop sky-ui-edge.service
     systemctl stop sky-ui.service
     if [[ -n "$previous" && -d "$previous" ]]; then
       ln -s "$previous" /opt/sky-ui/.rollback-link
@@ -64,6 +65,14 @@ rollback() {
       install -m 0644 "$previous/deploy/systemd/sky-ui.service" /etc/systemd/system/sky-ui.service
       install -m 0644 "$previous/deploy/systemd/sky-ui-mihomo.service" /etc/systemd/system/sky-ui-mihomo.service
       install -m 0644 "$previous/deploy/systemd/sky-ui-edge.service" /etc/systemd/system/sky-ui-edge.service
+      if [[ -f "$previous/deploy/systemd/sky-ui-certificates.timer" ]]; then
+        install -m 0644 "$previous/deploy/systemd/sky-ui-certificates.service" /etc/systemd/system/sky-ui-certificates.service
+        install -m 0644 "$previous/deploy/systemd/sky-ui-certificates.timer" /etc/systemd/system/sky-ui-certificates.timer
+      else
+        systemctl disable --now sky-ui-certificates.timer || true
+        systemctl stop sky-ui-certificates.service || true
+        rm -f -- /etc/systemd/system/sky-ui-certificates.service /etc/systemd/system/sky-ui-certificates.timer
+      fi
       install -m 0644 "$previous/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
       if [[ -f "$temp/old-Caddyfile" ]]; then install -m 0640 -o root -g sky-ui-edge "$temp/old-Caddyfile" /etc/sky-ui/Caddyfile; fi
       systemctl daemon-reload
@@ -107,7 +116,7 @@ payload="$temp/payload"
 for file in VERSION ARCH bin/sky-ui bin/mihomo bin/caddy lib/libsqlite3.so web/index.html web/main.dart.js web/styles.css \
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
-  deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/sky-ui deploy/systemd/sky-ui-edge.service LICENSE licenses/mihomo.LICENSE licenses/caddy.LICENSE; do
+  deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/sky-ui deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer LICENSE licenses/mihomo.LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
 release_version="$(tr -d '\r\n' <"$payload/VERSION")"
@@ -132,9 +141,9 @@ fi
 if ! command -v pkaction >/dev/null || ! command -v openssl >/dev/null; then
   command -v apt-get >/dev/null || fail 'Install polkit and openssl before continuing on this distribution.'
   apt-get update
-  apt-get install -y --no-install-recommends polkitd openssl ca-certificates
+  apt-get install -y --no-install-recommends polkitd openssl ca-certificates python3
 fi
-for command in systemctl getent groupadd useradd install runuser curl; do
+for command in systemctl getent groupadd useradd install runuser curl python3; do
   command -v "$command" >/dev/null || fail "Missing dependency: $command"
 done
 getent group sky-ui >/dev/null || groupadd --system sky-ui
@@ -145,6 +154,7 @@ getent passwd sky-ui-edge >/dev/null || useradd --system --gid sky-ui-edge --no-
 install -d -m 0755 /opt/sky-ui /opt/sky-ui/releases
 install -d -m 0711 -o root -g root /etc/sky-ui
 install -d -m 0750 -o sky-ui -g sky-ui /var/lib/sky-ui /var/lib/sky-ui/cores
+install -d -m 0750 -o root -g sky-ui /var/lib/sky-ui-certificates
 install -d -m 0770 -o sky-ui-core -g sky-ui /var/lib/sky-ui/cores/mihomo
 touch /etc/sky-ui/managed-by-sky-ui
 if [[ ! -f /etc/sky-ui/gateway.secret ]]; then
@@ -188,6 +198,7 @@ SKY_UI_CORE_CONFIG=/var/lib/sky-ui/cores/mihomo/config.yaml
 SKY_UI_CONTROLLER_URL=http://127.0.0.1:19090
 SKY_UI_CONTROLLER_SECRET_FILE=/etc/sky-ui/controller.secret
 SKY_UI_GATEWAY_SECRET_FILE=/etc/sky-ui/gateway.secret
+SKY_UI_OWNER_SEED_FILE=/etc/sky-ui/owner.seed
 ENV
   chown root:sky-ui /etc/sky-ui/server.env
   chmod 0640 /etc/sky-ui/server.env
@@ -196,8 +207,14 @@ fi
 if ! grep -q '^SKY_UI_GATEWAY_SECRET_FILE=' /etc/sky-ui/server.env; then
   printf 'SKY_UI_GATEWAY_SECRET_FILE=/etc/sky-ui/gateway.secret\n' >>/etc/sky-ui/server.env
 fi
+if ! grep -q '^SKY_UI_OWNER_SEED_FILE=' /etc/sky-ui/server.env; then
+  printf 'SKY_UI_OWNER_SEED_FILE=/etc/sky-ui/owner.seed\n' >>/etc/sky-ui/server.env
+fi
+if [[ ! -f /etc/sky-ui/owner.seed && -f /etc/sky-ui/admin.hash ]]; then
+  install -m 0600 -o sky-ui -g sky-ui /etc/sky-ui/admin.hash /etc/sky-ui/owner.seed
+fi
 chmod 0755 "$temp" "$payload" "$payload/bin"
-runuser -u sky-ui-core -g sky-ui -- "$payload/bin/mihomo" -t -d /var/lib/sky-ui/cores/mihomo -f /var/lib/sky-ui/cores/mihomo/config.yaml
+runuser -u sky-ui-core -g sky-ui -- env SAFE_PATHS=/var/lib/sky-ui-certificates "$payload/bin/mihomo" -t -d /var/lib/sky-ui/cores/mihomo -f /var/lib/sky-ui/cores/mihomo/config.yaml
 release="/opt/sky-ui/releases/$release_version-$arch"
 if [[ -e "$release" ]]; then
   [[ -f "$release/BUNDLE_SHA256" && "$(cat "$release/BUNDLE_SHA256")" == "$actual" ]] || fail 'This version already exists with different contents. Use a new release version.'
@@ -222,10 +239,13 @@ if [[ -f /etc/sky-ui/access.conf ]]; then
   "$release/bin/caddy" validate --config "$temp/new-Caddyfile" --adapter caddyfile
 fi
 changed=1
+if (( edge_was_running )); then systemctl stop sky-ui-edge.service; fi
 if (( api_was_running )); then systemctl stop sky-ui.service; fi
 install -m 0644 "$release/deploy/systemd/sky-ui.service" /etc/systemd/system/sky-ui.service
 install -m 0644 "$release/deploy/systemd/sky-ui-mihomo.service" /etc/systemd/system/sky-ui-mihomo.service
 install -m 0644 "$release/deploy/systemd/sky-ui-edge.service" /etc/systemd/system/sky-ui-edge.service
+install -m 0644 "$release/deploy/systemd/sky-ui-certificates.service" /etc/systemd/system/sky-ui-certificates.service
+install -m 0644 "$release/deploy/systemd/sky-ui-certificates.timer" /etc/systemd/system/sky-ui-certificates.timer
 install -m 0755 "$release/deploy/sky-ui" /usr/local/bin/sky-ui
 install -d -m 0755 /etc/polkit-1/rules.d
 install -m 0644 "$release/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
@@ -235,7 +255,6 @@ systemctl daemon-reload
 # The core is not boot-enabled: the API restores its persisted desired state.
 if (( core_was_running )); then systemctl restart sky-ui-mihomo.service; fi
 systemctl enable --now sky-ui.service
-if (( edge_was_running )); then systemctl restart sky-ui-edge.service; fi
 healthy=0
 for attempt in $(seq 1 20); do
   if systemctl is-active --quiet sky-ui.service &&
@@ -247,8 +266,10 @@ done
 if (( ! healthy )); then printf 'API health check failed.\n' >&2; false; fi
 if [[ -f "$temp/new-Caddyfile" ]]; then
   install -m 0640 -o root -g sky-ui-edge "$temp/new-Caddyfile" /etc/sky-ui/Caddyfile
-  systemctl reload-or-restart sky-ui-edge.service
 fi
+if (( edge_was_running )); then systemctl restart sky-ui-edge.service; fi
+systemctl enable --now sky-ui-certificates.timer
+systemctl start sky-ui-certificates.service
 changed=0
 printf 'Sky UI %s installed: http://127.0.0.1:%s\n' "$release_version" "$port"
 if [[ ! -f /etc/sky-ui/access.conf ]]; then printf 'Configure public HTTPS and owner access with sudo sky-ui setup.\n'; fi

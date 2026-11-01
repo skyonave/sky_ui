@@ -11,7 +11,7 @@ String _bundleVersion() {
     if (RegExp(r'^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?$').hasMatch(value))
       return value;
   }
-  return '0.2.0-dev';
+  return '0.4.0-dev.1';
 }
 
 class ServerConfig {
@@ -23,6 +23,10 @@ class ServerConfig {
     required this.core,
     this.additionalOrigins = const [],
     this.gatewaySecret = '',
+    this.ownerSeedFile,
+    this.requireOwnerAuth = true,
+    this.certificatesDirectory = '/var/lib/sky-ui-certificates',
+    this.networkAdministration = false,
   });
   final int port;
   final Uri webOrigin;
@@ -35,6 +39,10 @@ class ServerConfig {
   final String dataDirectory;
   final ManagedCore core;
   final String gatewaySecret;
+  final String? ownerSeedFile;
+  final bool requireOwnerAuth;
+  final String certificatesDirectory;
+  final bool networkAdministration;
 
   static Future<ServerConfig> fromEnvironment([
     Map<String, String>? environment,
@@ -106,6 +114,10 @@ class ServerConfig {
       webOrigin: origin,
       additionalOrigins: additionalOrigins,
       gatewaySecret: gatewaySecret,
+      ownerSeedFile: env['SKY_UI_OWNER_SEED_FILE'],
+      certificatesDirectory:
+          env['SKY_UI_CERTIFICATES_DIR'] ?? '/var/lib/sky-ui-certificates',
+      networkAdministration: env['SKY_UI_NETWORK_ADMINISTRATION'] == 'enabled',
       publicDirectory: env['SKY_UI_PUBLIC_DIR'] ?? '../web/build/web',
       dataDirectory: env['SKY_UI_DATA_DIR'] ?? '../../runtime/api',
       core: ManagedCore(

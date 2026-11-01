@@ -59,7 +59,14 @@ Future<void> main(List<String> args) async {
             Uri.parse('http://127.0.0.1:39242${request.uri}'),
           );
           forwarded.followRedirects = false;
-          for (final name in ['content-type', 'origin', 'sec-fetch-site']) {
+          for (final name in [
+            'content-type',
+            'origin',
+            'sec-fetch-site',
+            'cookie',
+            'x-sky-ui-csrf',
+            'user-agent',
+          ]) {
             final value = request.headers.value(name);
             if (value != null) forwarded.headers.set(name, value);
           }

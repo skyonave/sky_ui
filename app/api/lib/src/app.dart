@@ -9,15 +9,23 @@ import 'errors.dart';
 import 'panel/service.dart';
 import 'system_monitor.dart';
 import 'core_releases.dart';
+import 'auth/owner_auth.dart';
 
 Handler createApplication(
   ServerConfig config,
   CoreManager manager, {
   PanelService? panel,
+  OwnerAuth? auth,
 }) {
-  Response failure(String code, int status) => Response.json(
+  if (config.requireOwnerAuth && auth == null)
+    throw StateError('Owner authentication is required.');
+  Response failure(
+    String code,
+    int status, {
+    Map<String, String> fields = const {},
+  }) => Response.json(
     statusCode: status,
-    body: {'error': ApiError(code).toJson()},
+    body: {'error': ApiError(code, fields: fields).toJson()},
   );
   final router = Router(
     notFoundHandler: (_) => failure('not_found', 404),
@@ -25,6 +33,128 @@ Handler createApplication(
   );
   final system = SystemMonitor(config.dataDirectory);
   final releases = CoreReleases();
+  if (auth != null) {
+    Future<Map<String, dynamic>> authBody(RequestContext context) async {
+      if ((context.request.headers['content-type'] ?? '')
+              .split(';')
+              .first
+              .trim()
+              .toLowerCase() !=
+          'application/json')
+        throw const ApiException('json_required', status: 415);
+      final bytes = <int>[];
+      await for (final chunk in context.request.bytes()) {
+        if (bytes.length + chunk.length > 4096)
+          throw const ApiException('request_too_large', status: 413);
+        bytes.addAll(chunk);
+      }
+      try {
+        final value = jsonDecode(utf8.decode(bytes));
+        if (value is Map<String, dynamic>) return value;
+      } on Object {}
+      throw const ApiException('request_invalid', status: 400);
+    }
+
+    OwnerIdentity identity(RequestContext c) =>
+        auth.identify(c.request.headers['cookie']) ??
+        (throw const ApiException('auth_required', status: 401));
+    String ip(RequestContext c) {
+      final value = config.gatewaySecret.isNotEmpty
+          ? c.request.headers['x-sky-ui-client-ip']
+          : null;
+      return InternetAddress.tryParse(value ?? '')?.address ?? '127.0.0.1';
+    }
+
+    String agent(RequestContext c) => c.request.headers['user-agent'] ?? '';
+    Response signed(OwnerLogin result) => Response.json(
+      body: {'data': result.state.toJson()},
+      headers: {'set-cookie': auth.cookie(result.token)},
+    );
+    router.get(
+      '/api/v1/auth/session',
+      (c) => Response.json(
+        body: {
+          'data': auth
+              .state(auth.identify(c.request.headers['cookie']))
+              .toJson(),
+        },
+      ),
+    );
+    router.post('/api/v1/auth/login', (c) async {
+      final body = await authBody(c);
+      if (body['username'] is! String || body['password'] is! String)
+        throw const ApiException('request_invalid', status: 400);
+      return signed(
+        await auth.login(
+          body['username'] as String,
+          body['password'] as String,
+          ip(c),
+          agent(c),
+        ),
+      );
+    });
+    router.post('/api/v1/auth/logout', (c) async {
+      await authBody(c);
+      auth.revoke(identity(c).id);
+      return Response.json(
+        body: {'data': auth.state(null).toJson()},
+        headers: {'set-cookie': auth.cookie(null)},
+      );
+    });
+    router.put('/api/v1/auth/owner', (c) async {
+      final who = identity(c), body = await authBody(c);
+      if (body['currentPassword'] is! String ||
+          (body['username'] == null && body['password'] == null) ||
+          (body['username'] != null && body['username'] is! String) ||
+          (body['password'] != null && body['password'] is! String))
+        throw const ApiException('request_invalid', status: 400);
+      return signed(
+        await auth.change(
+          who,
+          currentPassword: body['currentPassword'] as String,
+          username: body['username'] as String?,
+          password: body['password'] as String?,
+          ip: ip(c),
+          agent: agent(c),
+        ),
+      );
+    });
+    router.get(
+      '/api/v1/auth/sessions',
+      (c) => Response.json(
+        body: {
+          'data': auth.sessions(identity(c)).map((s) => s.toJson()).toList(),
+        },
+      ),
+    );
+    router.post('/api/v1/auth/sessions/revoke-others', (c) async {
+      final who = identity(c), body = await authBody(c);
+      if (body['confirmed'] != true)
+        throw const ApiException('request_invalid', status: 400);
+      auth.revokeOthers(who);
+      return Response.json(
+        body: {'data': auth.sessions(who).map((s) => s.toJson()).toList()},
+      );
+    });
+    router.delete('/api/v1/auth/sessions/<id>', (
+      RequestContext c,
+      String id,
+    ) async {
+      final who = identity(c);
+      await authBody(c);
+      if (!auth.sessions(who).any((s) => s.id == id))
+        throw const ApiException('not_found', status: 404);
+      auth.revoke(id);
+      return Response.json(
+        body: {
+          'data': id == who.id
+              ? []
+              : auth.sessions(who).map((s) => s.toJson()).toList(),
+        },
+        headers: {if (id == who.id) 'set-cookie': auth.cookie(null)},
+      );
+    });
+  }
   router.get(
     '/api/v1/system',
     (_) async =>
@@ -51,6 +181,13 @@ Handler createApplication(
     var ticks = 0;
     late StreamController<List<int>> stream;
     void emit() {
+      if (auth != null &&
+          auth.identify(context.request.headers['cookie']) == null) {
+        stream.add(utf8.encode('event: auth_expired\ndata: {}\n\n'));
+        timer?.cancel();
+        unawaited(stream.close());
+        return;
+      }
       final json = jsonEncode(manager.logs().map((v) => v.toJson()).toList());
       if (json != previous) {
         previous = json;
@@ -63,6 +200,7 @@ Handler createApplication(
     stream = StreamController<List<int>>(
       onListen: () {
         emit();
+        if (stream.isClosed) return;
         timer = Timer.periodic(
           const Duration(milliseconds: 500),
           (_) => emit(),
@@ -326,6 +464,10 @@ Handler createApplication(
     final origin = request.headers['origin'];
     // requestedUri may use proxy-forwarded authority; validate the actual Host.
     final host = request.headers['host'] ?? '';
+    final publicAssetRead =
+        (request.method == HttpMethod.get ||
+            request.method == HttpMethod.head) &&
+        assets.containsKey('/${request.url.path}');
     final publicRead =
         (request.method == HttpMethod.get ||
             request.method == HttpMethod.head) &&
@@ -345,13 +487,39 @@ Handler createApplication(
       } else if (!RegExp(r'^127\.0\.0\.1(?::[0-9]{1,5})?$').hasMatch(host) ||
           (!publicRead &&
               ((origin != null && !config.allowedOrigins.contains(origin)) ||
-                  request.headers['sec-fetch-site'] == 'cross-site'))) {
+                  (request.headers['sec-fetch-site'] == 'cross-site' &&
+                      !publicAssetRead)))) {
         response = failure('origin_forbidden', 403);
       } else {
+        if (auth != null) {
+          final path = request.url.path;
+          final reading =
+              request.method == HttpMethod.get ||
+              request.method == HttpMethod.head;
+          final login =
+              path == 'api/v1/auth/login' && request.method == HttpMethod.post;
+          final anonymous =
+              publicRead ||
+              healthRead ||
+              (reading &&
+                  (assets.containsKey('/$path') ||
+                      path == 'api/v1/auth/session')) ||
+              login;
+          if (!anonymous) {
+            final identity = auth.identify(request.headers['cookie']);
+            if (identity == null)
+              throw ApiException(
+                auth.configured ? 'auth_required' : 'auth_not_configured',
+                status: auth.configured ? 401 : 503,
+              );
+            if (!reading)
+              auth.csrf(identity, request.headers['x-sky-ui-csrf'] ?? '');
+          }
+        }
         response = await router(context);
       }
     } on ApiException catch (e) {
-      response = failure(e.code, e.status);
+      response = failure(e.code, e.status, fields: e.fields);
     } on Object {
       response = failure('internal_error', 500);
     }

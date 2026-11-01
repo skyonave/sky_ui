@@ -18,7 +18,8 @@ abstract interface class CommandRunner {
 }
 
 class NativeCommandRunner implements CommandRunner {
-  const NativeCommandRunner();
+  const NativeCommandRunner({this.environment = const {}});
+  final Map<String, String> environment;
   @override
   Future<CommandResult> run(
     String executable,
@@ -27,7 +28,12 @@ class NativeCommandRunner implements CommandRunner {
   }) async {
     final Process process;
     try {
-      process = await Process.start(executable, arguments, runInShell: false);
+      process = await Process.start(
+        executable,
+        arguments,
+        runInShell: false,
+        environment: environment,
+      );
     } on ProcessException {
       throw const ApiException('command_unavailable');
     }

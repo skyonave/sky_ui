@@ -114,6 +114,7 @@ void main() {
       readyTimeout: const Duration(milliseconds: 30),
     );
     config = ServerConfig(
+      requireOwnerAuth: false,
       port: 39242,
       webOrigin: Uri.parse('https://panel.example.net'),
       publicDirectory: directory.path,
@@ -131,6 +132,76 @@ void main() {
     repository.close();
     await directory.delete(recursive: true);
   });
+  test(
+    'isolated access preserves each recipient port/key when another recipient is revoked',
+    () async {
+      final created = await panel.saveConnection(
+        repository.revision,
+        input(protocol: 'shadowsocks'),
+      );
+      final c = created.connections.single;
+      await recipient(c.id, name: 'First');
+      await recipient(c.id, name: 'Second');
+      final before = repository.read(),
+          first = before.recipients.first,
+          second = before.recipients.last;
+      final firstGrant = before.grants.first, secondGrant = before.grants.last;
+      expect(firstGrant.credentials['port'], '$freePort');
+      expect(
+        firstGrant.credentials['port'],
+        isNot(secondGrant.credentials['port']),
+      );
+      expect(
+        firstGrant.credentials['password'],
+        isNot(secondGrant.credentials['password']),
+      );
+      final public = jsonEncode((await panel.snapshot()).toJson());
+      expect(public, isNot(contains(firstGrant.credentials['password']!)));
+      expect(
+        (jsonDecode(await native.readAsString()) as Map)['listeners'],
+        hasLength(2),
+      );
+      await expectLater(
+        panel.saveConnection(
+          repository.revision,
+          Connection(
+            id: c.id,
+            name: c.name,
+            coreId: c.coreId,
+            protocolId: c.protocolId,
+            port: int.parse(secondGrant.credentials['port']!),
+            settings: c.settings,
+          ),
+          id: c.id,
+        ),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'port_in_use'),
+        ),
+      );
+      await panel.saveRecipient(
+        repository.revision,
+        before.publicRecipient(first).copyWith(enabled: false),
+        id: first.id,
+      );
+      final listeners =
+          (jsonDecode(await native.readAsString()) as Map)['listeners'] as List;
+      expect(listeners, hasLength(1));
+      expect(
+        listeners.single['port'],
+        int.parse(secondGrant.credentials['port']!),
+      );
+      expect(listeners.single['password'], secondGrant.credentials['password']);
+      final after = repository.read();
+      expect(after.grants.first.credentials, firstGrant.credentials);
+      expect(after.grants.last.credentials, secondGrant.credentials);
+      final link = (await panel.share(second.id)).links.single;
+      expect(
+        Uri.parse(link.uri).port,
+        int.parse(secondGrant.credentials['port']!),
+      );
+    },
+  );
+
   test(
     'core-directory staging links cannot overwrite private API files',
     () async {
@@ -391,7 +462,7 @@ void main() {
   });
   test('unsupported settings and reserved ports do not persist', () async {
     await expectLater(
-      panel.saveConnection(0, input(protocol: 'shadowsocks')),
+      panel.saveConnection(0, input(protocol: 'unknown-protocol')),
       throwsA(
         isA<ApiException>().having(
           (e) => e.code,
@@ -401,7 +472,10 @@ void main() {
       ),
     );
     await expectLater(
-      panel.saveConnection(0, input(settings: {'transport': 'WebSocket'})),
+      panel.saveConnection(
+        0,
+        input(settings: {'transport': 'unknown-transport'}),
+      ),
       throwsA(
         isA<ApiException>().having(
           (e) => e.code,
@@ -452,6 +526,7 @@ void main() {
       final path = Uri.parse((await panel.share(user.id)).subscriptionUrl).path;
       final secret = List.filled(64, 'a').join();
       final secured = ServerConfig(
+        requireOwnerAuth: false,
         port: 39242,
         webOrigin: config.webOrigin,
         publicDirectory: directory.path,
