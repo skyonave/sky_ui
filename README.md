@@ -23,7 +23,7 @@ Jaspr frontend, Dart Frog backend, SQLite storage, systemd services. Active deve
 
 Linux:
 ```sh
-curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/main/install.sh | sudo bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/main/install.sh)"
 ```
 
 The installer downloads a ready-made release. The setup wizard creates the administrator and configures IP access or an optional domain. Let's Encrypt certificates renew automatically. Domain access requires DNS pointing to your server and open TCP ports 80 and 443.
@@ -42,7 +42,7 @@ Jaspr, Dart Frog, SQLite и службы systemd. Проект в активно
 
 Linux:
 ```sh
-curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/main/install.sh | sudo bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/main/install.sh)"
 ```
 
 Установщик скачает готовый релиз. Мастер создаст администратора и предложит доступ по IP или домену. Сертификаты Let's Encrypt продлеваются автоматически. Для домена направь DNS на сервер и открой TCP-порты 80 и 443.
