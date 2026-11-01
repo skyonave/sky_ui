@@ -31,7 +31,7 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.5.0-dev.2',
+    defaultValue: '0.6.0-dev.1',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
@@ -62,7 +62,11 @@ class _SkyAppState extends State<SkyApp> {
   MaintenanceJob? maintenanceJob;
   bool maintenanceLoading = false, maintenanceSubmitting = false;
   String? maintenanceBackupId;
-  CoreReleaseNotes? updateNotes;
+  CoreUpdateInfo? updateNotes;
+  CoreUpdateInfo? coreUpdates;
+  bool updatesLoading = false;
+  String? updatesError;
+  String? coreActionFeedback;
   String? updateTag;
   bool get maintenanceBusy =>
       maintenanceSubmitting || maintenanceJob?.busy == true;
@@ -82,9 +86,6 @@ class _SkyAppState extends State<SkyApp> {
   };
   final samples = <({DateTime time, SystemSnapshot value})>[];
   web.EventSource? logStream;
-  CoreReleaseNotes? releaseNotes;
-  bool releaseLoading = false;
-  int releaseGeneration = 0;
   String? runtimeError;
   bool runtimeBusy = false;
   bool runtimeRefreshing = false;
@@ -232,83 +233,33 @@ class _SkyAppState extends State<SkyApp> {
     }
   }
 
-  Future<void> openReleases(String core) async {
-    final generation = ++releaseGeneration;
-    releaseNotes = null;
-    releaseLoading = true;
-    openModal('releases');
-    try {
-      final notes = await api.releases(core);
-      if (mounted && modal == 'releases' && generation == releaseGeneration)
-        setState(() => releaseNotes = notes);
-    } on ApiClientException catch (e) {
-      if (mounted && modal == 'releases' && generation == releaseGeneration)
-        setState(() => error = runtimeMessage(e.code));
-    } finally {
-      if (mounted && generation == releaseGeneration)
-        setState(() => releaseLoading = false);
-    }
-  }
-
-  Component releaseContent() {
-    final notes = releaseNotes;
-    if (releaseLoading) return p([Component.text(t('runtime.loading'))]);
-    if (notes == null) return div([]);
-    return div([
-      txt(coreName(notes.coreId), classes: 'protocol-tag'),
-      p([
-        Component.text(
-          t('core.releaseVersions', {
-            'installed': notes.installed ?? t('core.notInstalled'),
-            'latest': notes.latest,
-          }),
-        ),
-      ], classes: 'muted'),
-      if (notes.incomplete)
-        p([Component.text(t('core.releaseIncomplete'))], classes: 'notice'),
-      for (final release in notes.releases)
-        div([
-          h3([
-            Component.text(release.name.isEmpty ? release.tag : release.name),
-          ]),
-          el(
-            'a',
-            [Component.text(release.tag)],
-            attributes: {
-              'href': release.url,
-              'target': '_blank',
-              'rel': 'noopener noreferrer',
-            },
-            classes: 'accent',
-          ),
-          el('pre', [
-            Component.text(
-              release.body.isEmpty ? t('core.releaseEmpty') : release.body,
-            ),
-          ], classes: 'release-text'),
-        ], classes: 'release-entry'),
-    ], classes: 'release-notes');
-  }
-
   Future<void> runCoreAction(CoreOperation operation) async {
     if (dataBusy ||
+        maintenanceBusy ||
         runtimeBusy ||
         !runtimeOnline ||
         !runtime!.operations.contains(operation))
       return;
     runtimeGeneration++;
     dataGeneration++;
-    setState(() => runtimeBusy = true);
+    setState(() {
+      runtimeBusy = true;
+      coreActionFeedback = null;
+    });
     try {
       final value = await api.execute(operation);
       if (mounted)
         setState(() {
           runtime = value;
+          coreActionFeedback = t('core.feedback.${operation.name}');
           runtimeError = null;
           store.running = value.processState == CoreProcessState.active;
         });
     } on ApiClientException catch (e) {
-      if (mounted) notify(runtimeMessage(e.code));
+      if (mounted) {
+        setState(() => coreActionFeedback = runtimeMessage(e.code));
+        notify(runtimeMessage(e.code));
+      }
     } finally {
       if (mounted) {
         setState(() => runtimeBusy = false);
@@ -361,6 +312,7 @@ class _SkyAppState extends State<SkyApp> {
     };
     unawaited(refreshOwnerSessions());
     unawaited(refreshMaintenance());
+    unawaited(refreshCoreUpdates());
     store.running = false;
     unawaited(refreshRuntime());
     unawaited(refreshPanel());
@@ -369,6 +321,7 @@ class _SkyAppState extends State<SkyApp> {
       unawaited(refreshRuntime());
       unawaited(refreshPanel());
       if (page == 'settings') unawaited(refreshOwnerSessions());
+      if (page == 'core') unawaited(refreshCoreUpdates());
       if (page == 'settings' || page == 'core' || maintenanceBusy)
         unawaited(refreshMaintenance());
     });
@@ -557,7 +510,6 @@ class _SkyAppState extends State<SkyApp> {
   void closeModal() {
     if (dataBusy || clearingLogs || ownerBusy || maintenanceSubmitting) return;
     ownerDraft.clear();
-    releaseGeneration++;
     shareGeneration++;
     shareLoading = false;
     shareData = null;
@@ -1523,7 +1475,7 @@ class _SkyAppState extends State<SkyApp> {
         ? runtimeMessage(runtimeError!)
         : value?.error != null
         ? runtimeMessage(value!.error!.code)
-        : '';
+        : coreActionFeedback ?? '';
     final operation = runtimeRunning ? CoreOperation.stop : CoreOperation.start;
     bool can(CoreOperation op) =>
         runtimeOnline &&
@@ -1533,7 +1485,7 @@ class _SkyAppState extends State<SkyApp> {
         value!.operations.contains(op);
     return div([
       heading('core'),
-      maintenanceStatus(),
+      if (maintenanceJob?.action == 'update') maintenanceStatus(),
       div([
         div([
           div([icon('core')], classes: 'core-large-icon'),
@@ -1596,27 +1548,32 @@ class _SkyAppState extends State<SkyApp> {
             disabled: !can(CoreOperation.validate),
           ),
           action(
-            t('core.refreshStatus'),
-            () => unawaited(refreshRuntime()),
-            glyph: 'refresh',
-            disabled: runtimeBusy,
-          ),
-          action(
             t('core.update'),
             () => unawaited(prepareCoreUpdate()),
             glyph: 'down',
             disabled:
                 !canInspect ||
                 maintenance?.available != true ||
-                maintenanceBusy,
-          ),
-          action(
-            t('core.releases'),
-            () => openReleases(value?.coreId ?? 'mihomo'),
-            glyph: 'logs',
-            disabled: !canInspect,
+                maintenanceBusy ||
+                coreUpdates?.available != true ||
+                updatesError != null,
           ),
         ], classes: 'core-actions'),
+        p([
+          Component.text(
+            updatesLoading && coreUpdates == null
+                ? t('core.updatesChecking')
+                : updatesError != null
+                ? runtimeMessage(updatesError!)
+                : coreUpdates == null
+                ? ''
+                : t(
+                    coreUpdates!.available
+                        ? 'core.updatesAvailable'
+                        : 'core.updatesNone',
+                  ),
+          ),
+        ], classes: 'muted small core-update-status'),
       ], classes: 'panel core-panel live-core'),
       div([
         for (final core in const [
@@ -1645,12 +1602,6 @@ class _SkyAppState extends State<SkyApp> {
             div([], classes: 'runtime-notice empty'),
             div([
               action(t('core.install'), () {}, glyph: 'plus', disabled: true),
-              action(
-                t('core.releases'),
-                () => openReleases(core.id),
-                glyph: 'logs',
-                disabled: !canInspect,
-              ),
             ], classes: 'core-actions'),
           ], classes: 'panel core-panel'),
       ], classes: 'core-list'),
@@ -1913,20 +1864,34 @@ class _SkyAppState extends State<SkyApp> {
     }
   }
 
-  Future<void> prepareCoreUpdate() async {
-    updateNotes = null;
-    updateTag = null;
-    openModal('coreUpdate');
+  Future<void> refreshCoreUpdates() async {
+    if (updatesLoading) return;
+    updatesLoading = true;
     try {
-      final notes = await api.releases(runtime?.coreId ?? 'mihomo');
-      if (mounted && modal == 'coreUpdate')
+      final value = await api.updates(runtime?.coreId ?? 'mihomo');
+      if (mounted)
         setState(() {
-          updateNotes = notes;
-          updateTag = notes.latest;
+          coreUpdates = value;
+          updatesError = null;
         });
     } on ApiClientException catch (e) {
-      if (mounted) setState(() => error = runtimeMessage(e.code));
+      if (mounted)
+        setState(() {
+          coreUpdates = null;
+          updatesError = e.code;
+        });
+    } finally {
+      if (mounted) setState(() => updatesLoading = false);
     }
+  }
+
+  Future<void> prepareCoreUpdate() async {
+    await refreshCoreUpdates();
+    if (!mounted || coreUpdates?.available != true || updatesError != null)
+      return;
+    updateNotes = coreUpdates;
+    updateTag = updateNotes!.versions.first;
+    openModal('coreUpdate');
   }
 
   Future<void> submitMaintenance(String action) async {
@@ -2238,7 +2203,6 @@ class _SkyAppState extends State<SkyApp> {
                     editingId == null ? 'users.add' : 'common.edit',
                   'share' => 'share.title',
                   'clearLogs' => 'logs.clearTitle',
-                  'releases' => 'core.releases',
                   'ownerName' => 'admin.editName',
                   'ownerPassword' => 'admin.changePassword',
                   'revokeSession' => 'admin.revokeTitle',
@@ -2288,7 +2252,6 @@ class _SkyAppState extends State<SkyApp> {
           if (modal == 'recipient') recipientForm(),
           if (modal == 'share') shareContent(),
           if (modal == 'clearLogs') p([Component.text(t('logs.clearHint'))]),
-          if (modal == 'releases') releaseContent(),
           if (modal == 'backup')
             p([Component.text(t('maintenance.backupHint'))]),
           if (modal == 'restore')
@@ -2301,10 +2264,7 @@ class _SkyAppState extends State<SkyApp> {
                 Component.text(t('core.version')),
                 select(
                   [
-                    for (final tag in {
-                      updateNotes!.latest,
-                      ...updateNotes!.releases.map((r) => r.tag),
-                    })
+                    for (final tag in updateNotes!.versions)
                       option(
                         [Component.text(tag)],
                         value: tag,
@@ -2316,16 +2276,7 @@ class _SkyAppState extends State<SkyApp> {
                 ),
               ]),
               txt('${runtime?.version ?? '—'} → $updateTag', classes: 'mono'),
-              p([
-                Component.text(
-                  t(
-                    runtime?.version?.replaceFirst('v', '') ==
-                            updateTag?.replaceFirst('v', '')
-                        ? 'maintenance.latest'
-                        : 'maintenance.updateHint',
-                  ),
-                ),
-              ]),
+              p([Component.text(t('maintenance.updateHint'))]),
             ],
           ],
           if (modal == 'ownerName' || modal == 'ownerPassword') ownerForm(),
@@ -2350,7 +2301,7 @@ class _SkyAppState extends State<SkyApp> {
               attributes: {'role': 'alert'},
             ),
         ], classes: 'modal-body'),
-        if (modal != 'share' && modal != 'releases')
+        if (modal != 'share')
           div([
             if (modal == 'connection' &&
                 selectedCore != null &&
@@ -2447,8 +2398,7 @@ class _SkyAppState extends State<SkyApp> {
                       maintenanceBusy ||
                       (modal == 'coreUpdate' &&
                           (updateNotes == null ||
-                              runtime?.version?.replaceFirst('v', '') ==
-                                  updateTag?.replaceFirst('v', ''))),
+                              !updateNotes!.versions.contains(updateTag))),
                 ),
               if (modal == 'delete')
                 action(
@@ -2460,8 +2410,7 @@ class _SkyAppState extends State<SkyApp> {
             ], classes: 'modal-footer-actions'),
           ], classes: 'modal-footer'),
       ],
-      classes:
-          'modal ${modal == 'connection' || modal == 'releases' ? 'wide' : ''}',
+      classes: 'modal ${modal == 'connection' ? 'wide' : ''}',
       attributes: {
         'role': 'dialog',
         'aria-modal': 'true',

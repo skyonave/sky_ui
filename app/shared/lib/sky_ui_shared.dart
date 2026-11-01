@@ -7,3 +7,4 @@ export 'src/panel.dart';
 export 'src/system.dart';
 export 'src/owner.dart';
 export 'src/maintenance.dart';
+export 'src/updates.dart';

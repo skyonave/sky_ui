@@ -29,9 +29,10 @@ dart compile js -O2 -DSKY_UI_VERSION="$version" web/main.dart -o "$stage/payload
 cp web/index.html web/styles.css "$stage/payload/web/"
 cp web/fonts/* "$stage/payload/web/fonts/"
 cp -R "$root/deploy/systemd" "$root/deploy/polkit" "$root/deploy/mihomo" "$stage/payload/deploy/"
-cp "$root/deploy/setup.sh" "$root/deploy/sky-ui" "$stage/payload/deploy/"
+cp "$root/deploy/setup.sh" "$root/deploy/sky-ui" "$root/deploy/skyui" "$root/deploy/cli.py" "$stage/payload/deploy/"
 cp "$root/deploy/render_access.sh" "$stage/payload/deploy/"
 cp "$root/deploy/certificate_sync.py" "$stage/payload/deploy/"
+cp -R "$root/compatibility" "$stage/payload/"
 cp "$root/deploy/maintenance.py" "$stage/payload/deploy/"
 dart "$root/tool/collect_licenses.dart" "$root/app/api" "$root/app/web" "$stage/payload/licenses/dart"
 cp "$root/LICENSE" "$stage/payload/LICENSE"
@@ -56,5 +57,7 @@ printf 'Dart: %s\nArchitecture: %s\nLibc: %s\n' "$(dart --version 2>&1)" "$arch"
 asset="sky-ui-linux-$arch.tar.gz"
 tar -czf "$output/$asset" -C "$stage/payload" .
 (cd "$output" && sha256sum "$asset" >"$asset.sha256")
+cp "$root/install.sh" "$output/install.sh"
+(cd "$output" && sha256sum install.sh >install.sh.sha256)
 bash "$root/install.sh" --bundle "$output/$asset" --verify-only
 printf 'Release bundle: %s/%s\n' "$output" "$asset"

@@ -125,7 +125,7 @@ payload="$temp/payload"
 for file in VERSION ARCH bin/sky-ui bin/mihomo bin/caddy lib/libsqlite3.so web/index.html web/main.dart.js web/styles.css \
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
-  deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/maintenance.py deploy/sky-ui deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service LICENSE licenses/mihomo.LICENSE licenses/caddy.LICENSE; do
+  deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/maintenance.py deploy/sky-ui deploy/skyui deploy/cli.py compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service LICENSE licenses/mihomo.LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
 release_version="$(tr -d '\r\n' <"$payload/VERSION")"
@@ -140,7 +140,7 @@ chmod 0755 "$payload/bin/sky-ui" "$payload/bin/mihomo" "$payload/bin/caddy"
 [[ "$("$payload/bin/sky-ui" --version)" == "Sky UI $release_version" ]] || fail 'The API binary cannot run on this host.'
 "$payload/bin/mihomo" -v >/dev/null
 if [[ ! -f /etc/sky-ui/managed-by-sky-ui ]]; then
-  for path in /etc/sky-ui /var/lib/sky-ui /var/lib/sky-ui-edge /opt/sky-ui /usr/local/bin/sky-ui /etc/systemd/system/sky-ui.service /etc/systemd/system/sky-ui-mihomo.service /etc/systemd/system/sky-ui-edge.service /etc/polkit-1/rules.d/49-sky-ui.rules; do
+  for path in /etc/sky-ui /var/lib/sky-ui /var/lib/sky-ui-edge /var/lib/sky-ui-maintenance /var/lib/sky-ui-certificates /opt/sky-ui /usr/local/bin/sky-ui /usr/local/bin/skyui /etc/systemd/system/sky-ui.service /etc/systemd/system/sky-ui-mihomo.service /etc/systemd/system/sky-ui-edge.service /etc/polkit-1/rules.d/49-sky-ui.rules; do
     [[ ! -e "$path" && ! -L "$path" ]] || fail "Refusing to overwrite an unmanaged path: $path"
   done
   if getent passwd sky-ui >/dev/null || getent passwd sky-ui-core >/dev/null || getent group sky-ui >/dev/null || getent passwd sky-ui-edge >/dev/null || getent group sky-ui-edge >/dev/null; then
@@ -163,6 +163,7 @@ getent passwd sky-ui-edge >/dev/null || useradd --system --gid sky-ui-edge --no-
 install -d -m 0755 /opt/sky-ui /opt/sky-ui/releases
 install -d -m 0711 -o root -g root /etc/sky-ui
 install -d -m 0750 -o sky-ui -g sky-ui /var/lib/sky-ui /var/lib/sky-ui/cores
+install -d -m 0700 -o sky-ui-edge -g sky-ui-edge /var/lib/sky-ui-edge
 install -d -m 0750 -o root -g sky-ui /var/lib/sky-ui-certificates
 install -d -m 0770 -o sky-ui-core -g sky-ui /var/lib/sky-ui/cores/mihomo
 install -d -m 0750 -o root -g sky-ui /var/lib/sky-ui-maintenance /var/lib/sky-ui-maintenance/backups /var/lib/sky-ui-maintenance/validation
@@ -268,7 +269,9 @@ install -m 0644 "$release/deploy/systemd/sky-ui-certificates.service" /etc/syste
 install -m 0644 "$release/deploy/systemd/sky-ui-certificates.timer" /etc/systemd/system/sky-ui-certificates.timer
 install -m 0644 "$release/deploy/systemd/sky-ui-maintenance.service" /etc/systemd/system/sky-ui-maintenance.service
 install -m 0644 "$release/deploy/systemd/sky-ui-maintenance-recovery.service" /etc/systemd/system/sky-ui-maintenance-recovery.service
+install -d -m 0755 /usr/local/bin
 install -m 0755 "$release/deploy/sky-ui" /usr/local/bin/sky-ui
+install -m 0755 "$release/deploy/skyui" /usr/local/bin/skyui
 install -d -m 0755 /etc/polkit-1/rules.d
 install -m 0644 "$release/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
 ln -s "$release" /opt/sky-ui/.next-link
@@ -295,11 +298,11 @@ systemctl enable --now sky-ui-certificates.timer
 systemctl start sky-ui-certificates.service
 changed=0
 printf 'Sky UI %s installed: http://127.0.0.1:%s\n' "$release_version" "$port"
-if [[ ! -f /etc/sky-ui/access.conf ]]; then printf 'Configure public HTTPS and owner access with sudo sky-ui setup.\n'; fi
+if [[ ! -f /etc/sky-ui/access.conf ]]; then printf 'Configure public HTTPS and owner access with sudo skyui setup.\n'; fi
 printf 'The core starts only after a panel action or restoration of a previously saved running state.\n'
 flock -u 9
 if [[ ! -f /etc/sky-ui/access.conf ]] && (: </dev/tty) 2>/dev/null; then
   bash /opt/sky-ui/current/deploy/setup.sh
 else
-  printf 'Configure owner access and IP/domain: sudo sky-ui setup\n'
+  printf 'Configure owner access and IP/domain: sudo skyui setup\n'
 fi

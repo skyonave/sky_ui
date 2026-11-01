@@ -2,9 +2,9 @@
 set -Eeuo pipefail
 umask 077
 fail() { printf 'Sky UI: %s\n' "$*" >&2; exit 1; }
-(( EUID == 0 )) || fail 'Запустите sudo sky-ui setup.'
+(( EUID == 0 )) || fail 'Запустите sudo skyui setup.'
 [[ -f /etc/sky-ui/managed-by-sky-ui ]] || fail 'Сначала установите Sky UI.'
-case "${1:-setup}" in setup|status) mode="${1:-setup}" ;; *) fail 'Использование: sky-ui setup или sky-ui status' ;; esac
+case "${1:-setup}" in setup|status) mode="${1:-setup}" ;; *) fail 'Использование: skyui setup или skyui status' ;; esac
 caddy=/opt/sky-ui/current/bin/caddy
 port="$(sed -n 's/^SKY_UI_PORT=//p' /etc/sky-ui/server.env)"
 [[ "$port" =~ ^[0-9]+$ ]] || fail 'Некорректный порт API.'
@@ -158,5 +158,5 @@ for host in "$ip_address" "$domain"; do
   if (( ! ready )); then printf 'HTTPS для %s не готов. Проверьте DNS и доступность портов 80/443.\n' "$host" >&2; false; fi
 done
 changed=0
-printf 'Готово: https://%s\nПовторная настройка: sudo sky-ui setup\n' "$primary" >&3
+printf 'Готово: https://%s\nПовторная настройка: sudo skyui setup\n' "$primary" >&3
 systemctl start sky-ui-certificates.service

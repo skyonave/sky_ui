@@ -16,36 +16,66 @@ class AppStrings {
 
   static const _catalogs = {
     'ru': {
+      'core.feedback.validate':
+          'Конфигурация проверена ядром. Ошибок не найдено. Подключения не проверялись, служба не перезапускалась.',
+      'core.feedback.start': 'Ядро запущено. Контроллер отвечает.',
+      'core.feedback.stop': 'Ядро остановлено.',
+      'core.feedback.restart': 'Ядро перезапущено. Контроллер отвечает.',
+      'core.updatesChecking': 'Проверяем список проверенных версий Sky UI…',
+      'core.updatesNone': 'Проверенных обновлений нет.',
+      'core.updatesAvailable': 'Доступна проверенная версия ядра.',
+      'runtime.error.catalog_unavailable':
+          'Список проверенных версий Sky UI недоступен. Обновление отключено.',
+      'runtime.error.core_release_unverified':
+          'Эта версия ядра не проверена для установленной версии Sky UI и платформы. Обновление запрещено.',
       'maintenance.backups': 'Резервные копии',
       'maintenance.create': 'Создать копию',
       'maintenance.download': 'Скачать',
       'maintenance.restore': 'Восстановить',
       'maintenance.empty': 'Резервных копий пока нет.',
-      'maintenance.secrets': 'Копия содержит ключи и данные доступа. Храни скачанный архив в защищённом месте.',
-      'maintenance.backupHint': 'Сохранить пользователей, подключения, настройки, администратора и сертификаты? Панель кратко перезапустится. Ядро продолжит работу.',
-      'maintenance.restoreHint': 'Заменить текущее состояние этой копией? Перед восстановлением автоматически создаётся страховочная копия. Службы перезапустятся, потребуется заново войти. Восстановление доступно на этом сервере для той же версии панели.',
-      'maintenance.updateHint': 'Файл будет скачан из официального репозитория и проверен по SHA-256. Текущая конфигурация проверяется до замены. Работающее ядро кратко перезапустится. При сбое вернётся предыдущая версия.',
-      'maintenance.latest': 'Уже установлена последняя стабильная версия.',
-      'maintenance.loading': 'Проверяем официальный релиз…',
+      'maintenance.secrets':
+          'Копия содержит ключи и данные доступа. Храни скачанный архив в защищённом месте.',
+      'maintenance.backupHint':
+          'Сохранить пользователей, подключения, настройки, администратора и сертификаты? Панель кратко перезапустится. Ядро продолжит работу.',
+      'maintenance.restoreHint':
+          'Заменить текущее состояние этой копией? Перед восстановлением автоматически создаётся страховочная копия. Службы перезапустятся, потребуется заново войти. Восстановление доступно на этом сервере для той же версии панели.',
+      'maintenance.updateHint':
+          'Версия проверена для Sky UI. Перед установкой проверим актуальную отметку в каталоге проекта, SHA-256 файла и текущую конфигурацию. Работающее ядро кратко перезапустится. При сбое вернётся предыдущая версия.',
+      'maintenance.loading': 'Проверяем список Sky UI…',
       'maintenance.status.queued': 'Операция ожидает запуска…',
-      'maintenance.status.running': 'Операция выполняется. Панель автоматически подключится снова.',
+      'maintenance.status.running':
+          'Операция выполняется. Панель автоматически подключится снова.',
       'maintenance.status.completed': 'Операция завершена.',
-      'runtime.error.maintenance_unavailable': 'Обслуживание недоступно. Требуется установленная Linux-служба Sky UI.',
-      'runtime.error.maintenance_busy': 'Дождись завершения текущего обслуживания.',
-      'runtime.error.maintenance_failed': 'Операция не выполнена. Проверь журнал службы обслуживания.',
-      'runtime.error.maintenance_interrupted': 'Операция была прервана. Сохранённое состояние восстановлено.',
-      'runtime.error.update_rolled_back': 'Ядро не прошло проверку запуска. Возвращена предыдущая версия.',
-      'runtime.error.restore_rolled_back': 'Восстановление не прошло проверку. Возвращено прежнее состояние.',
-      'runtime.error.release_changed': 'Последний релиз изменился. Проверь обновления ещё раз.',
-      'runtime.error.release_checksum_failed': 'Контрольная сумма загрузки не совпала. Ядро не изменено.',
-      'runtime.error.release_checksum_missing': 'У релиза нет SHA-256. Обновление не выполнено.',
-      'runtime.error.backup_version_mismatch': 'Для восстановления нужна та же версия панели, что в копии.',
-      'runtime.error.backup_checksum_failed': 'Копия повреждена: контрольная сумма не совпала.',
+      'runtime.error.maintenance_unavailable':
+          'Обслуживание недоступно. Требуется установленная Linux-служба Sky UI.',
+      'runtime.error.maintenance_busy':
+          'Дождись завершения текущего обслуживания.',
+      'runtime.error.maintenance_failed':
+          'Операция не выполнена. Проверь журнал службы обслуживания.',
+      'runtime.error.maintenance_interrupted':
+          'Операция была прервана. Сохранённое состояние восстановлено.',
+      'runtime.error.update_rolled_back':
+          'Ядро не прошло проверку запуска. Возвращена предыдущая версия.',
+      'runtime.error.restore_rolled_back':
+          'Восстановление не прошло проверку. Возвращено прежнее состояние.',
+      'runtime.error.release_changed':
+          'Последний релиз изменился. Проверь обновления ещё раз.',
+      'runtime.error.release_checksum_failed':
+          'Контрольная сумма загрузки не совпала. Ядро не изменено.',
+      'runtime.error.release_checksum_missing':
+          'У релиза нет SHA-256. Обновление не выполнено.',
+      'runtime.error.backup_version_mismatch':
+          'Для восстановления нужна та же версия панели, что в копии.',
+      'runtime.error.backup_checksum_failed':
+          'Копия повреждена: контрольная сумма не совпала.',
       'runtime.error.backup_wrong_host': 'Эта копия создана на другом сервере.',
       'runtime.error.backup_invalid': 'Не удалось проверить резервную копию.',
-      'runtime.error.backup_incomplete': 'В копии не хватает обязательных данных.',
-      'runtime.error.backup_too_large': 'Копия превышает допустимый размер 128 MB.',
-      'runtime.error.api_not_ready': 'Панель не запустилась после обслуживания. Доступно восстановление через SSH.',
+      'runtime.error.backup_incomplete':
+          'В копии не хватает обязательных данных.',
+      'runtime.error.backup_too_large':
+          'Копия превышает допустимый размер 128 MB.',
+      'runtime.error.api_not_ready':
+          'Панель не запустилась после обслуживания. Доступно восстановление через SSH.',
       'builder.recommended': 'RECOMMENDED',
       'builder.guide.vless.TCP':
           'Для первого подключения к личному серверу начни с TCP + REALITY. Дополнительный HTTP-прокси и свой сертификат подключения не требуются.\nНа следующем шаге выбери REALITY, оставь Flow xtls-rprx-vision и укажи подходящее имя сервера SNI. Ключи и настройки клиента подготовит панель.',
@@ -431,7 +461,7 @@ class AppStrings {
       'runtime.ready': 'Готов',
       'runtime.notReady': 'Не готов',
       'runtime.refresh': 'Обновить',
-      'runtime.validate': 'Проверить',
+      'runtime.validate': 'Проверить конфигурацию',
       'runtime.state.unknown': 'Неизвестно',
       'runtime.state.inactive': 'Остановлено',
       'runtime.state.activating': 'Запускается',
@@ -686,13 +716,6 @@ class AppStrings {
       'core.notInstalled': 'Не установлено',
       'core.install': 'Установить',
       'core.update': 'Обновить ядро',
-      'core.refreshStatus': 'Обновить статус',
-      'core.releases': 'Изменения в релизах',
-      'core.releaseVersions':
-          'Установлено: {installed} · Последний релиз: {latest}',
-      'core.releaseIncomplete':
-          'Показана доступная часть истории. Полный список — в официальном репозитории.',
-      'core.releaseEmpty': 'Описание релиза отсутствует.',
       'runtime.error.releases_unavailable':
           'Не удалось загрузить релизы. Попробуйте позже.',
       'runtime.error.releases_rate_limited':

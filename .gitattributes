@@ -2,3 +2,6 @@
 *.service text eol=lf
 *.rules text eol=lf
 *.yaml text eol=lf
+
+deploy/skyui text eol=lf
+deploy/sky-ui text eol=lf

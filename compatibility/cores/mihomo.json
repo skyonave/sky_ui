@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "coreId": "mihomo",
+  "releases": [
+    {
+      "version": "v1.19.33",
+      "verified": true,
+      "panelVersions": ["0.6.0-dev.1"],
+      "verifiedAt": "2026-11-01",
+      "platforms": {
+        "linux-amd64": {
+          "verified": true,
+          "asset": "mihomo-linux-amd64-v1-v1.19.33.gz",
+          "sha256": "8ec92e7b2fdc6b853ba00156bab7e4e965c8b0d843b8c4ac8ab98795f02ad524"
+        }
+      }
+    }
+  ]
+}

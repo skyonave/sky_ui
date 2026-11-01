@@ -67,12 +67,11 @@ class ApiClient {
       (await _request('/api/v1/system'))['data'] as Map,
     ),
   );
-  Future<CoreReleaseNotes> releases(String core) async =>
-      CoreReleaseNotes.fromJson(
-        Map<String, dynamic>.from(
-          (await _request('/api/v1/releases/$core'))['data'] as Map,
-        ),
-      );
+  Future<CoreUpdateInfo> updates(String core) async => CoreUpdateInfo.fromJson(
+    Map<String, dynamic>.from(
+      (await _request('/api/v1/updates/$core'))['data'] as Map,
+    ),
+  );
   Future<void> clearLogs() async {
     await _request(
       '/api/v1/cores/primary/logs',

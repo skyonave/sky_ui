@@ -8,7 +8,7 @@ import 'core_manager.dart';
 import 'errors.dart';
 import 'panel/service.dart';
 import 'system_monitor.dart';
-import 'core_releases.dart';
+import 'core_updates.dart';
 import 'auth/owner_auth.dart';
 import 'maintenance.dart';
 
@@ -18,6 +18,7 @@ Handler createApplication(
   PanelService? panel,
   OwnerAuth? auth,
   MaintenanceService? maintenance,
+  CoreUpdates? coreUpdates,
 }) {
   if (config.requireOwnerAuth && auth == null)
     throw StateError('Owner authentication is required.');
@@ -34,7 +35,7 @@ Handler createApplication(
     methodNotAllowedHandler: (_) => failure('method_not_allowed', 405),
   );
   final system = SystemMonitor(config.dataDirectory);
-  final releases = CoreReleases();
+  final updates = coreUpdates ?? CoreUpdates();
   if (maintenance != null) {
     router.get(
       '/api/v1/maintenance',
@@ -71,6 +72,12 @@ Handler createApplication(
       final job = await manager.exclusive((_) async {
         if (panel != null && !await panel.isSynchronized()) {
           throw const ApiException('configuration_out_of_sync', status: 409);
+        }
+        if (value['action'] == 'update') {
+          await updates.requireApproved(
+            manager.core.coreId,
+            value['tag'] as String? ?? '',
+          );
         }
         return maintenance.submit(
           value['action'] as String,
@@ -222,7 +229,7 @@ Handler createApplication(
     (_) async =>
         Response.json(body: {'data': (await system.snapshot()).toJson()}),
   );
-  router.get('/api/v1/releases/<core>', (
+  router.get('/api/v1/updates/<core>', (
     RequestContext context,
     String core,
   ) async {
@@ -230,7 +237,7 @@ Handler createApplication(
         ? (await manager.snapshot()).version
         : null;
     return Response.json(
-      body: {'data': (await releases.get(core, installed)).toJson()},
+      body: {'data': (await updates.get(core, installed)).toJson()},
     );
   });
   router.get('/api/v1/cores/<id>/logs/events', (

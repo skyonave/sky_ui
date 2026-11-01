@@ -10,6 +10,7 @@ import sqlite3
 import tarfile
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('maintenance', Path(__file__).resolve().parents[1] / 'deploy/maintenance.py')
@@ -121,17 +122,40 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(m.consume_request(request, os.getuid())['action'], 'backup')
         self.assertFalse(request.exists())
 
-    def test_asset_digest_required_and_name_registry_fixed(self):
-        metadata = {'tag_name': 'v1.2.3', 'assets': [{'name': 'mihomo-linux-amd64-v1-v1.2.3.gz',
-            'browser_download_url': 'https://evil.test/binary', 'digest': 'sha256:' + 'a' * 64}]}
-        with patch.object(m, 'download', return_value=json.dumps(metadata).encode()), patch.object(m.platform, 'machine', return_value='x86_64'):
-            with self.assertRaisesRegex(m.MaintenanceError, 'release_invalid'):
+    def test_only_project_verified_release_for_this_panel_and_platform_is_allowed(self):
+        (m.CURRENT / 'VERSION').write_text('fixture-panel')
+        asset = {'verified': True, 'asset': 'mihomo-fixture.gz', 'sha256': 'a' * 64}
+        release = {'version': 'v1.2.3', 'verified': True, 'panelVersions': ['fixture-panel'],
+                   'platforms': {'linux-amd64': asset}}
+        catalog = {'schemaVersion': 1, 'coreId': 'mihomo', 'releases': [release]}
+        with patch.object(m, 'download', side_effect=lambda url, limit: json.dumps(catalog).encode()) as fetch, patch.object(m.platform, 'machine', return_value='x86_64'):
+            self.assertEqual(m.latest_mihomo()[0], 'v1.2.3')
+            self.assertEqual(fetch.call_args.args[0], m.CATALOG_BASE + '/mihomo.json')
+            for target, key, value in [(release, 'verified', False), (release, 'panelVersions', ['other']),
+                                       (asset, 'verified', False), (asset, 'sha256', 'bad')]:
+                original = target[key]
+                target[key] = value
+                with self.assertRaises(m.MaintenanceError):
+                    m.latest_mihomo('v1.2.3')
+                target[key] = original
+            catalog['releases'].append(dict(release))
+            with self.assertRaisesRegex(m.MaintenanceError, 'catalog_unavailable'):
+                m.latest_mihomo('v1.2.3')
+
+    def test_catalog_unavailable_never_uses_upstream_latest(self):
+        with patch.object(m, 'download', side_effect=OSError('offline')) as fetch:
+            with self.assertRaisesRegex(m.MaintenanceError, 'catalog_unavailable'):
                 m.latest_mihomo()
-            metadata['assets'][0]['browser_download_url'] = 'https://github.com/MetaCubeX/mihomo/releases/download/v1.2.3/mihomo-linux-amd64-v1-v1.2.3.gz'
-        metadata['assets'][0].pop('digest')
-        with patch.object(m, 'download', return_value=json.dumps(metadata).encode()), patch.object(m.platform, 'machine', return_value='x86_64'):
-            with self.assertRaisesRegex(m.MaintenanceError, 'checksum_missing'):
-                m.latest_mihomo()
+            self.assertEqual(fetch.call_count, 1)
+            self.assertIn('/sky_ui/main/compatibility/', fetch.call_args.args[0])
+
+    def test_cli_reports_pre_worker_service_failure_and_releases_its_request(self):
+        owner = SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+        with patch.object(m,'run',return_value=b'failed\n'), patch.object(m,'active',return_value=False), \
+             patch.object(m.time,'monotonic',side_effect=[0,1,7]):
+            with self.assertRaisesRegex(m.MaintenanceError,'skyui logs all'):
+                m.cli(['backup'],owner)
+        self.assertFalse((m.STATE / 'inbox/request.json').exists())
 
     def test_update_rolls_back_link_on_readiness_failure(self):
         root = m.CORES / 'mihomo'

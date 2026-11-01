@@ -5,8 +5,17 @@ import 'package:dart_frog/dart_frog.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sky_ui_api/src/auth/owner_auth.dart';
 import 'package:sky_ui_api/src/maintenance.dart';
+import 'package:sky_ui_api/src/core_updates.dart';
+import 'package:sky_ui_api/src/errors.dart';
 import 'package:test/test.dart';
 import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor, fixtureCore;
+
+class RejectingUpdates extends CoreUpdates {
+  @override
+  Future<void> requireApproved(String core, String tag) async {
+    throw const ApiException('core_release_unverified', status: 422);
+  }
+}
 
 class MaintenanceRunner implements CommandRunner {
   final calls = <List<String>>[];
@@ -72,6 +81,7 @@ void main() {
         manager,
         auth: auth,
         maintenance: maintenance,
+        coreUpdates: RejectingUpdates(),
       ),
       InternetAddress.loopbackIPv4,
       0,
@@ -124,6 +134,23 @@ void main() {
     );
   }
 
+  test(
+    'unverified updates cannot reach the privileged worker even with owner confirmation',
+    () async {
+      final who = await login();
+      final response = await call(
+        '/api/v1/maintenance',
+        method: 'POST',
+        cookie: who.cookie,
+        csrf: who.csrf,
+        payload: {'action': 'update', 'tag': 'v99.0.0', 'confirmed': true},
+      );
+      expect(response.status, 422);
+      expect(response.json['error']['code'], 'core_release_unverified');
+      expect(runner.calls, isEmpty);
+      expect(File('${directory.path}/inbox/request.json').existsSync(), false);
+    },
+  );
   test(
     'maintenance and secret archives require gateway and owner session',
     () async {

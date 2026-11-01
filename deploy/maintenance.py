@@ -354,28 +354,56 @@ def download(url, limit):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), OfficialRedirect())
     with opener.open(request, timeout=30) as response:
         parsed = urllib.parse.urlparse(response.url)
-        require(parsed.scheme == 'https' and (parsed.hostname in ['api.github.com', 'github.com',
+        require(parsed.scheme == 'https' and (parsed.hostname in ['raw.githubusercontent.com', 'github.com',
                 'release-assets.githubusercontent.com', 'objects.githubusercontent.com']), 'download_invalid')
         data = response.read(limit + 1)
         require(len(data) <= limit, 'download_too_large')
         return data
 
 
+CATALOG_BASE = 'https://raw.githubusercontent.com/skyonave/sky_ui/main/compatibility/cores'
+CORE_REPOSITORIES = {'mihomo': 'MetaCubeX/mihomo', 'sing-box': 'SagerNet/sing-box', 'xray': 'XTLS/Xray-core'}
+
+
+def verified_release(core, selected=None):
+    require(core in CORE_REPOSITORIES and (selected is None or TAG.fullmatch(selected)), 'core_release_unverified')
+    try:
+        catalog = json.loads(download(CATALOG_BASE + '/' + core + '.json', 262144))
+        require(catalog['schemaVersion'] == 1 and catalog['coreId'] == core and
+                isinstance(catalog['releases'], list) and len(catalog['releases']) <= 256, 'catalog_unavailable')
+        panel = read_regular(CURRENT.resolve(strict=True) / 'VERSION', 128).decode().strip()
+        platform_key = {'x86_64': 'linux-amd64', 'aarch64': 'linux-arm64'}.get(platform.machine())
+        approved = []
+        seen = set()
+        for release in catalog['releases']:
+            if release.get('verified') is not True:
+                continue
+            version = release['version']
+            require(TAG.fullmatch(version) and version not in seen, 'catalog_unavailable')
+            seen.add(version)
+            require(isinstance(release['panelVersions'], list), 'catalog_unavailable')
+            if panel not in release['panelVersions']:
+                continue
+            asset = release['platforms'].get(platform_key)
+            if not isinstance(asset, dict) or asset.get('verified') is not True:
+                continue
+            require(re.fullmatch(r'[a-zA-Z0-9._-]+', asset['asset']) and
+                    re.fullmatch(r'[a-f0-9]{64}', asset['sha256']), 'catalog_unavailable')
+            approved.append((version, asset))
+        approved.sort(key=lambda item: tuple(map(int, item[0][1:].split('.'))), reverse=True)
+        chosen = next((item for item in approved if selected is None or item[0] == selected), None)
+        require(chosen is not None, 'core_release_unverified')
+        tag, asset = chosen
+        url = f"https://github.com/{CORE_REPOSITORIES[core]}/releases/download/{tag}/{asset['asset']}"
+        return tag, url, asset['sha256']
+    except MaintenanceError:
+        raise
+    except Exception:
+        raise MaintenanceError('catalog_unavailable')
+
+
 def latest_mihomo(selected=None):
-    require(selected is None or TAG.fullmatch(selected), 'release_invalid')
-    path = 'latest' if selected is None else 'tags/' + selected
-    metadata = json.loads(download('https://api.github.com/repos/MetaCubeX/mihomo/releases/' + path, 2 * 1024 * 1024))
-    tag = metadata['tag_name']
-    require(TAG.fullmatch(tag) and not metadata.get('draft') and not metadata.get('prerelease'), 'release_invalid')
-    architecture = {'x86_64': 'amd64-v1', 'aarch64': 'arm64'}.get(platform.machine())
-    require(architecture is not None, 'platform_unsupported')
-    name = f'mihomo-linux-{architecture}-{tag}.gz'
-    asset = next((item for item in metadata['assets'] if item['name'] == name), None)
-    require(asset is not None, 'release_asset_missing')
-    require(re.fullmatch(r'sha256:[a-f0-9]{64}', asset.get('digest', '')), 'release_checksum_missing')
-    expected = f'https://github.com/MetaCubeX/mihomo/releases/download/{tag}/{name}'
-    require(asset['browser_download_url'] == expected, 'release_invalid')
-    return tag, expected, asset['digest'].split(':')[1]
+    return verified_release('mihomo', selected)
 
 
 def switch_link(link, destination):
@@ -510,6 +538,7 @@ def main():
     finally:
         if api_running and not (STATE / 'restore-intent.json').exists() and not (STATE / 'update-intent.json').exists():
             try:
+                run(['systemctl', 'reset-failed', 'sky-ui.service'])
                 run(['systemctl', 'start', 'sky-ui.service'])
                 api_ready(environment())
             except Exception:
@@ -543,7 +572,8 @@ def cli(arguments, owner):
     atomic(STATE / 'inbox/request.json', json.dumps(job).encode(), 0o600, owner.pw_uid, owner.pw_gid)
     run(['systemctl', 'start', '--no-block', 'sky-ui-maintenance.service'])
     print('Job:', job['id'])
-    deadline = time.monotonic() + 600
+    started = time.monotonic()
+    deadline = started + 600
     while time.monotonic() < deadline:
         try:
             result = json.loads(read_regular(STATE / 'result.json', 4096))
@@ -553,6 +583,14 @@ def cli(arguments, owner):
                 return
         except FileNotFoundError:
             pass
+        if time.monotonic() - started > 5:
+            state = run(['systemctl', 'show', '-p', 'ActiveState', '--value',
+                         'sky-ui-maintenance.service']).decode().strip()
+            if state == 'failed':
+                pending = STATE / 'inbox/request.json'
+                if pending.exists() and json.loads(read_regular(pending, 4096)).get('id') == job['id']:
+                    pending.unlink()
+                raise MaintenanceError('Служба обслуживания не запустилась. Проверь skyui logs all.')
         time.sleep(.5)
     raise MaintenanceError('maintenance_timeout')
 
