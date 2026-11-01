@@ -31,7 +31,7 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.6.0-dev.1',
+    defaultValue: '0.6.0-dev.4',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
@@ -56,7 +56,8 @@ class _SkyAppState extends State<SkyApp> {
       panelData!.synchronized &&
       !runtimeBusy &&
       !maintenanceBusy &&
-      runtime?.platformSupported == true;
+      runtime?.platformSupported == true &&
+      runtime?.binaryAvailable == true;
   final api = ApiClient();
   MaintenanceSnapshot? maintenance;
   MaintenanceJob? maintenanceJob;
@@ -64,6 +65,10 @@ class _SkyAppState extends State<SkyApp> {
   String? maintenanceBackupId;
   CoreUpdateInfo? updateNotes;
   CoreUpdateInfo? coreUpdates;
+  PanelUpdateInfo? panelUpdateInfo;
+  bool panelUpdateLoading = false;
+  String? panelUpdateError, panelUpdateReloadId, panelUpdateTarget;
+  DateTime? panelUpdateChecked;
   bool updatesLoading = false;
   String? updatesError;
   String? coreActionFeedback;
@@ -97,7 +102,13 @@ class _SkyAppState extends State<SkyApp> {
       runtimeOnline && runtime!.processState == CoreProcessState.active;
   String get runtimeStatus => !runtimeOnline
       ? t(runtimeError == null ? 'runtime.loading' : 'runtime.offline')
+      : !runtime!.binaryAvailable
+      ? t('core.notInstalled')
       : t('runtime.state.${runtime!.processState.name}');
+
+  bool coreInstalled(String id) => runtimeOnline && runtime!.coreId == id
+      ? runtime!.binaryAvailable
+      : panelData?.coreAvailability[id] ?? false;
 
   String runtimeMessage(String code) {
     final key = 'runtime.error.$code';
@@ -313,6 +324,7 @@ class _SkyAppState extends State<SkyApp> {
     unawaited(refreshOwnerSessions());
     unawaited(refreshMaintenance());
     unawaited(refreshCoreUpdates());
+    unawaited(refreshPanelUpdate());
     store.running = false;
     unawaited(refreshRuntime());
     unawaited(refreshPanel());
@@ -320,6 +332,10 @@ class _SkyAppState extends State<SkyApp> {
     runtimeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       unawaited(refreshRuntime());
       unawaited(refreshPanel());
+      if (panelUpdateChecked == null ||
+          DateTime.now().difference(panelUpdateChecked!) >
+              const Duration(minutes: 1))
+        unawaited(refreshPanelUpdate());
       if (page == 'settings') unawaited(refreshOwnerSessions());
       if (page == 'core') unawaited(refreshCoreUpdates());
       if (page == 'settings' || page == 'core' || maintenanceBusy)
@@ -805,39 +821,7 @@ class _SkyAppState extends State<SkyApp> {
         for (final key in ['core', 'logs', 'settings']) navItem(key),
       ], classes: 'navigation'),
       div([
-        div([
-          for (final core in coreCatalog)
-            button(
-              [
-                div([
-                  icon('core'),
-                  txt(core.name),
-                  span(
-                    [],
-                    classes:
-                        'status-dot ${core.id == runtime?.coreId && runtimeRunning ? '' : 'off'}',
-                  ),
-                ], classes: 'sidebar-core-top'),
-                div([
-                  if (core.id == (runtime?.coreId ?? coreCatalog.first.id))
-                    span(
-                      [Component.text(runtime?.version ?? '—')],
-                      classes: 'sidebar-core-version',
-                      attributes: {'title': runtime?.version ?? '—'},
-                    ),
-                  txt(
-                    core.id == (runtime?.coreId ?? coreCatalog.first.id)
-                        ? runtimeStatus
-                        : t('core.notInstalled'),
-                    classes: 'muted',
-                  ),
-                ], classes: 'sidebar-core-detail'),
-              ],
-              classes: 'sidebar-core',
-              type: ButtonType.button,
-              onClick: () => navigate('core'),
-            ),
-        ], classes: 'sidebar-core-list'),
+        panelUpdateCard(),
         div([
           txt(component.owner.username ?? '', classes: 'owner-name'),
           iconButton(
@@ -984,7 +968,7 @@ class _SkyAppState extends State<SkyApp> {
     return div([
       el('table', [
         el('colgroup', [
-          for (final width in [25, 15, 12, 11, 17, 10, 10])
+          for (final width in [30, 16, 14, 20, 10, 10])
             el('col', [], attributes: {'style': 'width: $width%'}),
         ]),
         el('thead', [
@@ -993,7 +977,6 @@ class _SkyAppState extends State<SkyApp> {
               'name',
               'protocol',
               'transport',
-              'users',
               'status',
               'enabled',
             ])
@@ -1045,12 +1028,13 @@ class _SkyAppState extends State<SkyApp> {
                 if (c.settings['security'] != null)
                   txt(c.settings['security']!, classes: 'transport-note'),
               ]),
-              el('td', [avatars(store.recipientsFor(c.id))]),
               el('td', [
                 pill(
                   t(
                     dataBusy
                         ? 'data.applying'
+                        : !coreInstalled(c.coreId)
+                        ? 'core.missingStatus'
                         : !c.enabled
                         ? 'status.disabled'
                         : c.shareable && store.recipientsFor(c.id).isEmpty
@@ -1062,6 +1046,7 @@ class _SkyAppState extends State<SkyApp> {
                   positive:
                       !dataBusy &&
                       c.enabled &&
+                      coreInstalled(c.coreId) &&
                       store.deliveryReady &&
                       (!c.shareable || store.recipientsFor(c.id).isNotEmpty),
                 ),
@@ -1548,7 +1533,7 @@ class _SkyAppState extends State<SkyApp> {
             disabled: !can(CoreOperation.validate),
           ),
           action(
-            t('core.update'),
+            t(value?.binaryAvailable == true ? 'core.update' : 'core.install'),
             () => unawaited(prepareCoreUpdate()),
             glyph: 'down',
             disabled:
@@ -1558,7 +1543,20 @@ class _SkyAppState extends State<SkyApp> {
                 coreUpdates?.available != true ||
                 updatesError != null,
           ),
+          action(
+            t('core.remove'),
+            () => openModal('coreRemove'),
+            glyph: 'trash',
+            classes: 'button danger',
+            disabled:
+                !canInspect ||
+                maintenance?.available != true ||
+                maintenanceBusy ||
+                runtimeBusy ||
+                value?.binaryAvailable != true,
+          ),
         ], classes: 'core-actions'),
+        maintenanceStatus(),
         p([
           Component.text(
             updatesLoading && coreUpdates == null
@@ -1852,6 +1850,15 @@ class _SkyAppState extends State<SkyApp> {
     maintenanceLoading = true;
     try {
       final value = await api.maintenance();
+      if (mounted && value.job?.action == 'panel-update') {
+        if (value.job!.busy) panelUpdateReloadId = value.job!.id;
+        if (value.job!.status == 'completed' &&
+            value.job!.id == panelUpdateReloadId) {
+          panelUpdateReloadId = null;
+          web.window.location.reload();
+          return;
+        }
+      }
       if (mounted)
         setState(() {
           maintenance = value;
@@ -1862,6 +1869,75 @@ class _SkyAppState extends State<SkyApp> {
     } finally {
       maintenanceLoading = false;
     }
+  }
+
+  Future<void> refreshPanelUpdate() async {
+    if (panelUpdateLoading) return;
+    panelUpdateLoading = true;
+    try {
+      final value = await api.panelUpdate();
+      if (mounted)
+        setState(() {
+          panelUpdateInfo = value;
+          panelUpdateError = null;
+        });
+    } on ApiClientException catch (e) {
+      if (mounted) setState(() => panelUpdateError = e.code);
+    } finally {
+      panelUpdateChecked = DateTime.now();
+      if (mounted) setState(() => panelUpdateLoading = false);
+    }
+  }
+
+  Component panelUpdateCard() {
+    final updating =
+        maintenanceJob?.action == 'panel-update' && maintenanceBusy;
+    final failed =
+        maintenanceJob?.action == 'panel-update' &&
+        maintenanceJob?.status == 'failed';
+    return div([
+      txt(t('panelUpdate.title'), classes: 'small'),
+      div(
+        [
+          Component.text(
+            updating
+                ? t('panelUpdate.running')
+                : failed
+                ? runtimeMessage(maintenanceJob!.error ?? 'panel_update_failed')
+                : panelUpdateError != null
+                ? t('panelUpdate.checkFailed')
+                : panelUpdateInfo?.available == true
+                ? t('panelUpdate.available', {
+                    'version': panelUpdateInfo!.latestVersion!,
+                  })
+                : panelUpdateInfo == null
+                ? t('panelUpdate.checking')
+                : !panelUpdateInfo!.supported
+                ? t('feature.unavailable')
+                : t('panelUpdate.none'),
+          ),
+        ],
+        classes: 'sidebar-update-status muted small',
+        attributes: {'role': 'status', 'aria-live': 'polite'},
+      ),
+      action(
+        t('panelUpdate.update'),
+        () {
+          panelUpdateTarget = panelUpdateInfo?.tag;
+          openModal('panelUpdate');
+        },
+        glyph: 'down',
+        classes:
+            'button ${panelUpdateInfo?.available == true ? 'primary' : ''}',
+        disabled:
+            updating ||
+            maintenanceBusy ||
+            panelUpdateLoading ||
+            panelUpdateError != null ||
+            panelUpdateInfo?.available != true ||
+            maintenance?.available != true,
+      ),
+    ], classes: 'sidebar-update');
   }
 
   Future<void> refreshCoreUpdates() async {
@@ -1891,7 +1967,7 @@ class _SkyAppState extends State<SkyApp> {
       return;
     updateNotes = coreUpdates;
     updateTag = updateNotes!.versions.first;
-    openModal('coreUpdate');
+    openModal(runtime?.binaryAvailable == true ? 'coreUpdate' : 'coreInstall');
   }
 
   Future<void> submitMaintenance(String action) async {
@@ -1901,9 +1977,17 @@ class _SkyAppState extends State<SkyApp> {
       final job = await api.maintain(
         action,
         backupId: action == 'restore' ? maintenanceBackupId : null,
-        tag: action == 'update' ? updateTag : null,
+        tag: action == 'panel-update'
+            ? panelUpdateTarget
+            : ['update', 'install'].contains(action)
+            ? updateTag
+            : null,
       );
-      if (mounted) setState(() => maintenanceJob = job);
+      if (mounted)
+        setState(() {
+          maintenanceJob = job;
+          if (action == 'panel-update') panelUpdateReloadId = job.id;
+        });
     } on ApiClientException catch (e) {
       if (mounted) {
         setState(() => error = runtimeMessage(e.code));
@@ -2209,6 +2293,9 @@ class _SkyAppState extends State<SkyApp> {
                   'backup' => 'maintenance.create',
                   'restore' => 'maintenance.restore',
                   'coreUpdate' => 'core.update',
+                  'coreInstall' => 'core.install',
+                  'coreRemove' => 'core.remove',
+                  'panelUpdate' => 'panelUpdate.title',
                   _ => 'modal.deleteTitle',
                 }),
               ),
@@ -2256,7 +2343,15 @@ class _SkyAppState extends State<SkyApp> {
             p([Component.text(t('maintenance.backupHint'))]),
           if (modal == 'restore')
             p([Component.text(t('maintenance.restoreHint'))]),
-          if (modal == 'coreUpdate') ...[
+          if (modal == 'panelUpdate') ...[
+            txt(
+              'v${panelUpdateInfo?.currentVersion ?? appVersion} → ${panelUpdateTarget ?? '—'}',
+              classes: 'mono',
+            ),
+            p([Component.text(t('panelUpdate.hint'))]),
+          ],
+          if (modal == 'coreRemove') p([Component.text(t('core.removeHint'))]),
+          if (modal == 'coreUpdate' || modal == 'coreInstall') ...[
             if (updateNotes == null && error == null)
               txt(t('maintenance.loading')),
             if (updateNotes != null) ...[
@@ -2276,7 +2371,15 @@ class _SkyAppState extends State<SkyApp> {
                 ),
               ]),
               txt('${runtime?.version ?? '—'} → $updateTag', classes: 'mono'),
-              p([Component.text(t('maintenance.updateHint'))]),
+              p([
+                Component.text(
+                  t(
+                    modal == 'coreInstall'
+                        ? 'core.installHint'
+                        : 'maintenance.updateHint',
+                  ),
+                ),
+              ]),
             ],
           ],
           if (modal == 'ownerName' || modal == 'ownerPassword') ownerForm(),
@@ -2374,13 +2477,19 @@ class _SkyAppState extends State<SkyApp> {
                 ),
               if (modal == 'backup' ||
                   modal == 'restore' ||
-                  modal == 'coreUpdate')
+                  modal == 'coreUpdate' ||
+                  modal == 'coreInstall' ||
+                  modal == 'coreRemove')
                 action(
                   t(
                     modal == 'backup'
                         ? 'maintenance.create'
                         : modal == 'restore'
                         ? 'maintenance.restore'
+                        : modal == 'coreRemove'
+                        ? 'core.remove'
+                        : modal == 'coreInstall'
+                        ? 'core.install'
                         : 'core.update',
                   ),
                   () => unawaited(
@@ -2389,16 +2498,28 @@ class _SkyAppState extends State<SkyApp> {
                           ? 'backup'
                           : modal == 'restore'
                           ? 'restore'
+                          : modal == 'coreRemove'
+                          ? 'remove'
+                          : modal == 'coreInstall'
+                          ? 'install'
                           : 'update',
                     ),
                   ),
                   classes:
-                      'button ${modal == 'restore' ? 'danger' : 'primary'}',
+                      'button ${['restore', 'coreRemove'].contains(modal) ? 'danger' : 'primary'}',
                   disabled:
                       maintenanceBusy ||
-                      (modal == 'coreUpdate' &&
+                      (['coreUpdate', 'coreInstall'].contains(modal) &&
                           (updateNotes == null ||
                               !updateNotes!.versions.contains(updateTag))),
+                ),
+              if (modal == 'panelUpdate')
+                action(
+                  t('panelUpdate.update'),
+                  () => unawaited(submitMaintenance('panel-update')),
+                  classes: 'button primary',
+                  disabled:
+                      maintenanceBusy || panelUpdateInfo?.available != true,
                 ),
               if (modal == 'delete')
                 action(
@@ -2483,6 +2604,7 @@ class _SkyAppState extends State<SkyApp> {
               type: ButtonType.button,
               disabled:
                   dataBusy ||
+                  !coreInstalled(core.id) ||
                   store.protocols[core.id]?.any((p) => p.available) != true,
               onClick: () => chooseCore(core.id),
             ),
@@ -2772,6 +2894,8 @@ class _SkyAppState extends State<SkyApp> {
     final selected = int.tryParse(shareSelection) ?? -1;
     final url = selected >= 0 && selected < shareData!.links.length
         ? shareData!.links[selected].uri
+        : selected == -2
+        ? shareData!.subscriptionUrls['v2ray'] ?? shareData!.subscriptionUrl
         : shareData!.subscriptionUrl;
     final qr = QrImage(
       QrCode.fromData(data: url, errorCorrectLevel: QrErrorCorrectLevel.M),
@@ -2784,9 +2908,15 @@ class _SkyAppState extends State<SkyApp> {
       select(
         [
           option(
-            [Component.text(t('users.subscription'))],
+            [Component.text(t('share.clashSubscription'))],
             value: '-1',
             selected: shareSelection == '-1',
+          ),
+          option(
+            [Component.text(t('share.v2raySubscription'))],
+            value: '-2',
+            selected: shareSelection == '-2',
+            disabled: !shareData!.subscriptionUrls.containsKey('v2ray'),
           ),
           for (var i = 0; i < shareData!.links.length; i++)
             option(
@@ -2844,7 +2974,9 @@ class _SkyAppState extends State<SkyApp> {
           value: url,
           attributes: {
             'readonly': '',
-            'aria-label': t(selected < 0 ? 'users.subscription' : 'share.uri'),
+            'aria-label': t(
+              selected < 0 ? 'share.subscriptionUrl' : 'share.uri',
+            ),
           },
         ),
         iconButton('copy', t('common.copy'), () async {

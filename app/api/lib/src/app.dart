@@ -9,6 +9,8 @@ import 'errors.dart';
 import 'panel/service.dart';
 import 'system_monitor.dart';
 import 'core_updates.dart';
+import 'panel_updates.dart';
+import 'process_runner.dart';
 import 'auth/owner_auth.dart';
 import 'maintenance.dart';
 
@@ -19,6 +21,7 @@ Handler createApplication(
   OwnerAuth? auth,
   MaintenanceService? maintenance,
   CoreUpdates? coreUpdates,
+  PanelUpdates? panelUpdates,
 }) {
   if (config.requireOwnerAuth && auth == null)
     throw StateError('Owner authentication is required.');
@@ -36,6 +39,14 @@ Handler createApplication(
   );
   final system = SystemMonitor(config.dataDirectory);
   final updates = coreUpdates ?? CoreUpdates();
+  final applicationUpdates =
+      panelUpdates ?? PanelUpdates(const NativeCommandRunner());
+  router.get(
+    '/api/v1/panel-update',
+    (_) async => Response.json(
+      body: {'data': (await applicationUpdates.get()).toJson()},
+    ),
+  );
   if (maintenance != null) {
     router.get(
       '/api/v1/maintenance',
@@ -73,7 +84,21 @@ Handler createApplication(
         if (panel != null && !await panel.isSynchronized()) {
           throw const ApiException('configuration_out_of_sync', status: 409);
         }
-        if (value['action'] == 'update') {
+        if (value['action'] == 'panel-update') {
+          await applicationUpdates.requireApproved(
+            value['tag'] as String? ?? '',
+          );
+        }
+        if (['remove', 'install'].contains(value['action'])) {
+          final installed = (await manager.snapshot()).binaryAvailable;
+          if (installed == (value['action'] == 'install')) {
+            throw ApiException(
+              installed ? 'core_already_installed' : 'binary_missing',
+              status: 409,
+            );
+          }
+        }
+        if (['update', 'install'].contains(value['action'])) {
           await updates.requireApproved(
             manager.core.coreId,
             value['tag'] as String? ?? '',
@@ -82,7 +107,9 @@ Handler createApplication(
         return maintenance.submit(
           value['action'] as String,
           backupId: value['backupId'] as String?,
-          core: value['action'] == 'update' ? manager.core.coreId : null,
+          core: ['update', 'install', 'remove'].contains(value['action'])
+              ? manager.core.coreId
+              : null,
           tag: value['tag'] as String?,
         );
       });
@@ -489,13 +516,20 @@ Handler createApplication(
       RequestContext context,
       String filename,
     ) async {
-      if (!RegExp(r'^[A-Za-z0-9_-]{43}\.yaml$').hasMatch(filename))
+      if (!RegExp(r'^[A-Za-z0-9_-]{43}\.(yaml|txt)$').hasMatch(filename))
         return failure('not_found', 404);
       return Response(
-        body: await panel.subscription(filename.substring(0, 43)),
+        body: await panel.subscription(
+          filename.substring(0, 43),
+          format: filename.endsWith('.txt') ? 'v2ray' : 'clash',
+        ),
         headers: {
-          'content-type': 'application/yaml; charset=utf-8',
-          'content-disposition': 'inline; filename=Sky-UI.yaml',
+          'content-type': filename.endsWith('.txt')
+              ? 'text/plain; charset=utf-8'
+              : 'application/yaml; charset=utf-8',
+          'content-disposition': filename.endsWith('.txt')
+              ? 'inline; filename=Sky-UI.txt'
+              : 'inline; filename=Sky-UI.yaml',
           'profile-update-interval': '6',
           'x-robots-tag': 'noindex, nofollow, noarchive',
         },
@@ -540,7 +574,7 @@ Handler createApplication(
     final publicRead =
         (request.method == HttpMethod.get ||
             request.method == HttpMethod.head) &&
-        RegExp(r'^s/[A-Za-z0-9_-]{43}\.yaml$').hasMatch(request.url.path);
+        RegExp(r'^s/[A-Za-z0-9_-]{43}\.(yaml|txt)$').hasMatch(request.url.path);
     Response response;
     try {
       final healthRead =

@@ -30,7 +30,7 @@ gateway = Path(environment['SKY_UI_GATEWAY_SECRET_FILE']).read_text().strip()
 http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 owner_cookie = owner_csrf = None
 tag = 'qa-' + secrets.token_hex(8)
-binary = '/opt/sky-ui/current/bin/mihomo'
+binary = '/opt/sky-ui/cores/mihomo/current/mihomo'
 
 
 def request(url, method='GET', payload=None, headers=None):

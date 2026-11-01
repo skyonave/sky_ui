@@ -73,6 +73,7 @@ void main() {
     repository: repository,
     codecs: {'mihomo': codec},
     exporter: ClashExporter(),
+    additionalExporters: [V2RayExporter()],
   );
   Future<PanelSnapshot> connection() =>
       panel.saveConnection(repository.revision, input());
@@ -128,6 +129,50 @@ void main() {
     panel = service();
     await panel.initialize();
   });
+  test(
+    'missing core keeps connections and grants but blocks execution and sharing',
+    () async {
+      final connectionId = (await connection()).connections.single.id;
+      final person = (await recipient(connectionId)).recipients.single;
+      final before = repository.read();
+      adapter.available = false;
+      adapter.ready = false;
+      supervisor.state = CoreProcessState.inactive;
+      final missing = await panel.snapshot();
+      expect(missing.coreAvailability, {'mihomo': false});
+      expect(PanelSnapshot.fromJson(missing.toJson()).coreAvailability, {
+        'mihomo': false,
+      });
+      expect(missing.connections.single.enabled, true);
+      expect(missing.connections.single.id, connectionId);
+      expect(missing.deliveryReady, false);
+      expect(missing.errorCode, 'binary_missing');
+      await expectLater(
+        panel.executeCore(CoreOperation.start),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'binary_missing'),
+        ),
+      );
+      await expectLater(
+        panel.share(person.id),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'binary_missing'),
+        ),
+      );
+      expect(
+        repository.read().grants.single.credentials,
+        before.grants.single.credentials,
+      );
+      adapter.available = true;
+      adapter.ready = true;
+      supervisor.state = CoreProcessState.active;
+      expect((await panel.snapshot()).deliveryReady, true);
+      expect(
+        repository.read().grants.single.credentials,
+        before.grants.single.credentials,
+      );
+    },
+  );
   tearDown(() async {
     repository.close();
     await directory.delete(recursive: true);
@@ -264,6 +309,16 @@ void main() {
         jsonEncode(exported),
         isNot(contains(before.grants.last.credentials['uuid']!)),
       );
+      final share = await panel.share(first.id);
+      expect(share.subscriptionUrls['v2ray'], endsWith('.txt'));
+      final text = utf8
+          .decode(
+            base64.decode(
+              await panel.subscription(firstToken, format: 'v2ray'),
+            ),
+          )
+          .trim();
+      expect(text, share.links.single.uri);
       final uri = Uri.parse((await panel.share(first.id)).links.single.uri);
       expect(uri.scheme, 'vless');
       expect(uri.userInfo, before.grants.first.credentials['uuid']);
@@ -281,6 +336,10 @@ void main() {
       expect(users.single['uuid'], before.grants.last.credentials['uuid']);
       await expectLater(
         panel.subscription(firstToken),
+        throwsA(isA<ApiException>().having((e) => e.status, 'status', 404)),
+      );
+      await expectLater(
+        panel.subscription(firstToken, format: 'v2ray'),
         throwsA(isA<ApiException>().having((e) => e.status, 'status', 404)),
       );
       expect((await panel.share(second.id)).links.length, 1);
@@ -614,8 +673,12 @@ void main() {
       }
 
       try {
-        expect(await status('GET', path), 200);
-        expect(await status('POST', path), 403);
+        for (final target in [path, path.replaceFirst('.yaml', '.txt')]) {
+          expect(await status('GET', target), 200);
+          expect(await status('HEAD', target), 200);
+          expect(await status('POST', target), 403);
+          expect(await status('GET', target, host: 'evil.example'), 403);
+        }
         expect(await status('GET', '/api/v1/panel'), 403);
         expect(await status('GET', path, host: 'evil.example'), 403);
         expect(await status('GET', '/s/not-a-token.yaml'), 403);

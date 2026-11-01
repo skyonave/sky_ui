@@ -20,7 +20,9 @@ class MaintenanceService {
   bool get busy {
     if (!available) return false;
     if (File('$directory/restore-intent.json').existsSync() ||
-        File('$directory/update-intent.json').existsSync())
+        File('$directory/update-intent.json').existsSync() ||
+        File('$directory/core-remove-intent.json').existsSync() ||
+        File('$directory/panel-update-intent.json').existsSync())
       return true;
     if (_request.existsSync()) return true;
     return _result()?.busy == true;
@@ -77,9 +79,21 @@ class MaintenanceService {
     if (!available)
       throw const ApiException('maintenance_unavailable', status: 501);
     if (busy) throw const ApiException('maintenance_busy', status: 409);
-    if (!['backup', 'restore', 'update'].contains(action) ||
+    if (![
+          'backup',
+          'restore',
+          'update',
+          'install',
+          'remove',
+          'panel-update',
+        ].contains(action) ||
         (action == 'restore' && !idPattern.hasMatch(backupId ?? '')) ||
-        (action == 'update' &&
+        (action == 'remove' && core != 'mihomo') ||
+        (action == 'panel-update' &&
+            !RegExp(
+              r'^v[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.\-]+)?$',
+            ).hasMatch(tag ?? '')) ||
+        (['update', 'install'].contains(action) &&
             (core != 'mihomo' ||
                 !RegExp(r'^v\d+\.\d+\.\d+$').hasMatch(tag ?? '')))) {
       throw const ApiException('request_invalid', status: 400);
@@ -88,10 +102,13 @@ class MaintenanceService {
         !await File('$directory/backups/$backupId.tar.gz').exists()) {
       throw const ApiException('not_found', status: 404);
     }
+    final service = action == 'panel-update'
+        ? 'sky-ui-update.service'
+        : 'sky-ui-maintenance.service';
     final worker = await runner.run('systemctl', [
       'is-active',
       '--quiet',
-      'sky-ui-maintenance.service',
+      service,
     ]);
     if (worker.exitCode == 0)
       throw const ApiException('maintenance_busy', status: 409);
@@ -104,7 +121,8 @@ class MaintenanceService {
       'id': id,
       'action': action,
       if (action == 'restore') 'backupId': backupId,
-      if (action == 'update') ...{'core': core, 'tag': tag},
+      if (['update', 'install', 'remove'].contains(action)) 'core': core,
+      if (['update', 'install', 'panel-update'].contains(action)) 'tag': tag,
     };
     final temporary = File('$directory/inbox/$id.tmp');
     await temporary.writeAsString(jsonEncode(payload), flush: true);
@@ -113,7 +131,7 @@ class MaintenanceService {
       final result = await runner.run('systemctl', [
         'start',
         '--no-block',
-        'sky-ui-maintenance.service',
+        service,
       ]);
       if (result.exitCode != 0)
         throw const ApiException('maintenance_unavailable', status: 503);

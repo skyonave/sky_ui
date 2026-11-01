@@ -38,8 +38,14 @@ if (( ! verify_only )); then
   [[ "$(uname -s)" == Linux ]] || fail 'Linux is required.'
   (( EUID == 0 )) || fail 'Run the installer with sudo or as root.'
   [[ -d /run/systemd/system ]] || fail 'systemd must be running as the service manager.'
+  [[ ! -e /var/lib/sky-ui-maintenance/core-remove-intent.json ]] || fail 'Core removal recovery is required. Start sky-ui-maintenance-recovery.service first.'
   command -v flock >/dev/null || fail 'flock is required.'
-  exec 9>/run/lock/sky-ui-install.lock
+  if [[ "${SKY_UI_TRANSACTION_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
+    [[ "$(readlink "/proc/self/fd/$SKY_UI_TRANSACTION_LOCK_FD")" == /run/lock/sky-ui-install.lock ]] || fail 'Invalid update transaction lock.'
+    exec 9>&"$SKY_UI_TRANSACTION_LOCK_FD"
+  else
+    exec 9>/run/lock/sky-ui-install.lock
+  fi
   flock -n 9 || fail 'Another Sky UI installation is in progress.'
 fi
 for command in tar sha256sum awk grep sed mktemp; do
@@ -48,15 +54,28 @@ done
 temp="$(mktemp -d)"
 previous=
 changed=0
-core_was_running=0
 api_was_running=0
 edge_was_running=0
+core_previous=
+core_link_changed=0
+worker_locked=0
 cleanup() { rm -rf -- "$temp"; }
+unlock_worker() {
+  if (( worker_locked )); then flock -u 8; worker_locked=0; fi
+}
 rollback() {
   local status=$?
   trap - ERR
   set +e
   if (( changed )); then
+    if (( core_link_changed )); then
+      if [[ -n "$core_previous" ]]; then
+        ln -s "$core_previous" /opt/sky-ui/cores/mihomo/.rollback-link
+        mv -Tf /opt/sky-ui/cores/mihomo/.rollback-link /opt/sky-ui/cores/mihomo/current
+      else
+        rm -f -- /opt/sky-ui/cores/mihomo/current
+      fi
+    fi
     systemctl stop sky-ui-edge.service
     systemctl stop sky-ui.service
     if [[ -n "$previous" && -d "$previous" ]]; then
@@ -65,7 +84,7 @@ rollback() {
       install -m 0644 "$previous/deploy/systemd/sky-ui.service" /etc/systemd/system/sky-ui.service
       install -m 0644 "$previous/deploy/systemd/sky-ui-mihomo.service" /etc/systemd/system/sky-ui-mihomo.service
       install -m 0644 "$previous/deploy/systemd/sky-ui-edge.service" /etc/systemd/system/sky-ui-edge.service
-      for unit in sky-ui-maintenance.service sky-ui-maintenance-recovery.service; do
+      for unit in sky-ui-maintenance.service sky-ui-maintenance-recovery.service sky-ui-update.service sky-ui-update-recovery.service; do
         if [[ -f "$previous/deploy/systemd/$unit" ]]; then
           install -m 0644 "$previous/deploy/systemd/$unit" "/etc/systemd/system/$unit"
         else
@@ -84,13 +103,17 @@ rollback() {
       fi
       install -m 0644 "$previous/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
       if [[ -f "$temp/old-Caddyfile" ]]; then install -m 0640 -o root -g sky-ui-edge "$temp/old-Caddyfile" /etc/sky-ui/Caddyfile; fi
+      unlock_worker
       systemctl daemon-reload
-      if (( core_was_running )); then systemctl restart sky-ui-mihomo.service; fi
-      if (( api_was_running )); then systemctl restart sky-ui.service; fi
-      if (( edge_was_running )); then systemctl restart sky-ui-edge.service; fi
+      if (( api_was_running )) && [[ "${SKY_UI_DEFER_ROLLBACK_START:-0}" != 1 ]]; then
+        systemctl reset-failed sky-ui.service
+        systemctl restart sky-ui.service
+      fi
+      if (( edge_was_running )) && [[ "${SKY_UI_DEFER_ROLLBACK_START:-0}" != 1 ]]; then systemctl restart sky-ui-edge.service; fi
       printf 'Previous release restored; configuration and data were retained.\n' >&2
     fi
   fi
+  unlock_worker
   printf 'Sky UI installation failed. Inspect journalctl -u sky-ui.service.\n' >&2
   exit "$status"
 }
@@ -122,10 +145,10 @@ done <"$temp/entries"
 mkdir "$temp/payload"
 tar -xzf "$bundle" -C "$temp/payload" --no-same-owner --no-same-permissions
 payload="$temp/payload"
-for file in VERSION ARCH bin/sky-ui bin/mihomo bin/caddy lib/libsqlite3.so web/index.html web/main.dart.js web/styles.css \
+for file in VERSION ARCH bin/sky-ui bin/caddy lib/libsqlite3.so web/index.html web/main.dart.js web/styles.css \
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
-  deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/maintenance.py deploy/sky-ui deploy/skyui deploy/cli.py compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service LICENSE licenses/mihomo.LICENSE licenses/caddy.LICENSE; do
+  deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/maintenance.py deploy/panel_releases.py deploy/panel_update.py deploy/core_artifacts.py deploy/core_install.py deploy/sky-ui deploy/skyui deploy/cli.py compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
 release_version="$(tr -d '\r\n' <"$payload/VERSION")"
@@ -136,9 +159,8 @@ if [[ "$version" != latest ]]; then [[ "$version" == "v$release_version" ]] || f
 if (( verify_only )); then printf 'Verified Sky UI %s for %s. No host changes made.\n' "$release_version" "$arch"; exit 0; fi
 
 # Native binaries are checked before changing users, services, or configuration.
-chmod 0755 "$payload/bin/sky-ui" "$payload/bin/mihomo" "$payload/bin/caddy"
+chmod 0755 "$payload/bin/sky-ui" "$payload/bin/caddy"
 [[ "$("$payload/bin/sky-ui" --version)" == "Sky UI $release_version" ]] || fail 'The API binary cannot run on this host.'
-"$payload/bin/mihomo" -v >/dev/null
 if [[ ! -f /etc/sky-ui/managed-by-sky-ui ]]; then
   for path in /etc/sky-ui /var/lib/sky-ui /var/lib/sky-ui-edge /var/lib/sky-ui-maintenance /var/lib/sky-ui-certificates /opt/sky-ui /usr/local/bin/sky-ui /usr/local/bin/skyui /etc/systemd/system/sky-ui.service /etc/systemd/system/sky-ui-mihomo.service /etc/systemd/system/sky-ui-edge.service /etc/polkit-1/rules.d/49-sky-ui.rules; do
     [[ ! -e "$path" && ! -L "$path" ]] || fail "Refusing to overwrite an unmanaged path: $path"
@@ -155,6 +177,8 @@ fi
 for command in systemctl getent groupadd useradd install runuser curl python3; do
   command -v "$command" >/dev/null || fail "Missing dependency: $command"
 done
+chmod 0755 "$temp" "$payload" "$payload/bin"
+validation_binary="$(python3 "$payload/deploy/core_install.py" prepare --panel-version "$release_version" --platform "linux-$arch" --output "$temp/core")"
 getent group sky-ui >/dev/null || groupadd --system sky-ui
 getent passwd sky-ui >/dev/null || useradd --system --gid sky-ui --no-create-home --home-dir /var/lib/sky-ui --shell /usr/sbin/nologin sky-ui
 getent passwd sky-ui-core >/dev/null || useradd --system --gid sky-ui --no-create-home --home-dir /var/lib/sky-ui/cores/mihomo --shell /usr/sbin/nologin sky-ui-core
@@ -206,7 +230,7 @@ SKY_UI_PORT=$port
 SKY_UI_WEB_ORIGIN=http://127.0.0.1:$port
 SKY_UI_PUBLIC_DIR=/opt/sky-ui/current/web
 SKY_UI_DATA_DIR=/var/lib/sky-ui
-SKY_UI_CORE_BINARY=/opt/sky-ui/current/bin/mihomo
+SKY_UI_CORE_BINARY=/opt/sky-ui/cores/mihomo/current/mihomo
 SKY_UI_CORE_DIRECTORY=/var/lib/sky-ui/cores/mihomo
 SKY_UI_CORE_CONFIG=/var/lib/sky-ui/cores/mihomo/config.yaml
 SKY_UI_CONTROLLER_URL=http://127.0.0.1:19090
@@ -227,22 +251,20 @@ fi
 if [[ ! -f /etc/sky-ui/owner.seed && -f /etc/sky-ui/admin.hash ]]; then
   install -m 0600 -o sky-ui -g sky-ui /etc/sky-ui/admin.hash /etc/sky-ui/owner.seed
 fi
-chmod 0755 "$temp" "$payload" "$payload/bin"
-validation_binary="$payload/bin/mihomo"
-if [[ -L /opt/sky-ui/cores/mihomo/current ]]; then validation_binary=/opt/sky-ui/cores/mihomo/current/mihomo; fi
-runuser -u sky-ui-core -g sky-ui -- env SAFE_PATHS=/var/lib/sky-ui-certificates "$validation_binary" -t -d /var/lib/sky-ui/cores/mihomo -f /var/lib/sky-ui/cores/mihomo/config.yaml
+if [[ "$validation_binary" != - ]]; then
+  python3 "$payload/deploy/core_install.py" validate --binary "$validation_binary" --directory /var/lib/sky-ui/cores/mihomo --configuration /var/lib/sky-ui/cores/mihomo/config.yaml
+fi
 release="/opt/sky-ui/releases/$release_version-$arch"
 if [[ -e "$release" ]]; then
   [[ -f "$release/BUNDLE_SHA256" && "$(cat "$release/BUNDLE_SHA256")" == "$actual" ]] || fail 'This version already exists with different contents. Use a new release version.'
 else
   find "$payload" -type d -exec chmod 0755 {} +
   find "$payload" -type f -exec chmod 0644 {} +
-  chmod 0755 "$payload/bin/sky-ui" "$payload/bin/mihomo" "$payload/bin/caddy"
+  chmod 0755 "$payload/bin/sky-ui" "$payload/bin/caddy"
   printf '%s\n' "$actual" >"$payload/BUNDLE_SHA256"
   mv "$payload" "$release"
 fi
 if [[ -L /opt/sky-ui/current ]]; then previous="$(readlink -f /opt/sky-ui/current)"; fi
-if systemctl is-active --quiet sky-ui-mihomo.service; then core_was_running=1; fi
 if systemctl is-active --quiet sky-ui.service; then api_was_running=1; fi
 if systemctl is-active --quiet sky-ui-edge.service; then edge_was_running=1; fi
 if [[ -f /etc/sky-ui/access.conf ]]; then
@@ -254,11 +276,14 @@ if [[ -f /etc/sky-ui/access.conf ]]; then
   "$release/bin/caddy" fmt --overwrite "$temp/new-Caddyfile"
   "$release/bin/caddy" validate --config "$temp/new-Caddyfile" --adapter caddyfile
 fi
+exec 8>>/var/lib/sky-ui-maintenance/worker.lock
+flock -n 8 || fail 'Core maintenance is in progress. Retry installation when it finishes.'
+worker_locked=1
 changed=1
 cp /etc/sky-ui/server.env "$temp/old-server.env"
-if [[ ! -e /opt/sky-ui/cores/mihomo/current ]]; then
-  ln -s "$release/bin" /opt/sky-ui/cores/mihomo/current
-fi
+if [[ -L /opt/sky-ui/cores/mihomo/current ]]; then core_previous="$(readlink -f /opt/sky-ui/cores/mihomo/current)"; fi
+if [[ -d "$temp/core" ]]; then core_link_changed=1; fi
+if [[ "$validation_binary" != - ]]; then python3 "$release/deploy/core_install.py" activate --prepared "$temp/core"; fi
 sed -i 's#^SKY_UI_CORE_BINARY=.*#SKY_UI_CORE_BINARY=/opt/sky-ui/cores/mihomo/current/mihomo#' /etc/sky-ui/server.env
 if (( edge_was_running )); then systemctl stop sky-ui-edge.service; fi
 if (( api_was_running )); then systemctl stop sky-ui.service; fi
@@ -269,6 +294,8 @@ install -m 0644 "$release/deploy/systemd/sky-ui-certificates.service" /etc/syste
 install -m 0644 "$release/deploy/systemd/sky-ui-certificates.timer" /etc/systemd/system/sky-ui-certificates.timer
 install -m 0644 "$release/deploy/systemd/sky-ui-maintenance.service" /etc/systemd/system/sky-ui-maintenance.service
 install -m 0644 "$release/deploy/systemd/sky-ui-maintenance-recovery.service" /etc/systemd/system/sky-ui-maintenance-recovery.service
+install -m 0644 "$release/deploy/systemd/sky-ui-update.service" /etc/systemd/system/sky-ui-update.service
+install -m 0644 "$release/deploy/systemd/sky-ui-update-recovery.service" /etc/systemd/system/sky-ui-update-recovery.service
 install -d -m 0755 /usr/local/bin
 install -m 0755 "$release/deploy/sky-ui" /usr/local/bin/sky-ui
 install -m 0755 "$release/deploy/skyui" /usr/local/bin/skyui
@@ -276,10 +303,11 @@ install -d -m 0755 /etc/polkit-1/rules.d
 install -m 0644 "$release/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
 ln -s "$release" /opt/sky-ui/.next-link
 mv -Tf /opt/sky-ui/.next-link /opt/sky-ui/current
+unlock_worker
 systemctl daemon-reload
 systemctl enable sky-ui-maintenance-recovery.service
 # The core is not boot-enabled: the API restores its persisted desired state.
-if (( core_was_running )); then systemctl restart sky-ui-mihomo.service; fi
+systemctl reset-failed sky-ui.service
 systemctl enable --now sky-ui.service
 healthy=0
 for attempt in $(seq 1 20); do
@@ -300,8 +328,8 @@ changed=0
 printf 'Sky UI %s installed: http://127.0.0.1:%s\n' "$release_version" "$port"
 if [[ ! -f /etc/sky-ui/access.conf ]]; then printf 'Configure public HTTPS and owner access with sudo skyui setup.\n'; fi
 printf 'The core starts only after a panel action or restoration of a previously saved running state.\n'
-flock -u 9
-if [[ ! -f /etc/sky-ui/access.conf ]] && (: </dev/tty) 2>/dev/null; then
+if [[ -z "${SKY_UI_TRANSACTION_LOCK_FD:-}" ]]; then flock -u 9; fi
+if [[ -z "${SKY_UI_TRANSACTION_LOCK_FD:-}" && ! -f /etc/sky-ui/access.conf ]] && (: </dev/tty) 2>/dev/null; then
   bash /opt/sky-ui/current/deploy/setup.sh
 else
   printf 'Configure owner access and IP/domain: sudo skyui setup\n'

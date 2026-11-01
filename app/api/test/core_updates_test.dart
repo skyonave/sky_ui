@@ -48,7 +48,10 @@ void main() {
       );
       expect((await updates.get('mihomo', 'v1.19.33')).versions, ['v1.19.34']);
       expect((await updates.get('mihomo', 'v1.19.34')).available, false);
-      expect((await updates.get('mihomo', null)).available, false);
+      expect((await updates.get('mihomo', null)).versions, [
+        'v1.19.34',
+        'v1.19.33',
+      ]);
     },
   );
   test('bad identities, hashes and duplicate versions fail closed', () async {

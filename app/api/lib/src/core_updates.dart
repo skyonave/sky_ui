@@ -138,7 +138,7 @@ class CoreUpdates {
       source: '$base/$core.json',
       installed: installed,
       versions: current == null
-          ? []
+          ? approvedVersions
           : approvedVersions
                 .where((tag) => compare(version(tag)!, current) > 0)
                 .toList(),

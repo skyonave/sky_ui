@@ -17,11 +17,14 @@ import sqlite3
 import stat
 import subprocess
 import sys
+from types import SimpleNamespace
 import tarfile
 import tempfile
 import time
 import urllib.parse
 import urllib.request
+import core_artifacts
+import core_install
 
 STATE = Path('/var/lib/sky-ui-maintenance')
 DATA = Path('/var/lib/sky-ui')
@@ -71,27 +74,33 @@ def read_regular(path, limit=MAX_ARCHIVE):
 
 def atomic(path, data, mode=0o640, uid=0, gid=None):
     path = Path(path)
-    fd, temporary = tempfile.mkstemp(prefix='.sky-', dir=path.parent)
+    require(path.is_absolute() and '..' not in path.parts, 'unsafe_file')
+    parent = os.open('/', os.O_RDONLY | os.O_DIRECTORY)
+    temporary = '.sky-' + os.urandom(16).hex()
     try:
+        for part in path.parts[1:-1]:
+            following = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+            os.close(parent)
+            parent = following
+        fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
         with os.fdopen(fd, 'wb') as stream:
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
             os.fchmod(stream.fileno(), mode)
             os.fchown(stream.fileno(), uid, os.getegid() if gid is None else gid)
-        os.replace(temporary, path)
-        directory = os.open(path.parent, os.O_DIRECTORY)
-        try:
-            os.fsync(directory)
-        finally:
-            os.close(directory)
+        os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+        os.fsync(parent)
     finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+        try:
+            os.unlink(temporary, dir_fd=parent)
+        except FileNotFoundError:
+            pass
+        os.close(parent)
 
 
-def run(args, timeout=30):
-    result = subprocess.run(args, capture_output=True, timeout=timeout, env={
+def run(args, timeout=30, pass_fds=()):
+    result = subprocess.run(args, capture_output=True, timeout=timeout, pass_fds=pass_fds, env={
         'PATH': '/usr/sbin:/usr/bin:/sbin:/bin', 'HOME': '/root',
         'SAFE_PATHS': '/var/lib/sky-ui-certificates'})
     require(result.returncode == 0, 'command_failed')
@@ -152,7 +161,7 @@ def pack_backup(files, metadata):
     return output.getvalue(), manifest
 
 
-def unpack_backup(data):
+def unpack_backup(data, require_complete=True):
     require(len(data) <= MAX_ARCHIVE, 'backup_too_large')
     files = {}
     total = 0
@@ -169,13 +178,13 @@ def unpack_backup(data):
     for name, payload in files.items():
         expected = manifest['files'][name]
         require(expected == {'sha256': digest(payload), 'size': len(payload)}, 'backup_checksum_failed')
-    require({'data/panel.sqlite', 'data/owner.sqlite', 'etc/server.env', 'etc/gateway.secret',
+    require(not require_complete or {'data/panel.sqlite', 'data/owner.sqlite', 'etc/server.env', 'etc/gateway.secret',
              'etc/controller.secret', 'etc/Caddyfile', 'data/cores/mihomo/config.yaml'} <= files.keys(),
             'backup_incomplete')
     return files, manifest
 
 
-def snapshot_files():
+def snapshot_files(preserve_sessions=False):
     files = {}
     with tempfile.TemporaryDirectory(dir=STATE / 'work') as temporary:
         for name in ['panel', 'owner']:
@@ -185,7 +194,7 @@ def snapshot_files():
             with contextlib.closing(sqlite3.connect(source.as_uri() + '?mode=ro', uri=True)) as db:
                 with contextlib.closing(sqlite3.connect(target)) as copy:
                     db.backup(copy)
-                    if name == 'owner':
+                    if name == 'owner' and not preserve_sessions:
                         copy.execute('DELETE FROM sessions')
                         copy.commit()
                     require(copy.execute('PRAGMA integrity_check').fetchone()[0] == 'ok', 'database_invalid')
@@ -343,63 +352,22 @@ def api_ready(env):
 
 
 def download(url, limit):
-    require(urllib.parse.urlparse(url).scheme == 'https', 'download_invalid')
-    request = urllib.request.Request(url, headers={'User-Agent': 'Sky-UI', 'Accept': 'application/vnd.github+json'})
-    class OfficialRedirect(urllib.request.HTTPRedirectHandler):
-        def redirect_request(self, request, fp, code, message, headers, target):
-            parsed = urllib.parse.urlparse(target)
-            require(parsed.scheme == 'https' and parsed.hostname in ['github.com',
-                    'release-assets.githubusercontent.com', 'objects.githubusercontent.com'], 'download_invalid')
-            return super().redirect_request(request, fp, code, message, headers, target)
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), OfficialRedirect())
-    with opener.open(request, timeout=30) as response:
-        parsed = urllib.parse.urlparse(response.url)
-        require(parsed.scheme == 'https' and (parsed.hostname in ['raw.githubusercontent.com', 'github.com',
-                'release-assets.githubusercontent.com', 'objects.githubusercontent.com']), 'download_invalid')
-        data = response.read(limit + 1)
-        require(len(data) <= limit, 'download_too_large')
-        return data
+    try:
+        return core_artifacts.download(url, limit)
+    except core_artifacts.ArtifactError as error:
+        raise MaintenanceError(str(error))
 
 
-CATALOG_BASE = 'https://raw.githubusercontent.com/skyonave/sky_ui/main/compatibility/cores'
-CORE_REPOSITORIES = {'mihomo': 'MetaCubeX/mihomo', 'sing-box': 'SagerNet/sing-box', 'xray': 'XTLS/Xray-core'}
+CATALOG_BASE = core_artifacts.CATALOG_BASE
+CORE_REPOSITORIES = core_artifacts.REPOSITORIES
 
 
 def verified_release(core, selected=None):
-    require(core in CORE_REPOSITORIES and (selected is None or TAG.fullmatch(selected)), 'core_release_unverified')
+    panel = read_regular(CURRENT.resolve(strict=True) / 'VERSION', 128).decode().strip()
     try:
-        catalog = json.loads(download(CATALOG_BASE + '/' + core + '.json', 262144))
-        require(catalog['schemaVersion'] == 1 and catalog['coreId'] == core and
-                isinstance(catalog['releases'], list) and len(catalog['releases']) <= 256, 'catalog_unavailable')
-        panel = read_regular(CURRENT.resolve(strict=True) / 'VERSION', 128).decode().strip()
-        platform_key = {'x86_64': 'linux-amd64', 'aarch64': 'linux-arm64'}.get(platform.machine())
-        approved = []
-        seen = set()
-        for release in catalog['releases']:
-            if release.get('verified') is not True:
-                continue
-            version = release['version']
-            require(TAG.fullmatch(version) and version not in seen, 'catalog_unavailable')
-            seen.add(version)
-            require(isinstance(release['panelVersions'], list), 'catalog_unavailable')
-            if panel not in release['panelVersions']:
-                continue
-            asset = release['platforms'].get(platform_key)
-            if not isinstance(asset, dict) or asset.get('verified') is not True:
-                continue
-            require(re.fullmatch(r'[a-zA-Z0-9._-]+', asset['asset']) and
-                    re.fullmatch(r'[a-f0-9]{64}', asset['sha256']), 'catalog_unavailable')
-            approved.append((version, asset))
-        approved.sort(key=lambda item: tuple(map(int, item[0][1:].split('.'))), reverse=True)
-        chosen = next((item for item in approved if selected is None or item[0] == selected), None)
-        require(chosen is not None, 'core_release_unverified')
-        tag, asset = chosen
-        url = f"https://github.com/{CORE_REPOSITORIES[core]}/releases/download/{tag}/{asset['asset']}"
-        return tag, url, asset['sha256']
-    except MaintenanceError:
-        raise
-    except Exception:
-        raise MaintenanceError('catalog_unavailable')
+        return core_artifacts.verified_release(core, panel, core_artifacts.target_platform(), selected, fetch=download)
+    except core_artifacts.ArtifactError as error:
+        raise MaintenanceError(str(error))
 
 
 def latest_mihomo(selected=None):
@@ -412,20 +380,98 @@ def switch_link(link, destination):
     os.replace(temporary, link)
 
 
+def remove_core(core, gid, uid):
+    require(core == 'mihomo', 'core_unsupported')
+    root = CORES / core
+    core_install.trusted(root, directory=True)
+    # Only root-owned independent slots are disposable. Historical panel bundles
+    # remain immutable; unlinking current removes their installed association.
+    slots = []
+    for path in root.iterdir():
+        if re.fullmatch(r'(?:v[0-9]+\.[0-9]+\.[0-9]+|imported)-[a-f0-9]{16}', path.name):
+            core_install.trusted(path, directory=True)
+            for entry in path.iterdir():
+                require(entry.name in ('mihomo', 'LICENSE', 'artifact.json'), 'unsafe_file')
+                core_install.trusted(entry)
+            slots.append(path)
+    core_install.existing_core(root, Path('/opt/sky-ui/releases'))
+    for name in ('removed.json', 'previous.json'):
+        if (root / name).exists():
+            core_install.trusted(root / name)
+    instance = DATA / 'instances/primary.json'
+    value = json.loads(read_regular(instance, 65536)) if instance.exists() else {
+        'instanceId': 'primary', 'coreId': core}
+    require(value.get('instanceId') == 'primary' and value.get('coreId') == core, 'unsafe_file')
+    intent = STATE / 'core-remove-intent.json'
+    atomic(intent, json.dumps({'core': core}).encode(), 0o600)
+    run(['systemctl', 'stop', 'sky-ui-mihomo.service'])
+    require(not active('sky-ui-mihomo.service'), 'service_stop_timeout')
+    value['desiredState'] = 'stopped'
+    # Persist API-owned state without granting root writes through API-owned paths.
+    script = "import json,os,pathlib,sys,tempfile; p=pathlib.Path(sys.argv[1]); p.parent.mkdir(mode=0o700,parents=True,exist_ok=True); fd,t=tempfile.mkstemp(dir=p.parent); f=os.fdopen(fd,'w'); f.write(sys.argv[2]); f.flush(); os.fsync(f.fileno()); f.close(); os.replace(t,p)"
+    run(['runuser', '-u', 'sky-ui', '--', '/usr/bin/python3', '-I', '-c', script,
+         str(instance), json.dumps(value)])
+    require(json.loads(read_regular(instance, 65536)).get('desiredState') == 'stopped', 'unsafe_file')
+    atomic(root / 'removed.json', json.dumps({'coreId': core, 'removed': True}).encode(), 0o644)
+    (root / 'current').unlink(missing_ok=True)
+    for slot in slots:
+        for entry in slot.iterdir():
+            entry.unlink()
+        slot.rmdir()
+    (root / 'previous.json').unlink(missing_ok=True)
+    intent.unlink()
+    return {'core': core, 'installed': False}
+
+
+def install_core(core, tag, gid):
+    require(core == 'mihomo', 'core_unsupported')
+    root = CORES / core
+    core_install.trusted(root, directory=True)
+    require(core_install.existing_core(root) is None, 'core_already_installed')
+    require(not active('sky-ui-mihomo.service'), 'maintenance_busy')
+    panel_version = read_regular(CURRENT.resolve() / 'VERSION', 128).decode().strip()
+    try:
+        with tempfile.TemporaryDirectory(prefix='.install-', dir=root) as temporary:
+            os.chmod(temporary, 0o755)
+            prepared = Path(temporary) / 'payload'
+            selected, url, sha = core_artifacts.verified_release(core, panel_version,
+                core_artifacts.target_platform(), tag, fetch=download)
+            files = core_artifacts.artifact_files(core, selected, url, sha,
+                core_artifacts.target_platform(), fetch=download)
+            prepared.mkdir(mode=0o755)
+            os.chmod(prepared, 0o755)
+            for name, data in files.items():
+                atomic(prepared / name, data, 0o755 if name == core else 0o644)
+            core_install.validate(prepared / core, DATA / 'cores/mihomo/config.yaml', DATA / 'cores/mihomo')
+            marker = root / 'removed.json'
+            if marker.exists():
+                core_install.trusted(marker)
+                marker.unlink()
+            try:
+                core_install.activate(prepared, root=root)
+            except Exception:
+                atomic(marker, json.dumps({'coreId': core, 'removed': True}).encode(), 0o644)
+                raise
+    except core_artifacts.ArtifactError as error:
+        raise MaintenanceError(str(error))
+    return {'core': core, 'version': tag, 'installed': True}
+
+
 def update_core(core, tag, gid):
     require(core == 'mihomo', 'core_unsupported')
     latest, url, expected = latest_mihomo(tag)
     require(tag == latest, 'release_changed')
-    compressed = download(url, 40 * 1024 * 1024)
-    require(digest(compressed) == expected, 'release_checksum_failed')
-    with gzip.GzipFile(fileobj=io.BytesIO(compressed)) as archive:
-        binary = archive.read(100 * 1024 * 1024 + 1)
-    require(binary.startswith(b'\x7fELF') and len(binary) <= 100 * 1024 * 1024, 'binary_invalid')
+    try:
+        files = core_artifacts.artifact_files(core, tag, url, expected, core_artifacts.target_platform(), fetch=download)
+    except core_artifacts.ArtifactError as error:
+        raise MaintenanceError(str(error))
+    binary = files['mihomo']
     root = CORES / core
     slot = root / (tag + '-' + digest(binary)[:16])
     slot.mkdir(mode=0o755, exist_ok=True)
     os.chmod(slot, 0o755)
-    atomic(slot / 'mihomo', binary, 0o755, 0, 0)
+    for name, data in files.items():
+        atomic(slot / name, data, 0o755 if name == 'mihomo' else 0o644, 0, 0)
     try:
         found = run(['runuser', '-u', 'sky-ui-core', '--', str(slot / 'mihomo'), '-v']).decode()
     except MaintenanceError:
@@ -465,18 +511,30 @@ def consume_request(path, owner_uid, remove=True):
     require(isinstance(value, dict) and ID.fullmatch(value.get('id', '')), 'request_invalid')
     action = value.get('action')
     keys = {'backup': {'id', 'action'}, 'restore': {'id', 'action', 'backupId'},
-            'update': {'id', 'action', 'core', 'tag'}}
+            'update': {'id', 'action', 'core', 'tag'},
+            'install': {'id', 'action', 'core', 'tag'}, 'remove': {'id', 'action', 'core'}, 'panel-update': {'id', 'action', 'tag'}}
     require(action in keys and set(value) == keys[action], 'request_invalid')
     if action == 'restore':
         require(ID.fullmatch(value['backupId']), 'request_invalid')
-    if action == 'update':
+    if action in ('update', 'install'):
         require(value['core'] == 'mihomo' and TAG.fullmatch(value['tag']), 'request_invalid')
+    if action == 'panel-update':
+        from panel_releases import version
+        require(isinstance(value.get('tag'), str) and value['tag'].startswith('v') and version(value['tag']), 'request_invalid')
+    if action == 'remove':
+        require(value['core'] == 'mihomo', 'request_invalid')
     if remove:
         path.unlink()
     return value
 
 
 def recover(gid):
+    from panel_update import recover as recover_panel
+    recover_panel(SimpleNamespace(**globals()), gid)
+    removal = STATE / 'core-remove-intent.json'
+    if removal.exists():
+        require(json.loads(read_regular(removal, 4096)) == {'core': 'mihomo'}, 'request_invalid')
+        remove_core('mihomo', gid, pwd.getpwnam('sky-ui').pw_uid)
     restore = STATE / 'restore-intent.json'
     update = STATE / 'update-intent.json'
     if restore.exists():
@@ -511,9 +569,11 @@ def main():
     if sys.argv[1:] == ['--recover']:
         recover(owner.pw_gid)
         return
-    require(not (STATE / 'restore-intent.json').exists() and not (STATE / 'update-intent.json').exists(),
+    require(not (STATE / 'restore-intent.json').exists() and not (STATE / 'update-intent.json').exists()
+            and not (STATE / 'core-remove-intent.json').exists() and not (STATE / 'panel-update-intent.json').exists(),
             'maintenance_recovery_required')
     job = consume_request(STATE / 'inbox/request.json', owner.pw_uid, remove=False)
+    require(job['action'] != 'panel-update', 'request_invalid')
     result = {key: job[key] for key in ['id', 'action']}
     result['status'] = 'running'
     output = STATE / 'result.json'
@@ -530,13 +590,18 @@ def main():
             result['data'] = create_backup(owner.pw_gid)
         elif job['action'] == 'restore':
             result['data'] = restore_backup(job['backupId'], owner.pw_gid)
+        elif job['action'] == 'remove':
+            result['data'] = remove_core(job['core'], owner.pw_gid, owner.pw_uid)
+        elif job['action'] == 'install':
+            result['data'] = install_core(job['core'], job['tag'], owner.pw_gid)
         else:
             result['data'] = update_core(job['core'], job['tag'], owner.pw_gid)
         result['status'] = 'completed'
     except Exception as error:
         result.update(status='failed', error=str(error) if isinstance(error, MaintenanceError) else 'maintenance_failed')
     finally:
-        if api_running and not (STATE / 'restore-intent.json').exists() and not (STATE / 'update-intent.json').exists():
+        if api_running and not any((STATE / name).exists() for name in
+                ('restore-intent.json', 'update-intent.json', 'core-remove-intent.json')):
             try:
                 run(['systemctl', 'reset-failed', 'sky-ui.service'])
                 run(['systemctl', 'start', 'sky-ui.service'])
@@ -547,30 +612,49 @@ def main():
 
 
 def cli(arguments, owner):
-    require(arguments and arguments[0] in ['backup', 'backups', 'restore', 'update-core'], 'request_invalid')
+    require(arguments and arguments[0] in ['backup', 'backups', 'restore', 'update-core', 'install-core', 'remove-core', 'update'], 'request_invalid')
     if arguments == ['backups']:
         for path in sorted((STATE / 'backups').glob('*.json')):
             value = json.loads(read_regular(path, 4096))
             print(value['id'], value['created'], value['version'], value['size'])
         return
-    if arguments == ['backup']:
+    if arguments == ['update']:
+        import panel_releases
+        current = read_regular(CURRENT.resolve() / 'VERSION', 128).decode().strip()
+        release = panel_releases.candidate(current, core_artifacts.target_platform())
+        if release is None:
+            print('Обновлений Sky UI нет.')
+            return
+        print('Sky UI:', current, '→', release['tag'])
+        require(input('Введите UPDATE для обновления: ') == 'UPDATE', 'cancelled')
+        job = {'action': 'panel-update', 'tag': release['tag']}
+    elif arguments == ['backup']:
         job = {'action': 'backup'}
     elif len(arguments) == 2 and arguments[0] == 'restore':
         require(ID.fullmatch(arguments[1]), 'request_invalid')
         print('Restore replaces settings, access and owner data. Services restart and sessions are revoked.')
         require(input('Type RESTORE to continue: ') == 'RESTORE', 'cancelled')
         job = {'action': 'restore', 'backupId': arguments[1]}
-    elif arguments == ['update-core']:
+    elif arguments == ['remove-core']:
+        print('Ядро будет остановлено и удалено. Подключения и ключи сохранятся, но работать не будут.')
+        require(input('Введите REMOVE для удаления: ') == 'REMOVE', 'cancelled')
+        job = {'action': 'remove', 'core': 'mihomo'}
+    elif arguments in (['update-core'], ['install-core']):
         tag, _, _ = latest_mihomo()
-        print('Install official mihomo', tag, 'and restart the running core after validation.')
-        require(input('Type UPDATE to continue: ') == 'UPDATE', 'cancelled')
-        job = {'action': 'update', 'core': 'mihomo', 'tag': tag}
+        installing = arguments == ['install-core']
+        confirmation = 'INSTALL' if installing else 'UPDATE'
+        print('Install verified mihomo', tag, '(stopped)' if installing else 'and restart the running core after validation.')
+        require(input('Type '+confirmation+' to continue: ') == confirmation, 'cancelled')
+        job = {'action': 'install' if installing else 'update', 'core': 'mihomo', 'tag': tag}
     else:
         raise MaintenanceError('request_invalid')
-    require(not (STATE / 'inbox/request.json').exists() and not active('sky-ui-maintenance.service'), 'maintenance_busy')
+    previous_job = json.loads(read_regular(STATE / 'result.json', 4096)) if (STATE / 'result.json').exists() else {}
+    require(previous_job.get('status') not in ('running', 'queued'), 'maintenance_busy')
+    require(not (STATE / 'inbox/request.json').exists() and not active('sky-ui-maintenance.service') and not (STATE / 'panel-update-intent.json').exists(), 'maintenance_busy')
     job['id'] = os.urandom(16).hex()
     atomic(STATE / 'inbox/request.json', json.dumps(job).encode(), 0o600, owner.pw_uid, owner.pw_gid)
-    run(['systemctl', 'start', '--no-block', 'sky-ui-maintenance.service'])
+    service = 'sky-ui-update.service' if job['action'] == 'panel-update' else 'sky-ui-maintenance.service'
+    run(['systemctl', 'start', '--no-block', service])
     print('Job:', job['id'])
     started = time.monotonic()
     deadline = started + 600
@@ -585,7 +669,7 @@ def cli(arguments, owner):
             pass
         if time.monotonic() - started > 5:
             state = run(['systemctl', 'show', '-p', 'ActiveState', '--value',
-                         'sky-ui-maintenance.service']).decode().strip()
+                         service]).decode().strip()
             if state == 'failed':
                 pending = STATE / 'inbox/request.json'
                 if pending.exists() and json.loads(read_regular(pending, 4096)).get('id') == job['id']:

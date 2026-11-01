@@ -10,6 +10,8 @@ import sqlite3
 import tarfile
 import tempfile
 import unittest
+import sys
+sys.path.insert(0,str(Path(__file__).resolve().parents[1] / "deploy"))
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -28,10 +30,15 @@ class MaintenanceTests(unittest.TestCase):
         for path in [m.STATE / 'work', m.STATE / 'inbox', m.STATE / 'backups', m.DATA / 'instances',
                      m.DATA / 'cores/mihomo', m.ETC, m.EDGE / 'data', m.CORES / 'mihomo', m.CURRENT]:
             path.mkdir(parents=True, exist_ok=True)
+        (m.CURRENT / 'VERSION').write_text('fixture-panel')
 
     def tearDown(self):
         self.overrides.stop()
         self.temporary.cleanup()
+
+    def elf(self):
+        header=bytearray(64);header[:6]=b'\x7fELF\x02\x01';header[18:20]=(62).to_bytes(2,'little')
+        return bytes(header)+b'fixture'
 
     def fixtures(self):
         files = {name: b'fixture' for name in ['data/panel.sqlite', 'data/owner.sqlite', 'etc/server.env',
@@ -157,19 +164,64 @@ class MaintenanceTests(unittest.TestCase):
                 m.cli(['backup'],owner)
         self.assertFalse((m.STATE / 'inbox/request.json').exists())
 
+    def removal_fixture(self):
+        root=m.CORES/'mihomo';slot=root/('v1.2.3-'+'a'*16);slot.mkdir()
+        for name in ['mihomo','LICENSE','artifact.json']:(slot/name).write_text('fixture')
+        (root/'current').symlink_to(slot)
+        (m.DATA/'instances/primary.json').write_text(json.dumps({'instanceId':'primary','coreId':'mihomo','desiredState':'running'}))
+        (m.DATA/'cores/mihomo/config.yaml').write_text('preserve-native-config')
+        return root,slot
+
+    def removal_run(self,args):
+        if args[0]=='runuser':
+            path=Path(args[-2]);self.assertTrue(path.is_relative_to(self.root));path.write_text(args[-1])
+        return b''
+
+    def test_remove_stops_core_and_preserves_configuration(self):
+        root,slot=self.removal_fixture()
+        with patch.object(m,'run',side_effect=self.removal_run) as run,patch.object(m,'active',return_value=False):
+            m.remove_core('mihomo',os.getgid(),os.getuid())
+        self.assertEqual(run.call_args_list[0].args[0],['systemctl','stop','sky-ui-mihomo.service'])
+        self.assertFalse(slot.exists());self.assertFalse((root/'current').exists())
+        self.assertTrue((root/'removed.json').is_file())
+        self.assertEqual((m.DATA/'cores/mihomo/config.yaml').read_text(),'preserve-native-config')
+        self.assertEqual(json.loads((m.DATA/'instances/primary.json').read_text())['desiredState'],'stopped')
+        self.assertFalse((m.STATE/'core-remove-intent.json').exists())
+
+    def test_remove_refuses_foreign_slot_file_before_stopping_any_service(self):
+        root,slot=self.removal_fixture()
+        target=self.root/'unrelated';target.write_text('preserve')
+        (slot/'LICENSE').unlink();(slot/'LICENSE').symlink_to(target)
+        with patch.object(m,'run') as run:
+            with self.assertRaises(Exception):m.remove_core('mihomo',os.getgid(),os.getuid())
+            run.assert_not_called()
+        self.assertEqual(target.read_text(),'preserve');self.assertTrue((root/'current').exists())
+
+    def test_failed_stop_keeps_binary_and_durable_removal_intent(self):
+        root,slot=self.removal_fixture()
+        with patch.object(m,'run',return_value=b''),patch.object(m,'active',return_value=True):
+            with self.assertRaisesRegex(m.MaintenanceError,'service_stop_timeout'):
+                m.remove_core('mihomo',os.getgid(),os.getuid())
+        self.assertTrue((slot/'mihomo').exists());self.assertTrue((root/'current').exists())
+        self.assertTrue((m.STATE/'core-remove-intent.json').exists())
+        with patch.object(m,'run',side_effect=self.removal_run),patch.object(m,'active',return_value=False), \
+             patch.object(m.pwd,'getpwnam',return_value=SimpleNamespace(pw_uid=os.getuid())):
+            m.recover(os.getgid())
+        self.assertFalse(slot.exists());self.assertFalse((m.STATE/'core-remove-intent.json').exists())
+
     def test_update_rolls_back_link_on_readiness_failure(self):
         root = m.CORES / 'mihomo'
         previous = root / 'old'
         previous.mkdir()
         (root / 'current').symlink_to(previous)
-        payload = gzip.compress(b'\x7fELFfixture')
+        payload = gzip.compress(self.elf())
         calls = []
         def ready(*args, **kwargs):
             calls.append(kwargs.get('version'))
             if 'version' in kwargs:
                 raise m.MaintenanceError('controller_not_ready')
         with patch.object(m, 'latest_mihomo', return_value=('v1.2.3', 'fixed', m.digest(payload))), \
-                patch.object(m, 'download', return_value=payload), patch.object(m, 'candidate_validate'), \
+                patch.object(m, 'download', side_effect=lambda url, limit: payload if url == 'fixed' else b'Fixture license'), patch.object(m, 'candidate_validate'), \
                 patch.object(m, 'run', return_value=b'mihomo v1.2.3'), patch.object(m, 'active', return_value=True), \
                 patch.object(m, 'ready', side_effect=ready), patch.object(m, 'environment', return_value={}):
             with self.assertRaisesRegex(m.MaintenanceError, 'update_rolled_back'):
@@ -183,12 +235,12 @@ class MaintenanceTests(unittest.TestCase):
         old = root / 'old'
         old.mkdir()
         (root / 'current').symlink_to(old)
-        binary = b'\x7fELFfixture'
+        binary = self.elf()
         payload = gzip.compress(binary)
         previous_mask = os.umask(0o077)
         try:
             with patch.object(m, 'latest_mihomo', return_value=('v1.2.3', 'fixed', m.digest(payload))), \
-                    patch.object(m, 'download', return_value=payload), patch.object(m, 'candidate_validate'), \
+                    patch.object(m, 'download', side_effect=lambda url, limit: payload if url == 'fixed' else b'Fixture license'), patch.object(m, 'candidate_validate'), \
                     patch.object(m, 'run', return_value=b'mihomo v1.2.3'), patch.object(m, 'active', return_value=False):
                 m.update_core('mihomo', 'v1.2.3', os.getgid())
             self.assertEqual((root / ('v1.2.3-' + m.digest(binary)[:16])).stat().st_mode & 0o777, 0o755)

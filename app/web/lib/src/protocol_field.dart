@@ -165,16 +165,28 @@ class ProtocolFieldView extends StatelessComponent {
             disabled: busy,
             onChange: (v) => onChanged(v.first, true),
           )
+        else if (field.kind == 'integer' && !field.secret)
+          input<num>(
+            id: id,
+            value: value,
+            disabled: busy,
+            type: InputType.number,
+            onInput: (v) => onChanged(v.isFinite ? '$v' : '', false),
+            attributes: {
+              if (field.minimum != null) 'min': '${field.minimum}',
+              if (field.maximum != null) 'max': '${field.maximum}',
+              if (field.required) 'aria-required': 'true',
+              if (error != null) 'aria-invalid': 'true',
+              if (field.derived(values)) 'readonly': '',
+              'autocomplete': 'off',
+            },
+          )
         else if (field.kind != 'choice')
           input<String>(
             id: id,
             value: value,
             disabled: busy,
-            type: field.secret
-                ? InputType.password
-                : field.kind == 'integer'
-                ? InputType.number
-                : InputType.text,
+            type: field.secret ? InputType.password : InputType.text,
             onInput: (v) => onChanged(v, false),
             attributes: {
               'maxlength': '${field.maxLength}',

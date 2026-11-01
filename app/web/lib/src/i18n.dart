@@ -16,6 +16,8 @@ class AppStrings {
 
   static const _catalogs = {
     'ru': {
+      'share.clashSubscription': 'Подписка · Clash Verge / mihomo',
+      'share.v2raySubscription': 'Подписка · V2Box / V2Ray',
       'core.feedback.validate':
           'Конфигурация проверена ядром. Ошибок не найдено. Подключения не проверялись, служба не перезапускалась.',
       'core.feedback.start': 'Ядро запущено. Контроллер отвечает.',
@@ -385,6 +387,24 @@ class AppStrings {
       'status.unassigned': 'Не выдано',
       'protocol.unavailable':
           'Этот протокол ещё не подключён к серверной части. Сейчас работает VLESS · TCP · REALITY на mihomo.',
+      'share.subscriptionUrl': 'Ссылка на подписку',
+      'panelUpdate.title': 'Обновление Sky UI',
+      'panelUpdate.update': 'Обновить',
+      'panelUpdate.available': 'Доступна v{version}',
+      'panelUpdate.none': 'Обновлений нет',
+      'panelUpdate.checking': 'Проверяем обновления…',
+      'panelUpdate.checkFailed': 'Не удалось проверить обновления',
+      'panelUpdate.running': 'Обновляем Sky UI…',
+      'panelUpdate.hint':
+          'Панель кратко перезапустится. Настройки, подключения и доступ администратора сохранятся. Ядро продолжит работать. При ошибке запуска будет восстановлена предыдущая версия.',
+      'runtime.error.release_feed_unavailable':
+          'Не удалось получить релизы Sky UI. Повторите позже.',
+      'runtime.error.panel_update_unavailable':
+          'Этот релиз недоступен для обновления. Проверьте обновления ещё раз.',
+      'runtime.error.panel_update_rolled_back':
+          'Обновление не удалось. Предыдущая версия восстановлена.',
+      'runtime.error.panel_update_failed':
+          'Не удалось обновить Sky UI. Проверьте журнал обслуживания.',
       'share.type': 'Подписка или подключение',
       'share.uri': 'Ссылка подключения',
       'share.uriFormat': '{protocol} · ссылка подключения',
@@ -664,7 +684,7 @@ class AppStrings {
       'users.total': 'Всего пользователей',
       'users.active': 'Доступ включён',
       'users.disabled': 'Доступ отключён',
-      'users.subscription': 'Подписка',
+      'users.subscription': 'QR-код',
       'users.none': 'Пока нет пользователей',
       'users.nameHelp':
           'Имя видно только вам в панели. Пользователь не получает учётную запись и не входит в панель.',
@@ -715,6 +735,14 @@ class AppStrings {
       'feature.unavailable': 'Недоступно',
       'core.notInstalled': 'Не установлено',
       'core.install': 'Установить',
+      'core.remove': 'Удалить ядро',
+      'core.missingStatus': 'Ядро не установлено',
+      'core.removeHint':
+          'Ядро будет остановлено и удалено. Его подключения перестанут работать. Подключения, пользователи и ключи сохранятся и будут доступны после повторной установки.',
+      'core.installHint':
+          'Будет установлена проверенная версия ядра. Сохранённые подключения и ключи останутся прежними. Запустить ядро можно после установки.',
+      'runtime.error.core_already_installed':
+          'Ядро уже установлено. Обновите страницу.',
       'core.update': 'Обновить ядро',
       'runtime.error.releases_unavailable':
           'Не удалось загрузить релизы. Попробуйте позже.',

@@ -12,6 +12,7 @@ class PanelSnapshot {
     required this.deliveryReady,
     required this.protocols,
     this.errorCode,
+    this.coreAvailability = const {},
   });
   final int revision;
   final List<Connection> connections;
@@ -22,6 +23,7 @@ class PanelSnapshot {
   final bool deliveryReady;
   final Map<String, List<ProtocolDefinition>> protocols;
   final String? errorCode;
+  final Map<String, bool> coreAvailability;
   Map<String, Object?> toJson() => {
     'revision': revision,
     'connections': connections.map((v) => v.toJson()).toList(),
@@ -31,6 +33,7 @@ class PanelSnapshot {
     'synchronized': synchronized,
     'deliveryReady': deliveryReady,
     'errorCode': errorCode,
+    'coreAvailability': coreAvailability,
     'protocols': protocols.map(
       (k, v) => MapEntry(k, v.map((p) => p.toJson()).toList()),
     ),
@@ -48,6 +51,9 @@ class PanelSnapshot {
     synchronized: json['synchronized'] as bool,
     deliveryReady: json['deliveryReady'] as bool,
     errorCode: json['errorCode'] as String?,
+    coreAvailability: Map<String, bool>.from(
+      json['coreAvailability'] as Map? ?? const {},
+    ),
     protocols: (json['protocols'] as Map).map(
       (k, v) => MapEntry(
         k as String,
@@ -73,15 +79,24 @@ class ShareLink {
 }
 
 class RecipientShare {
-  const RecipientShare({required this.subscriptionUrl, required this.links});
+  const RecipientShare({
+    required this.subscriptionUrl,
+    required this.links,
+    this.subscriptionUrls = const {},
+  });
   final String subscriptionUrl;
+  final Map<String, String> subscriptionUrls;
   final List<ShareLink> links;
   Map<String, Object?> toJson() => {
     'subscriptionUrl': subscriptionUrl,
+    'subscriptionUrls': subscriptionUrls,
     'links': links.map((v) => v.toJson()).toList(),
   };
   factory RecipientShare.fromJson(Map<String, dynamic> json) => RecipientShare(
     subscriptionUrl: json['subscriptionUrl'] as String,
+    subscriptionUrls: Map<String, String>.from(
+      json['subscriptionUrls'] as Map? ?? const {},
+    ),
     links: (json['links'] as List)
         .map((v) => ShareLink.fromJson(Map<String, dynamic>.from(v as Map)))
         .toList(),

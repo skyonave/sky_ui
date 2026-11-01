@@ -6,14 +6,22 @@ import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sky_ui_api/src/auth/owner_auth.dart';
 import 'package:sky_ui_api/src/maintenance.dart';
 import 'package:sky_ui_api/src/core_updates.dart';
-import 'package:sky_ui_api/src/errors.dart';
+import 'package:sky_ui_api/src/panel_updates.dart';
 import 'package:test/test.dart';
-import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor, fixtureCore;
+import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor;
 
 class RejectingUpdates extends CoreUpdates {
   @override
   Future<void> requireApproved(String core, String tag) async {
     throw const ApiException('core_release_unverified', status: 422);
+  }
+}
+
+class RejectingPanelUpdates extends PanelUpdates {
+  RejectingPanelUpdates(super.runner) : super(supported: false);
+  @override
+  Future<void> requireApproved(String tag) async {
+    throw const ApiException('panel_update_unavailable', status: 422);
   }
 }
 
@@ -42,6 +50,7 @@ void main() {
   late Uri base;
   late MaintenanceService maintenance;
   late MaintenanceRunner runner;
+  late FakeAdapter adapter;
   const password = 'fixture-maintenance-owner';
   const gateway = 'fixture-private-gateway';
   setUp(() async {
@@ -61,10 +70,19 @@ void main() {
       directory: directory.path,
       supported: true,
     );
-    final adapter = FakeAdapter();
+    adapter = FakeAdapter();
     final manager = CoreManager(
-      core: fixtureCore(),
-      adapters: {adapter.id: adapter},
+      core: ManagedCore(
+        id: 'primary',
+        coreId: 'mihomo',
+        service: 'sky-ui-mihomo.service',
+        binary: '/unused',
+        directory: '/unused',
+        configuration: '/unused',
+        controller: Uri.parse('http://127.0.0.1:19090'),
+        secret: 'fixture',
+      ),
+      adapters: {'mihomo': adapter},
       supervisor: FakeSupervisor(),
       stateDirectory: directory.path,
     );
@@ -75,13 +93,23 @@ void main() {
           webOrigin: Uri.parse('https://owner.example'),
           publicDirectory: directory.path,
           dataDirectory: directory.path,
-          core: fixtureCore(),
+          core: ManagedCore(
+            id: 'primary',
+            coreId: 'mihomo',
+            service: 'sky-ui-mihomo.service',
+            binary: '/unused',
+            directory: '/unused',
+            configuration: '/unused',
+            controller: Uri.parse('http://127.0.0.1:19090'),
+            secret: 'fixture',
+          ),
           gatewaySecret: gateway,
         ),
         manager,
         auth: auth,
         maintenance: maintenance,
         coreUpdates: RejectingUpdates(),
+        panelUpdates: RejectingPanelUpdates(runner),
       ),
       InternetAddress.loopbackIPv4,
       0,
@@ -134,6 +162,136 @@ void main() {
     );
   }
 
+  test(
+    'core removal requires owner confirmation and CSRF before queuing a fixed core operation',
+    () async {
+      final who = await login();
+      for (final action in ['remove', 'install']) {
+        expect(
+          (await call(
+            '/api/v1/maintenance',
+            method: 'POST',
+            payload: {'action': action, 'confirmed': true},
+          )).status,
+          401,
+        );
+        expect(
+          (await call(
+            '/api/v1/maintenance',
+            method: 'POST',
+            cookie: who.cookie,
+            payload: {'action': action, 'confirmed': true},
+          )).status,
+          403,
+        );
+      }
+      expect(
+        (await call(
+          '/api/v1/maintenance',
+          method: 'POST',
+          cookie: who.cookie,
+          csrf: who.csrf,
+          payload: {'action': 'remove'},
+        )).status,
+        400,
+      );
+      expect(runner.calls, isEmpty);
+      expect(
+        (await call(
+          '/api/v1/maintenance',
+          method: 'POST',
+          cookie: who.cookie,
+          csrf: who.csrf,
+          payload: {'action': 'remove', 'confirmed': true},
+        )).status,
+        202,
+      );
+      final request =
+          jsonDecode(
+                await File(
+                  '${directory.path}/inbox/request.json',
+                ).readAsString(),
+              )
+              as Map;
+      expect(request['action'], 'remove');
+      expect(request['core'], 'mihomo');
+      expect(request.keys, unorderedEquals(['id', 'action', 'core']));
+    },
+  );
+  test(
+    'install requires an approved release even when the binary is missing',
+    () async {
+      adapter.available = false;
+      final who = await login();
+      expect(
+        (await call(
+          '/api/v1/maintenance',
+          method: 'POST',
+          cookie: who.cookie,
+          csrf: who.csrf,
+          payload: {'action': 'install', 'tag': 'v99.0.0', 'confirmed': true},
+        )).status,
+        422,
+      );
+      expect(runner.calls, isEmpty);
+    },
+  );
+  test(
+    'panel update requires confirmation, CSRF and a release recheck',
+    () async {
+      final who = await login();
+      final payload = {
+        'action': 'panel-update',
+        'tag': 'v0.6.0-dev.5',
+        'confirmed': true,
+      };
+      expect(
+        (await call(
+          '/api/v1/maintenance',
+          method: 'POST',
+          payload: payload,
+        )).status,
+        401,
+      );
+      expect(
+        (await call(
+          '/api/v1/maintenance',
+          method: 'POST',
+          cookie: who.cookie,
+          payload: payload,
+        )).status,
+        403,
+      );
+      expect(
+        (await call(
+          '/api/v1/maintenance',
+          method: 'POST',
+          cookie: who.cookie,
+          csrf: who.csrf,
+          payload: payload,
+        )).status,
+        422,
+      );
+      expect(runner.calls, isEmpty);
+      expect((await call('/api/v1/panel-update')).status, 401);
+    },
+  );
+  test('panel update queues only its fixed worker and version', () async {
+    await maintenance.submit('panel-update', tag: 'v0.6.0-dev.5');
+    expect(runner.calls.last, [
+      'systemctl',
+      'start',
+      '--no-block',
+      'sky-ui-update.service',
+    ]);
+    final request =
+        jsonDecode(
+              await File('${directory.path}/inbox/request.json').readAsString(),
+            )
+            as Map;
+    expect(request.keys, unorderedEquals(['id', 'action', 'tag']));
+    expect(request['tag'], 'v0.6.0-dev.5');
+  });
   test(
     'unverified updates cannot reach the privileged worker even with owner confirmation',
     () async {

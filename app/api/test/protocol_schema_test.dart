@@ -6,6 +6,73 @@ import 'package:test/test.dart';
 import '../../web/lib/src/i18n.dart';
 
 void main() {
+  test(
+    'V2Ray base64 keeps REALITY credentials and rejects incomplete exports',
+    () {
+      final exporter = V2RayExporter();
+      const endpoint = ClientEndpoint(
+        id: 'vless',
+        name: 'Для iPhone',
+        server: 'panel.example.test',
+        port: 8443,
+        protocolId: 'vless',
+        settings: {
+          'transport': 'TCP',
+          'security': 'REALITY',
+          'serverName': 'www.example.com',
+          'flow': 'xtls-rprx-vision',
+        },
+        credentials: {
+          'uuid': '0383573b-c576-425c-aa76-5951e944c22a',
+          'publicKey': 'fixture-public-key',
+          'shortId': '0123456789abcdef',
+        },
+      );
+      final content = utf8
+          .decode(base64.decode(exporter.profile([endpoint])))
+          .trim();
+      final uri = Uri.parse(content);
+      expect(uri.scheme, 'vless');
+      expect(uri.host, endpoint.server);
+      expect(uri.port, endpoint.port);
+      expect(uri.userInfo, endpoint.credentials['uuid']);
+      expect(uri.queryParameters, containsPair('pbk', 'fixture-public-key'));
+      expect(uri.queryParameters, containsPair('sid', '0123456789abcdef'));
+      expect(uri.queryParameters, containsPair('flow', 'xtls-rprx-vision'));
+      expect(Uri.decodeComponent(uri.fragment), endpoint.name);
+      const unsupported = ClientEndpoint(
+        id: 'snell',
+        name: 'Other',
+        server: 'panel.example.test',
+        port: 8444,
+        protocolId: 'snell',
+        settings: {'transport': 'TCP', 'security': 'Built-in'},
+        credentials: {'password': 'fixture'},
+      );
+      expect(exporter.canExport([endpoint, unsupported]), isFalse);
+      expect(
+        () => exporter.profile([endpoint, unsupported]),
+        throwsA(isA<ApiException>()),
+      );
+      expect(exporter.canExport([]), isFalse);
+      final shared = RecipientShare(
+        subscriptionUrl: 'https://example.test/a.yaml',
+        links: [],
+        subscriptionUrls: {'v2ray': 'https://example.test/a.txt'},
+      );
+      expect(
+        RecipientShare.fromJson(shared.toJson()).subscriptionUrls,
+        shared.subscriptionUrls,
+      );
+      expect(
+        RecipientShare.fromJson({
+          'subscriptionUrl': 'https://example.test/a.yaml',
+          'links': [],
+        }).subscriptionUrls,
+        isEmpty,
+      );
+    },
+  );
   test('share URIs never discard required advanced client settings', () {
     final exporter = ClashExporter();
     ClientEndpoint endpoint(Map<String, String> extra) => ClientEndpoint(

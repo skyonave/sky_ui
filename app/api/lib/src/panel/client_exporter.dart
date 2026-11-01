@@ -6,6 +6,7 @@ import 'domain.dart';
 abstract interface class ClientExporter {
   String get format;
   List<ClientExportRestriction> get restrictions;
+  bool canExport(List<ClientEndpoint> endpoints);
   String profile(List<ClientEndpoint> endpoints);
   List<ShareLink> links(List<ClientEndpoint> endpoints);
 }
@@ -67,6 +68,16 @@ class ClashExporter implements ClientExporter {
         throw const ApiException('export_unavailable', status: 422);
     }
     return endpoints;
+  }
+
+  @override
+  bool canExport(List<ClientEndpoint> endpoints) {
+    try {
+      _entries(endpoints);
+      return true;
+    } on ApiException {
+      return false;
+    }
   }
 
   static bool compatible(String protocol, Map<String, String> settings) {
@@ -227,9 +238,15 @@ class ClashExporter implements ClientExporter {
   }
 
   @override
+  List<ShareLink> links(List<ClientEndpoint> endpoints) =>
+      ShareUriCodec().links(_entries(endpoints));
+}
+
+/// Individual protocol URIs reused by independent client subscription formats.
+class ShareUriCodec {
   List<ShareLink> links(List<ClientEndpoint> endpoints) {
     final links = <ShareLink>[];
-    for (final c in _entries(endpoints)) {
+    for (final c in endpoints) {
       final s = c.settings, k = c.credentials, id = c.protocolId;
       if (k['fingerprint'] != null || k['clientCertificate'] != null) continue;
       if ((s['clientAlpn'] ?? '').isNotEmpty) continue;
@@ -367,4 +384,33 @@ class ClashExporter implements ClientExporter {
     }
     return links;
   }
+}
+
+/// Base64 URI subscription for V2Ray clients such as V2Box.
+class V2RayExporter implements ClientExporter {
+  @override
+  String get format => 'v2ray';
+  @override
+  List<ClientExportRestriction> get restrictions => const [];
+  static const protocols = {'vless', 'vmess', 'trojan', 'shadowsocks'};
+
+  @override
+  bool canExport(List<ClientEndpoint> endpoints) {
+    if (endpoints.isEmpty ||
+        endpoints.any((e) => !protocols.contains(e.protocolId)))
+      return false;
+    return ShareUriCodec().links(endpoints).length == endpoints.length;
+  }
+
+  @override
+  List<ShareLink> links(List<ClientEndpoint> endpoints) {
+    if (!canExport(endpoints))
+      throw const ApiException('export_unavailable', status: 422);
+    return ShareUriCodec().links(endpoints);
+  }
+
+  @override
+  String profile(List<ClientEndpoint> endpoints) => base64.encode(
+    utf8.encode('${links(endpoints).map((e) => e.uri).join('\n')}\n'),
+  );
 }

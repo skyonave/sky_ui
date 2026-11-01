@@ -25,3 +25,37 @@ class CoreUpdateInfo {
     versions: (value['versions'] as List).cast<String>(),
   );
 }
+
+class PanelUpdateInfo {
+  const PanelUpdateInfo({
+    required this.currentVersion,
+    required this.available,
+    required this.supported,
+    required this.checkedAt,
+    this.latestVersion,
+    this.tag,
+    this.releaseUrl,
+  });
+  final String currentVersion, checkedAt;
+  final String? latestVersion, tag, releaseUrl;
+  final bool available, supported;
+  factory PanelUpdateInfo.fromJson(Map<String, dynamic> value) =>
+      PanelUpdateInfo(
+        currentVersion: value['currentVersion'] as String,
+        available: value['available'] as bool,
+        supported: value['supported'] as bool,
+        checkedAt: value['checkedAt'] as String,
+        latestVersion: value['latestVersion'] as String?,
+        tag: value['tag'] as String?,
+        releaseUrl: value['releaseUrl'] as String?,
+      );
+  Map<String, Object?> toJson() => {
+    'currentVersion': currentVersion,
+    'available': available,
+    'supported': supported,
+    'checkedAt': checkedAt,
+    'latestVersion': latestVersion,
+    'tag': tag,
+    'releaseUrl': releaseUrl,
+  };
+}

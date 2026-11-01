@@ -17,7 +17,12 @@ class PanelService {
     required this.repository,
     required Map<String, ConfigurationCodec> codecs,
     required this.exporter,
-  }) : codec =
+    List<ClientExporter> additionalExporters = const [],
+  }) : exporters = {
+         exporter.format: exporter,
+         for (final item in additionalExporters) item.format: item,
+       },
+       codec =
            codecs[manager.core.coreId] ??
            (throw const ApiException('core_unsupported', status: 422));
   final ServerConfig config;
@@ -25,6 +30,7 @@ class PanelService {
   final PanelRepository repository;
   final ConfigurationCodec codec;
   final ClientExporter exporter;
+  final Map<String, ClientExporter> exporters;
   bool busy = false;
   final _portRandom = Random.secure();
 
@@ -106,13 +112,16 @@ class PanelService {
       serverName: data.serverName,
       address: data.address,
       synchronized: synchronized,
-      deliveryReady: ready,
+      deliveryReady: ready && core.binaryAvailable,
+      coreAvailability: {core.coreId: core.binaryAvailable},
       protocols: {
         codec.coreId: codec.protocols
             .map((p) => p.withExportRestrictions(exporter.restrictions))
             .toList(),
       },
-      errorCode: repository.pending != null
+      errorCode: !core.binaryAvailable
+          ? 'binary_missing'
+          : repository.pending != null
           ? 'configuration_rollback_failed'
           : synchronized
           ? readinessError
@@ -127,6 +136,8 @@ class PanelService {
       throw const ApiException('configuration_rollback_failed', status: 503);
     if (!await isSynchronized())
       throw const ApiException('configuration_out_of_sync', status: 409);
+    if (!(await manager.snapshot()).binaryAvailable)
+      throw const ApiException('binary_missing', status: 409);
     if (!manager.supervisor.supported)
       throw const ApiException('platform_unsupported', status: 501);
   }
@@ -529,6 +540,8 @@ class PanelService {
     if (!await isSynchronized())
       throw const ApiException('configuration_out_of_sync', status: 503);
     final core = await manager.snapshot();
+    if (!core.binaryAvailable)
+      throw const ApiException('binary_missing', status: 503);
     if (core.processState != CoreProcessState.active || !core.controllerReady)
       throw const ApiException('core_not_ready', status: 503);
     await codec.verifyRunning(repository.read(), manager.core);
@@ -540,32 +553,44 @@ class PanelService {
     final user = data.recipients.where((u) => u.id == id).firstOrNull;
     if (user == null || !user.enabled)
       throw const ApiException('not_found', status: 404);
-    final links = exporter.links(_clientEndpoints(data, id));
+    final endpoints = _clientEndpoints(data, id);
+    final links = exporter.links(endpoints);
     return RecipientShare(
       subscriptionUrl: config.webOrigin
           .resolve('/s/${user.token}.yaml')
           .toString(),
       links: links,
+      subscriptionUrls: {
+        'clash': config.webOrigin.resolve('/s/${user.token}.yaml').toString(),
+        if (V2RayExporter().canExport(endpoints))
+          'v2ray': config.webOrigin.resolve('/s/${user.token}.txt').toString(),
+      },
     );
   });
-  Future<String> subscription(String token) => manager.exclusive((_) async {
-    final id = repository.recipientForToken(token);
-    if (id == null) throw const ApiException('not_found', status: 404);
-    final data = repository.read();
-    if (!data.recipients.any((u) => u.id == id && u.enabled))
-      throw const ApiException('not_found', status: 404);
-    if (!data.grants.any(
-      (g) =>
-          g.recipientId == id &&
-          data.connections.any(
-            (c) => c.value.id == g.connectionId && c.value.enabled,
-          ),
-    )) {
-      throw const ApiException('not_found', status: 404);
-    }
-    await _canExport();
-    return exporter.profile(_clientEndpoints(data, id));
-  });
+  Future<String> subscription(String token, {String format = 'clash'}) =>
+      manager.exclusive((_) async {
+        final id = repository.recipientForToken(token);
+        if (id == null) throw const ApiException('not_found', status: 404);
+        final data = repository.read();
+        if (!data.recipients.any((u) => u.id == id && u.enabled))
+          throw const ApiException('not_found', status: 404);
+        if (!data.grants.any(
+          (g) =>
+              g.recipientId == id &&
+              data.connections.any(
+                (c) => c.value.id == g.connectionId && c.value.enabled,
+              ),
+        )) {
+          throw const ApiException('not_found', status: 404);
+        }
+        await _canExport();
+        final endpoints = _clientEndpoints(data, id);
+        return switch (format) {
+          'clash' => exporter.profile(endpoints),
+          'v2ray' => V2RayExporter().profile(endpoints),
+          _ => throw const ApiException('export_unavailable', status: 422),
+        };
+      });
   Future<CoreSnapshot> executeCore(CoreOperation operation) =>
       manager.exclusive((control) async {
         if ([CoreOperation.start, CoreOperation.restart].contains(operation) &&

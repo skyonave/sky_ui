@@ -72,6 +72,12 @@ class ApiClient {
       (await _request('/api/v1/updates/$core'))['data'] as Map,
     ),
   );
+  Future<PanelUpdateInfo> panelUpdate() async => PanelUpdateInfo.fromJson(
+    Map<String, dynamic>.from(
+      (await _request('/api/v1/panel-update'))['data'] as Map,
+    ),
+  );
+
   Future<void> clearLogs() async {
     await _request(
       '/api/v1/cores/primary/logs',

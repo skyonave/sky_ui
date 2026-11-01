@@ -16,7 +16,7 @@ import maintenance as m
 
 UNITS = ('sky-ui.service', 'sky-ui-mihomo.service', 'sky-ui-edge.service',
          'sky-ui-certificates.service', 'sky-ui-certificates.timer',
-         'sky-ui-maintenance.service', 'sky-ui-maintenance-recovery.service')
+         'sky-ui-maintenance.service', 'sky-ui-maintenance-recovery.service', 'sky-ui-update.service', 'sky-ui-update-recovery.service')
 ACCOUNTS = ('sky-ui', 'sky-ui-core', 'sky-ui-edge')
 DIRECTORIES = tuple(map(Path, ('/etc/sky-ui', '/var/lib/sky-ui', '/var/lib/sky-ui-edge',
     '/var/lib/sky-ui-certificates', '/var/lib/sky-ui-maintenance', '/opt/sky-ui')))
@@ -59,6 +59,8 @@ def managed():
 def locked():
     descriptors = []
     try:
+        if (m.STATE / 'panel-update-intent.json').exists():
+            raise ValueError('Выполняется обновление Sky UI. Дождитесь завершения.')
         for path in (LOCKS[0], m.STATE / 'worker.lock'):
             fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             descriptors.append(fd)
@@ -85,6 +87,8 @@ def status():
 
 def lifecycle(action, target):
     with locked():
+        if action != 'stop' and target in ('core', 'all') and not Path(m.environment()['SKY_UI_CORE_BINARY']).is_file():
+            raise ValueError('Ядро не установлено. Используйте skyui install-core.')
         api_running = m.active('sky-ui.service')
         if target in ('core', 'all'):
             # Stop API writes while changing persisted instance state.
@@ -254,9 +258,9 @@ def uninstall(confirm=input):
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='skyui', description='Управление Sky UI на этом сервере')
     commands = parser.add_subparsers(dest='command', required=True)
-    for name, help_text in [('status','Состояние служб и версия'), ('version','Версия Sky UI'),
+    for name, help_text in [('status','Состояние служб и версия'), ('version','Версия Sky UI'), ('update','Обновить Sky UI'),
             ('setup','Настройка IP, домена и администратора'), ('backup','Создать резервную копию'),
-            ('backups','Список резервных копий'), ('update-core','Установить проверенную версию ядра'),
+            ('backups','Список резервных копий'), ('remove-core','Удалить ядро, сохранив подключения'), ('install-core','Установить проверенное ядро'), ('update-core','Установить проверенную версию ядра'),
             ('uninstall','Полностью удалить Sky UI и его данные')]:
         commands.add_parser(name, help=help_text)
     restore = commands.add_parser('restore', help='Восстановить резервную копию')
@@ -276,7 +280,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     managed()
     command = args.command
-    if command in ('backup','backups','restore','update-core'):
+    if command in ('backup','backups','restore','update-core','install-core','remove-core','update'):
         return m.cli([command] + ([args.id] if command == 'restore' else []), pwd.getpwnam('sky-ui'))
     if command in ('start','stop','restart'):
         return lifecycle(command, args.target)

@@ -11,7 +11,7 @@ String _bundleVersion() {
     if (RegExp(r'^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?$').hasMatch(value))
       return value;
   }
-  return '0.6.0-dev.1';
+  return '0.6.0-dev.4';
 }
 
 class ServerConfig {
@@ -124,7 +124,9 @@ class ServerConfig {
         id: 'primary',
         coreId: 'mihomo',
         service: 'sky-ui-mihomo.service',
-        binary: env['SKY_UI_CORE_BINARY'] ?? '/opt/sky-ui/current/bin/mihomo',
+        binary:
+            env['SKY_UI_CORE_BINARY'] ??
+            '/opt/sky-ui/cores/mihomo/current/mihomo',
         directory:
             env['SKY_UI_CORE_DIRECTORY'] ?? '/var/lib/sky-ui/cores/mihomo',
         configuration:

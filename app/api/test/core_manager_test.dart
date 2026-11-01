@@ -6,6 +6,7 @@ import 'package:test/test.dart';
 
 class FakeAdapter implements CoreAdapter {
   bool invalid = false;
+  bool available = true;
   bool ready = true;
   final calls = <String>[];
   @override
@@ -19,10 +20,11 @@ class FakeAdapter implements CoreAdapter {
   void clearLogs() => bufferedLogs.clear();
   @override
   Future<BinaryProbe> probe(ManagedCore core) async =>
-      const BinaryProbe(true, '1.0.0');
+      BinaryProbe(available, available ? '1.0.0' : null);
   @override
   Future<void> validate(ManagedCore core) async {
     calls.add('validate');
+    if (!available) throw const ApiException('binary_missing', status: 409);
     if (invalid) throw const ApiException('configuration_invalid', status: 422);
   }
 

@@ -47,6 +47,7 @@ Future<void> main(List<String> args) async {
     repository: repository,
     codecs: {codec.coreId: codec},
     exporter: ClashExporter(),
+    additionalExporters: [V2RayExporter()],
   );
   await panel.initialize();
   final server = await serve(
