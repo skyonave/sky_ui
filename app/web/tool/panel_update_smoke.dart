@@ -23,6 +23,55 @@ class _UpdateSmoke extends State<UpdateSmoke> {
   );
   bool checking = false, checked = false, confirmation = false;
   String? error;
+  final scenario = Uri.base.queryParameters['state'] ?? 'idle';
+  bool details = false;
+  MaintenanceJob? get fixtureJob {
+    if (![
+      'download',
+      'install',
+      'reconnecting',
+      'failed',
+      'complete',
+    ].contains(scenario))
+      return null;
+    return MaintenanceJob.fromJson({
+      'id': 'a123456789abcdef0123456789abcdef',
+      'action': 'panel-update',
+      'status': scenario == 'failed'
+          ? 'failed'
+          : scenario == 'complete'
+          ? 'completed'
+          : 'running',
+      if (scenario == 'failed') 'error': 'panel_update_rolled_back',
+      'progress': {
+        'stage': scenario == 'failed'
+            ? 'rollback'
+            : scenario == 'complete'
+            ? 'complete'
+            : scenario == 'download'
+            ? 'download'
+            : 'install',
+        'currentVersion': '0.6.0-dev.4',
+        'targetVersion': '0.7.0-dev.2',
+        'startedAt': DateTime.now()
+            .toUtc()
+            .subtract(const Duration(seconds: 12))
+            .toIso8601String(),
+        if (['failed', 'complete'].contains(scenario))
+          'finishedAt': DateTime.now().toUtc().toIso8601String(),
+        'bytesReceived': scenario == 'download' ? 11534336 : 23068672,
+        'bytesTotal': 23068672,
+        if (scenario == 'failed') ...{
+          'failedStage': 'prepare',
+          'errorCode': 'installer_failed',
+          'exitCode': 1,
+          'command': 'install.sh',
+          'rolledBack': true,
+        },
+      },
+    });
+  }
+
   Future<void> check() async {
     setState(() => checking = true);
     try {
@@ -43,7 +92,20 @@ class _UpdateSmoke extends State<UpdateSmoke> {
   Component build(BuildContext context) => div(
     [
       PanelUpdateCard(
-        info: info,
+        info: scenario == 'available'
+            ? const PanelUpdateInfo(
+                currentVersion: '0.6.0-dev.4',
+                latestVersion: '0.7.0-dev.2',
+                tag: 'v0.7.0-dev.2',
+                available: true,
+                supported: true,
+                checkedAt: '2026-11-02T00:00:00Z',
+              )
+            : info,
+        job: fixtureJob,
+        updating: fixtureJob?.busy == true,
+        reconnecting: scenario == 'reconnecting',
+        onDetails: () => setState(() => details = true),
         checking: checking,
         checkedManually: checked,
         checkError: error,
@@ -51,6 +113,22 @@ class _UpdateSmoke extends State<UpdateSmoke> {
         onCheck: check,
         onUpdate: () => setState(() => confirmation = true),
       ),
+      if (details)
+        div([
+          div([
+            div([
+              h2([Component.text('Детали обновления')]),
+            ], classes: 'modal-header'),
+            div([
+              PanelUpdateDetails(job: fixtureJob, info: info),
+            ], classes: 'modal-body'),
+            div([
+              button([
+                Component.text('Закрыть'),
+              ], onClick: () => setState(() => details = false)),
+            ], classes: 'modal-footer'),
+          ], classes: 'modal'),
+        ], classes: 'modal-overlay'),
       if (confirmation) p([Component.text('Подтверждение обновления')]),
     ],
     styles: const Styles(

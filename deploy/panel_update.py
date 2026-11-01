@@ -13,6 +13,7 @@ import urllib.request
 import core_artifacts
 import core_install
 import panel_releases
+from update_progress import Reporter, InstallerFailure, run_installer, now
 
 RELEASES = Path('/opt/sky-ui/releases')
 SYSTEMD = Path('/etc/systemd/system')
@@ -86,31 +87,38 @@ def recover(m, gid, *, start=False):
         'status': 'failed', 'error': 'panel_update_rolled_back'}).encode(), gid=gid)
 
 
-def update(m, owner, job, lock, install_lock):
+def update(m, owner, job, lock, install_lock, reporter=None):
     current = m.read_regular(m.CURRENT.resolve() / 'VERSION', 128).decode().strip()
     selected = panel_releases.candidate(current, core_artifacts.target_platform(), job['tag'])
     m.require(selected is not None, 'panel_update_unavailable')
+    if reporter is None:
+        reporter = Reporter(m, {'id':job['id'], 'action':'panel-update', 'status':'running'}, current, job['tag'], owner.pw_gid)
     # All downloads and digest checks complete before interrupting the panel.
     with tempfile.TemporaryDirectory(prefix='panel-update-', dir=m.STATE / 'work') as temporary:
         stage = Path(temporary)
-        panel_releases.prepare(selected, core_artifacts.target_platform(), stage)
+        reporter.stage('download')
+        panel_releases.prepare(selected, core_artifacts.target_platform(), stage,
+            on_progress=reporter.download, on_verify=lambda:reporter.stage('verify'))
         previous = previous_release(m, str(m.CURRENT.resolve(strict=True)))
         intent = {'id': job['id'], 'tag': job['tag'], 'previous': str(previous),
                   'api': m.active('sky-ui.service'), 'edge': m.active('sky-ui-edge.service'),
                   'timer': m.active('sky-ui-certificates.timer')}
         configured = runtime(m, '/api/v1/auth/session')['data']['configured'] if intent['api'] else None
-        for unit in ('sky-ui-certificates.timer', 'sky-ui-certificates.service', 'sky-ui-edge.service', 'sky-ui.service'):
-            m.run(['systemctl', 'stop', unit])
+        reporter.stage('backup')
         try:
+            for unit in ('sky-ui-certificates.timer', 'sky-ui-certificates.service', 'sky-ui-edge.service', 'sky-ui.service'):
+                m.run(['systemctl', 'stop', unit])
             files = m.snapshot_files(preserve_sessions=True)
             archive, _ = m.pack_backup(files, {'version': current, 'purpose': 'panel-update'})
             m.atomic(m.STATE / 'panel-update-backup.tar.gz', archive, 0o600)
             m.atomic(m.STATE / 'panel-update-intent.json', json.dumps(intent).encode(), 0o600)
             # The installer owns the same worker lock during activation.
             fcntl.flock(lock, fcntl.LOCK_UN)
-            m.run(['env', 'SKY_UI_DEFER_ROLLBACK_START=1', 'SKY_UI_TRANSACTION_LOCK_FD='+str(install_lock.fileno()), 'bash', str(stage / 'install.sh'),
-                   '--bundle', str(stage / ('sky-ui-' + core_artifacts.target_platform() + '.tar.gz'))], timeout=480, pass_fds=(install_lock.fileno(),))
+            reporter.stage('prepare')
+            run_installer(m, ['env', 'SKY_UI_DEFER_ROLLBACK_START=1', 'SKY_UI_TRANSACTION_LOCK_FD='+str(install_lock.fileno()), 'bash', str(stage / 'install.sh'),
+                   '--bundle', str(stage / ('sky-ui-' + core_artifacts.target_platform() + '.tar.gz'))], reporter, pass_fds=(install_lock.fileno(),))
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            reporter.stage('health')
             m.api_ready(m.environment())
             m.require(runtime(m, '/api/v1/health')['version'] == job['tag'][1:], 'panel_version_mismatch')
             if configured is not None:
@@ -123,16 +131,25 @@ def update(m, owner, job, lock, install_lock):
                 m.run(['systemctl', 'stop', 'sky-ui-certificates.timer'])
             (m.STATE / 'panel-update-intent.json').unlink()
             (m.STATE / 'panel-update-backup.tar.gz').unlink()
+            reporter.progress['finishedAt'] = now()
+            reporter.stage('complete')
             return {'version': job['tag'][1:]}
-        except Exception:
+        except Exception as error:
+            failed_stage = reporter.progress['stage']
+            reporter.stage('rollback', failedStage=failed_stage)
             fcntl.flock(lock, fcntl.LOCK_EX)
-            if (m.STATE / 'panel-update-intent.json').exists():
-                rollback(m, intent, owner.pw_gid)
-            else:
-                for unit, key in (('sky-ui.service', 'api'), ('sky-ui-edge.service', 'edge'),
-                                  ('sky-ui-certificates.timer', 'timer')):
-                    if intent[key]:
-                        m.run(['systemctl', 'start', unit])
+            try:
+                if (m.STATE / 'panel-update-intent.json').exists():
+                    rollback(m, intent, owner.pw_gid)
+                else:
+                    for unit, key in (('sky-ui.service', 'api'), ('sky-ui-edge.service', 'edge'),
+                                      ('sky-ui-certificates.timer', 'timer')):
+                        if intent[key]: m.run(['systemctl', 'start', unit])
+            except Exception:
+                reporter.failed('rollback_failed', rolledBack=False, failedStage=failed_stage)
+                raise
+            reporter.failed(str(error), rolledBack=True, failedStage=failed_stage,
+                **({'exitCode':error.exit_code, 'command':'install.sh'} if isinstance(error, InstallerFailure) else {}))
             raise m.MaintenanceError('panel_update_rolled_back')
 
 
@@ -154,13 +171,16 @@ def main():
         job = m.consume_request(m.STATE / 'inbox/request.json', owner.pw_uid, remove=False)
         m.require(job['action'] == 'panel-update', 'request_invalid')
         result = {'id': job['id'], 'action': job['action'], 'status': 'running'}
+        reporter = Reporter(m, result, m.read_regular(m.CURRENT.resolve() / 'VERSION', 128).decode().strip(), job['tag'], owner.pw_gid)
         m.atomic(m.STATE / 'result.json', json.dumps(result).encode(), gid=owner.pw_gid)
         (m.STATE / 'inbox/request.json').unlink()
         try:
-            result['data'] = update(m, owner, job, lock, install_lock)
+            result['data'] = update(m, owner, job, lock, install_lock, reporter)
             result['status'] = 'completed'
         except Exception as error:
             result.update(status='failed', error=str(error) if isinstance(error, (m.MaintenanceError, core_artifacts.ArtifactError)) else 'panel_update_failed')
+            if 'finishedAt' not in reporter.progress:
+                reporter.failed(result['error'], failedStage=reporter.progress['stage'], rolledBack=False)
         finally:
             m.atomic(m.STATE / 'result.json', json.dumps(result).encode(), gid=owner.pw_gid)
         if (m.STATE / 'panel-update-intent.json').exists():

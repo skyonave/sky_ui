@@ -32,7 +32,7 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.7.0-dev.1',
+    defaultValue: '0.7.0-dev.2',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
@@ -340,6 +340,8 @@ class _SkyAppState extends State<SkyApp> {
   Map<String, String> draft = {};
   Set<String> grants = {};
   Timer? toastTimer;
+  Timer? maintenanceTimer;
+  bool panelUpdateReconnecting = false;
   web.HTMLElement? previousFocus;
   late final JSFunction keyListener;
   late final JSFunction hashListener;
@@ -367,6 +369,12 @@ class _SkyAppState extends State<SkyApp> {
     unawaited(refreshRuntime());
     unawaited(refreshPanel());
     connectLogs();
+    maintenanceTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (maintenanceJob?.action == 'panel-update' && maintenanceBusy) {
+        unawaited(refreshMaintenance());
+        if (mounted) setState(() {});
+      }
+    });
     runtimeTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       unawaited(refreshRuntime());
       unawaited(refreshPanel());
@@ -415,6 +423,7 @@ class _SkyAppState extends State<SkyApp> {
     logStream?.close();
     toastTimer?.cancel();
     runtimeTimer?.cancel();
+    maintenanceTimer?.cancel();
     web.window.removeEventListener('hashchange', hashListener);
     web.document.removeEventListener('keydown', keyListener);
     web.document.body?.style.overflow = '';
@@ -1877,9 +1886,14 @@ class _SkyAppState extends State<SkyApp> {
         setState(() {
           maintenance = value;
           maintenanceJob = value.job;
+          panelUpdateReconnecting = false;
         });
     } on ApiClientException {
       // The worker briefly stops the API. Keep the durable job visible until it returns.
+      if (mounted &&
+          maintenanceJob?.action == 'panel-update' &&
+          maintenanceBusy)
+        setState(() => panelUpdateReconnecting = true);
     } finally {
       maintenanceLoading = false;
     }
@@ -1915,6 +1929,9 @@ class _SkyAppState extends State<SkyApp> {
         maintenanceJob?.status == 'failed';
     return PanelUpdateCard(
       info: panelUpdateInfo,
+      job: maintenanceJob?.action == 'panel-update' ? maintenanceJob : null,
+      reconnecting: panelUpdateReconnecting,
+      onDetails: () => openModal('panelUpdateDetails'),
       checking: panelUpdateLoading,
       updating: updating,
       busy: maintenanceBusy,
@@ -2307,6 +2324,7 @@ class _SkyAppState extends State<SkyApp> {
                   'coreInstall' => 'core.install',
                   'coreRemove' => 'core.remove',
                   'panelUpdate' => 'panelUpdate.title',
+                  'panelUpdateDetails' => 'panelUpdate.details',
                   _ => 'modal.deleteTitle',
                 }),
               ),
@@ -2347,6 +2365,14 @@ class _SkyAppState extends State<SkyApp> {
         ], classes: 'modal-header'),
         div([
           if (modal == 'connection') connectionForm(),
+          if (modal == 'panelUpdateDetails')
+            PanelUpdateDetails(
+              job: maintenanceJob?.action == 'panel-update'
+                  ? maintenanceJob
+                  : null,
+              info: panelUpdateInfo,
+              checkError: panelUpdateError,
+            ),
           if (modal == 'recipient') recipientForm(),
           if (modal == 'share') shareContent(),
           if (modal == 'clearLogs') p([Component.text(t('logs.clearHint'))]),
@@ -2438,10 +2464,34 @@ class _SkyAppState extends State<SkyApp> {
               ),
             div([
               action(
-                t('common.cancel'),
+                t(
+                  modal == 'panelUpdateDetails'
+                      ? 'common.close'
+                      : 'common.cancel',
+                ),
                 closeModal,
                 disabled: dataBusy || clearingLogs || ownerBusy,
               ),
+              if (modal == 'panelUpdateDetails')
+                action(t('common.copy'), () async {
+                  try {
+                    await web.window.navigator.clipboard
+                        .writeText(
+                          const JsonEncoder.withIndent('  ').convert({
+                            'currentVersion': panelUpdateInfo?.currentVersion,
+                            'latestVersion': panelUpdateInfo?.latestVersion,
+                            'checkError': panelUpdateError,
+                            'job': maintenanceJob?.action == 'panel-update'
+                                ? maintenanceJob?.toJson()
+                                : null,
+                          }),
+                        )
+                        .toDart;
+                    notify(t('common.copied'));
+                  } catch (_) {
+                    notify(t('common.copyFailed'));
+                  }
+                }, glyph: 'copy'),
               if (modal == 'ownerName' || modal == 'ownerPassword')
                 action(
                   t('common.save'),

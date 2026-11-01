@@ -30,7 +30,7 @@ def target_platform():
     return {'x86_64': 'linux-amd64', 'aarch64': 'linux-arm64'}.get(platform.machine())
 
 
-def download(url, limit):
+def download(url, limit, *, on_progress=None):
     allowed = {'raw.githubusercontent.com', 'github.com', 'api.github.com',
                'release-assets.githubusercontent.com', 'objects.githubusercontent.com', 'codeload.github.com', 'go.dev', 'dl.google.com'}
 
@@ -50,9 +50,14 @@ def download(url, limit):
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), OfficialRedirect())
     with opener.open(request, timeout=30) as response:
         check(response.url)
-        data = response.read(limit + 1)
-        require(len(data) <= limit, 'download_too_large')
-        return data
+        data = bytearray()
+        while True:
+            chunk = response.read(min(262144, limit + 1 - len(data)))
+            if not chunk: break
+            data.extend(chunk)
+            require(len(data) <= limit, 'download_too_large')
+            if on_progress: on_progress(len(data))
+        return bytes(data)
 
 
 def verified_release(core, panel_version, platform_key, selected=None, *, fetch=download):

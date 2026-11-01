@@ -518,11 +518,30 @@ textarea { width: 100%; resize: vertical; padding: 10px; color: var(--text); bac
 
 .core-update-status { margin-top: 16px; min-height: 20px; }
 
-.sidebar-update { padding: 12px; border: 1px solid var(--line); border-radius: 5px; }
-.sidebar-update-status { height: 40px; line-height: 20px; margin: 8px 0; overflow-wrap: anywhere; overflow-y: auto; }
-.sidebar-update .button { width: 100%; justify-content: center; }
+.sidebar-update { padding: 12px; border: 1px solid var(--line); border-radius: 5px; display: grid; grid-template-rows: 24px 48px 20px 4px 20px 32px; gap: 8px; font-size: 16px; }
+.update-header, .update-heading, .update-stage, .update-metrics, .update-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.update-heading { justify-content: flex-start; }
+.update-chip { white-space: nowrap; color: var(--muted); font-size: 16px; line-height: 20px; padding: 2px 5px; border: 1px solid var(--line); border-radius: 3px; }
+.update-chip.failed { color: var(--accent); border-color: var(--accent); }
+.update-versions { display: grid; gap: 4px; }
+.update-version { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; align-items: center; }
+.update-version > :last-child { text-align: right; white-space: nowrap; }
+.update-stage > :first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.update-stage > :last-child { flex-shrink: 0; }
+.update-progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
+.update-progress-fill { height: 100%; background: var(--accent); }
+.update-metrics { font-size: 16px; line-height: 20px; }
+.update-source { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
+.update-source:hover { color: var(--text); }
+.update-actions .button { flex: 1; min-width: 0; justify-content: center; height: 32px; }
+.update-actions .icon-button { flex: 0 0 32px; height: 32px; }
+.update-details { display: grid; gap: 0; margin: 0; }
+.update-detail-row { display: grid; grid-template-columns: 144px minmax(0,1fr); gap: 16px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.update-detail-row dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 1000px) {
-  .sidebar-update { padding: 0; border: 0; }
-  .sidebar-update > .small, .sidebar-update-status { display: none; }
-  .sidebar-update .button { min-width: 0; padding: 7px 0; font-size: 0; gap: 0; }
+  .sidebar-update { padding: 0; border: 0; display: block; }
+  .sidebar-update > :not(.update-actions) { display: none; }
+  .update-actions { flex-direction: column; gap: 4px; }
+  .update-actions .button { width: 100%; min-width: 0; padding: 7px 0; font-size: 0; gap: 0; }
+  .update-actions .icon-button { flex-basis: 32px; }
 }

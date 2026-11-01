@@ -158,7 +158,7 @@ for file in VERSION ARCH bin/sky-ui bin/caddy lib/libsqlite3.so web/index.html w
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
   deploy/systemd/sky-ui-sing-box.service deploy/systemd/sky-ui-xray.service deploy/systemd/sky-ui-amneziawg.service \
-  deploy/engine_install.py deploy/amnezia_network.py compatibility/cores/amneziawg.json \
+  deploy/engine_install.py deploy/amnezia_network.py deploy/prepare_host.sh deploy/update_progress.py compatibility/cores/amneziawg.json \
   deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/maintenance.py deploy/panel_releases.py deploy/panel_update.py deploy/core_artifacts.py deploy/core_install.py deploy/sky-ui deploy/skyui deploy/cli.py compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
@@ -180,10 +180,22 @@ if [[ ! -f /etc/sky-ui/managed-by-sky-ui ]]; then
     fail 'Reserved Sky UI accounts already exist without an installation marker.'
   fi
 fi
-if ! command -v pkaction >/dev/null || ! command -v openssl >/dev/null || ! command -v nft >/dev/null || ! command -v ip >/dev/null; then
-  command -v apt-get >/dev/null || fail 'Install polkit, openssl, nftables and iproute2 before continuing on this distribution.'
-  apt-get update
-  apt-get install -y --no-install-recommends polkitd openssl ca-certificates python3 nftables iproute2
+printf 'SKY_UI_STAGE=prepare\n'
+if [[ -w /etc && -w /usr && -w /var/lib ]]; then
+  bash "$payload/deploy/prepare_host.sh"
+else
+  # Older update services have read-only /etc and /var/lib. Execute only the
+  # verified, fixed prerequisite helper through the host service manager. The
+  # parent keeps both installation locks; this helper never acquires them.
+  [[ -f /etc/sky-ui/managed-by-sky-ui ]] || fail 'Host preparation requires an installed panel.'
+  helper_dir="$(mktemp -d /var/lib/sky-ui-maintenance/work/prepare.XXXXXXXX)"
+  install -m 0700 "$payload/deploy/prepare_host.sh" "$helper_dir/prepare_host.sh"
+  helper_status=0
+  systemd-run --quiet --wait --pipe --collect --unit="sky-ui-prepare-${helper_dir##*.}" \
+    --property=RuntimeMaxSec=300 /usr/bin/bash "$helper_dir/prepare_host.sh" || helper_status=$?
+  rm -f -- "$helper_dir/prepare_host.sh"
+  rmdir -- "$helper_dir"
+  (( helper_status == 0 )) || fail "Host preparation failed (exit $helper_status)."
 fi
 for command in systemctl getent groupadd useradd install runuser curl python3; do
   command -v "$command" >/dev/null || fail "Missing dependency: $command"
@@ -195,16 +207,7 @@ validation_binary=-
 if [[ -L /opt/sky-ui/cores/mihomo/current || -f /opt/sky-ui/current/bin/mihomo ]]; then
   validation_binary="$(python3 "$payload/deploy/core_install.py" prepare --panel-version "$release_version" --platform "linux-$arch" --output "$temp/core")"
 fi
-getent group sky-ui >/dev/null || groupadd --system sky-ui
-getent passwd sky-ui >/dev/null || useradd --system --gid sky-ui --no-create-home --home-dir /var/lib/sky-ui --shell /usr/sbin/nologin sky-ui
-getent passwd sky-ui-core >/dev/null || useradd --system --gid sky-ui --no-create-home --home-dir /var/lib/sky-ui/cores/mihomo --shell /usr/sbin/nologin sky-ui-core
-for engine in sing-box xray; do
-  getent passwd "sky-ui-$engine" >/dev/null || useradd --system --gid sky-ui --no-create-home --home-dir "/var/lib/sky-ui/cores/$engine" --shell /usr/sbin/nologin "sky-ui-$engine"
-done
-getent group sky-ui-build >/dev/null || groupadd --system sky-ui-build
-getent passwd sky-ui-build >/dev/null || useradd --system --gid sky-ui-build --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin sky-ui-build
-getent group sky-ui-edge >/dev/null || groupadd --system sky-ui-edge
-getent passwd sky-ui-edge >/dev/null || useradd --system --gid sky-ui-edge --no-create-home --home-dir /var/lib/sky-ui-edge --shell /usr/sbin/nologin sky-ui-edge
+printf 'SKY_UI_STAGE=install\n'
 install -d -m 0755 /opt/sky-ui /opt/sky-ui/releases
 install -d -m 0711 -o root -g root /etc/sky-ui
 install -d -m 0750 -o sky-ui -g sky-ui /var/lib/sky-ui /var/lib/sky-ui/cores
@@ -215,7 +218,6 @@ install -d -m 0750 -o root -g sky-ui /var/lib/sky-ui-maintenance /var/lib/sky-ui
 install -d -m 0700 -o root -g root /var/lib/sky-ui-maintenance/work
 install -d -m 0700 -o sky-ui -g sky-ui /var/lib/sky-ui-maintenance/inbox
 install -d -m 0755 -o root -g root /opt/sky-ui/cores /opt/sky-ui/cores/mihomo
-install -d -m 0700 -o root -g root /var/lib/sky-ui-amneziawg-network
 for engine in sing-box xray amneziawg; do
   install -d -m 0755 -o root -g root "/opt/sky-ui/cores/$engine"
   install -d -m 0770 -o sky-ui -g sky-ui "/var/lib/sky-ui/cores/$engine"
@@ -345,6 +347,7 @@ systemctl daemon-reload
 systemctl enable sky-ui-maintenance-recovery.service
 # The core is not boot-enabled: the API restores its persisted desired state.
 systemctl reset-failed sky-ui.service
+printf 'SKY_UI_STAGE=activate\n'
 systemctl enable --now sky-ui.service
 healthy=0
 for attempt in $(seq 1 20); do

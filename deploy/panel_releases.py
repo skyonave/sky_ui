@@ -110,13 +110,25 @@ def discover(current, platform, requested=None, *, fetch=artifacts.download):
             'checkedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
 
 
-def prepare(release, platform, destination, *, fetch=artifacts.download):
+def prepare(release, platform, destination, *, fetch=artifacts.download, on_progress=None, on_verify=None):
     files = {}
+    total = sum(item['size'] for item in release['assets'].values())
+    received = 0
     for name, metadata in release['assets'].items():
-        data = fetch(metadata['browser_download_url'], metadata['size'])
+        def progress(size):
+            if on_progress: on_progress(received + size, total, name)
+        if fetch is artifacts.download:
+            data = fetch(metadata['browser_download_url'], metadata['size'], on_progress=progress)
+        else:
+            data = fetch(metadata['browser_download_url'], metadata['size'])
+        files[name] = data
+        received += len(data)
+        if on_progress: on_progress(received, total, name)
+    if on_verify: on_verify()
+    for name, metadata in release['assets'].items():
+        data = files[name]
         artifacts.require(len(data) == metadata['size'] and
             'sha256:' + hashlib.sha256(data).hexdigest() == metadata['digest'], 'release_checksum_failed')
-        files[name] = data
     for name in ('install.sh', 'sky-ui-' + platform + '.tar.gz'):
         parts = files[name + '.sha256'].decode('ascii').split()
         artifacts.require(len(parts) == 2 and parts[1] == name and
