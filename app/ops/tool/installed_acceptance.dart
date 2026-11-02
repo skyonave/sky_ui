@@ -148,6 +148,14 @@ Future<void> main(List<String> args) async {
       'backup',
     ], timeout: const Duration(minutes: 3));
     await apiReady(environment());
+    if (exists(downloadCache)) {
+      require(
+        !Directory(downloadCache)
+            .listSync()
+            .any((f) => f.path.endsWith('.zip') || f.path.endsWith('.tar.gz')),
+        'successful_install_kept_downloads',
+      );
+    }
     final backups =
         Directory('$state/backups')
             .listSync()
@@ -331,6 +339,8 @@ Future<void> main(List<String> args) async {
       state,
       '/var/lib/sky-ui-amneziawg-network',
       '/usr/local/bin/skyui',
+      downloadCache,
+      '/etc/tmpfiles.d/sky-ui-install.conf',
     ])
       require(!exists(path), 'uninstall_incomplete');
     require(

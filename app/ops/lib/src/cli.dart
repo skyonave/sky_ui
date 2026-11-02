@@ -24,6 +24,7 @@ const directories = [
   state,
   '/var/lib/sky-ui-amneziawg-network',
   '/opt/sky-ui',
+  downloadCache,
 ];
 Future<void> interactive(List<String> args, {bool check = true}) async {
   final p = await Process.start(
@@ -373,6 +374,12 @@ Future<List<String>> removalPlan() async {
     environment()['SKY_UI_DATA_DIR'] == dataRoot,
     'external_data_directory',
   );
+  if (exists(downloadCache))
+    require(
+      readText('$downloadCache/managed-by-sky-ui', 128).trim() ==
+          downloadCacheMarker,
+      'unmanaged_download_cache',
+    );
   final owner = await account('sky-ui'), gateway = await account('sky-ui-edge');
   for (final path in directories)
     if (exists(path))
@@ -399,6 +406,18 @@ Future<List<String>> removalPlan() async {
     '/run/lock/sky-ui-install.lock',
     '/run/lock/sky-ui-setup.lock',
   ];
+  const cachePolicy = '/etc/tmpfiles.d/sky-ui-install.conf';
+  if (exists(cachePolicy)) {
+    host.trusted(cachePolicy);
+    require(
+      readText(
+        cachePolicy,
+        4096,
+      ).startsWith('# Sky UI verified download retry cache.'),
+      'unmanaged_download_cache',
+    );
+    files.add(cachePolicy);
+  }
   for (final name in ['skyui', 'sky-ui']) {
     final path = '/usr/local/bin/$name';
     if (exists(path)) {

@@ -132,11 +132,18 @@ Map<String, Uint8List> checkAssets(String root, String tag) {
         ? name.substring(7)
         : name.startsWith('deploy/') || name.startsWith('compatibility/')
         ? name
+        : name == 'web/styles.css' ||
+              name == 'web/index.html' ||
+              name.startsWith('web/fonts/')
+        ? 'app/web/$name'
         : null;
     if (local != null)
       require(
-        normalized(File('$root/$local').readAsBytesSync()) ==
-            normalized(entry.value),
+        name.endsWith('.ttf')
+            ? digest(File('$root/$local').readAsBytesSync()) ==
+                  digest(entry.value)
+            : normalized(File('$root/$local').readAsBytesSync()) ==
+                  normalized(entry.value),
         'bundle_source_mismatch',
       );
   }

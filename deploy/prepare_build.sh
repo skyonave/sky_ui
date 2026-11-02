@@ -4,6 +4,7 @@ set -Eeuo pipefail
 umask 077
 [[ $EUID == 0 ]] || exit 1
 source "$(dirname -- "$0")/host_packages.sh"
+source "$(dirname -- "$0")/download_cache.sh"
 needs_packages=0
 for command in cc clang which unzip runuser getent groupadd useradd curl tar gzip openssl find; do
   if ! command -v "$command" >/dev/null; then needs_packages=1; fi
@@ -20,3 +21,13 @@ if (( needs_packages )); then
   sky_packages build
 fi
 sky_builder
+sky_cache_init
+cache_policy=/etc/tmpfiles.d/sky-ui-install.conf
+if [[ -e "$cache_policy" || -L "$cache_policy" ]]; then
+  [[ ! -L "$cache_policy" && -f "$cache_policy" && "$(stat -c '%u:%h' "$cache_policy")" == 0:1 ]] &&
+    cmp -- "$cache_policy" "$(dirname -- "$0")/sky-ui-install-tmpfiles.conf" || {
+      printf 'Sky UI: refusing an externally managed download-cache policy.\n' >&2;exit 1;
+    }
+else
+  install -D -m 0644 "$(dirname -- "$0")/sky-ui-install-tmpfiles.conf" "$cache_policy"
+fi

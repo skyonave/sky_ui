@@ -21,6 +21,7 @@ void main() {
           releaseRoot: versions,
           proc: '$root/proc',
           temporaryRoot: '$root/tmp',
+          downloadRoot: '$root/downloads',
         );
       });
       tearDown(() => Directory(root).deleteSync(recursive: true));
@@ -124,6 +125,38 @@ void main() {
           expect(rootOwnedDirectory('$root/foreign'), isFalse);
         },
       );
+      test('retry downloads keep one recent archive of each kind', () {
+        host.mkdir('$root/downloads', mode: 0x1c0);
+        host.atomic(
+          '$root/downloads/managed-by-sky-ui',
+          utf8.encode(downloadCacheMarker),
+          mode: 0x180,
+        );
+        final now = DateTime.now();
+        String cache(String kind, String character, int age) {
+          final suffix = kind == 'dart' ? 'zip' : 'tar.gz';
+          final path = '$root/downloads/$kind-${character * 64}.$suffix';
+          host.atomic(path, [1], mode: 0x180);
+          File(path).setLastModifiedSync(now.subtract(Duration(hours: age)));
+          return path;
+        }
+
+        final newest = cache('dart', 'a', 1),
+            old = cache('dart', 'b', 2),
+            expired = cache('panel', 'c', 25);
+        retention.pruneDownloads(now);
+        expect(exists(newest), isTrue);
+        expect(exists(old) || exists(expired), isFalse);
+      });
+      test('retry cache refuses an unmanaged directory', () {
+        host.mkdir('$root/downloads', mode: 0x1c0);
+        host.atomic('$root/downloads/foreign', [1], mode: 0x180);
+        expect(
+          () => retention.pruneDownloads(DateTime.now()),
+          throwsA(isA<OpsError>()),
+        );
+        expect(exists('$root/downloads/foreign'), isTrue);
+      });
     },
     skip:
         !Platform.isLinux ||

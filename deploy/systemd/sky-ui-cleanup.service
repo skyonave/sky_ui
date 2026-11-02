@@ -13,6 +13,7 @@ ProtectHome=yes
 ProtectSystem=strict
 NoNewPrivileges=yes
 ReadWritePaths=/opt/sky-ui/releases /opt/sky-ui/cores /var/lib/sky-ui-maintenance /run/lock /var/tmp
+ReadWritePaths=-/var/cache/sky-ui-install
 RestrictAddressFamilies=AF_UNIX
 MemoryMax=96M
 MemorySwapMax=0

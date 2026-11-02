@@ -9,6 +9,7 @@ payload="$(realpath -- "$1")"
 source "$payload/deploy/build_versions.sh"
 source "$payload/deploy/host_packages.sh"
 source "$payload/deploy/dart_sdk.sh"
+source "$payload/deploy/download_cache.sh"
 printf 'SKY_UI_STAGE=prepare\n'
 if ! command -v cc >/dev/null || ! command -v clang >/dev/null || ! command -v which >/dev/null || ! command -v unzip >/dev/null || ! command -v runuser >/dev/null; then
   sky_packages build
@@ -29,11 +30,6 @@ cp -R "$payload/source/." "$work/source/"
 chown -R sky-ui-build:sky-ui-build "$work/source" "$work/cache" "$work/home" "$work/tmp" "$work/output"
 arch="$(tr -d '\r\n' <"$payload/ARCH")"
 case "$arch" in amd64) sdk_arch=x64; sdk_sha="$dart_x64_sha" ;; arm64) sdk_arch=arm64; sdk_sha="$dart_arm64_sha" ;; *) fail 'Unsupported architecture.' ;; esac
-as_builder() {
-  nice -n 10 runuser -u sky-ui-build -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-    HOME="$work/home" PUB_CACHE="$work/cache" TMPDIR="$work/tmp" \
-    DART_SUPPRESS_ANALYTICS=true CI=true "$@"
-}
 sdk=;sdk_version=
 if command -v dart >/dev/null; then
   candidate="$(command -v dart)"
@@ -48,17 +44,26 @@ if [[ -z "$sdk" && -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then
 fi
 printf 'SKY_UI_STAGE=toolchain\n'
 if [[ -z "$sdk" ]]; then
-  printf 'Downloading temporary Dart SDK %s (%s).\n' "$dart_fallback" "$sdk_arch"
-  curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --max-time 600 \
-    -o "$work/dart.zip" "https://storage.googleapis.com/dart-archive/channels/stable/release/$dart_fallback/sdk/dartsdk-linux-$sdk_arch-release.zip"
+  if sky_cache_get dart "$sdk_sha" "$work/dart.zip"; then
+    printf 'Reusing verified Dart SDK download %s (%s).\n' "$dart_fallback" "$sdk_arch"
+  else
+    printf 'Downloading temporary Dart SDK %s (%s).\n' "$dart_fallback" "$sdk_arch"
+    curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --max-time 600 --max-filesize 268435456 \
+      -o "$work/dart.zip" "https://storage.googleapis.com/dart-archive/channels/stable/release/$dart_fallback/sdk/dartsdk-linux-$sdk_arch-release.zip"
+  fi
   printf '%s  %s\n' "$sdk_sha" "$work/dart.zip" | sha256sum --check --status || fail 'Dart SDK checksum mismatch.'
+  sky_cache_put dart "$sdk_sha" "$work/dart.zip" || printf 'Sky UI: could not retain the SDK download for retry.\n' >&2
   unzip -q "$work/dart.zip" -d "$work"
   rm -f -- "$work/dart.zip"
   # The SDK is read-only to the build account; only owned caches are writable.
   find "$work/dart-sdk" -type d -exec chmod 0755 {} +
   find "$work/dart-sdk" -type f -perm /111 -exec chmod 0755 {} +
   find "$work/dart-sdk" -type f ! -perm /111 -exec chmod 0644 {} +
-  sky_compatible_sdk "$work/dart-sdk/bin/dart" || fail 'The downloaded SDK cannot run on this host.'
+  if ! sky_compatible_sdk "$work/dart-sdk/bin/dart"; then
+    printf 'Dart SDK probe failed (%s, exit %s):\n' "$sdk_probe_stage" "$sdk_probe_status" >&2
+    printf '%s\n' "$sdk_probe_output" | tail -c 16384 >&2
+    fail 'The downloaded SDK could not pass its build capability check.'
+  fi
 else
   printf 'Using existing Dart SDK %s: %s\n' "$sdk_version" "$sdk"
 fi

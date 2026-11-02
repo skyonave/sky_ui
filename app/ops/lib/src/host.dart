@@ -15,6 +15,8 @@ const edge = '/var/lib/sky-ui-edge';
 const cores = '/opt/sky-ui/cores';
 const current = '/opt/sky-ui/current';
 const releases = '/opt/sky-ui/releases';
+const downloadCache = '/var/cache/sky-ui-install';
+const downloadCacheMarker = 'sky-ui-download-cache-v1';
 const engineIds = ['mihomo', 'sing-box', 'xray', 'amneziawg'];
 const units = [
   'sky-ui.service',

@@ -15,6 +15,7 @@ import 'api_client.dart';
 import 'protocol_field.dart';
 import 'panel_update_card.dart';
 import 'core_install_progress.dart';
+import 'engine_card.dart';
 
 class SkyApp extends StatefulComponent {
   const SkyApp({
@@ -33,7 +34,7 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.7.0-dev.4',
+    defaultValue: '0.8.0-dev.2',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
@@ -1493,124 +1494,36 @@ class _SkyAppState extends State<SkyApp> {
     pill(value, positive: ready),
   ], classes: 'system-status-row');
 
-  Component repositoryLink(String core) => el(
-    'a',
-    [icon('github')],
-    classes: 'icon-button repository-link',
-    attributes: {
-      'href': 'https://github.com/${coreRepositories[core]}',
-      'target': '_blank',
-      'rel': 'noopener noreferrer',
-      'aria-label': 'GitHub: ${coreName(core)}',
-      'title': 'GitHub: ${coreName(core)}',
-    },
-  );
-
   Component corePage() => div([
     heading('core'),
     maintenanceStatus(),
-    for (final descriptor in coreCatalog) engineCard(descriptor),
-  ], classes: 'core-list');
+    div([
+      for (final descriptor in coreCatalog) engineCard(descriptor),
+    ], classes: 'engine-list'),
+  ], classes: 'core-page');
 
   Component engineCard(CoreDescriptor descriptor) {
     final value = runtimes.where((r) => r.coreId == descriptor.id).firstOrNull;
-    final installed = value?.binaryAvailable == true;
-    final running = installed && value!.processState == CoreProcessState.active;
-    final availableUpdate = engineUpdates[descriptor.id]?.available == true;
-    final busy = dataBusy || runtimeBusy || maintenanceBusy || dependencyBusy;
-    final status = !installed
-        ? t('core.notInstalled')
-        : t('runtime.state.${value!.processState.name}');
-    return div([
-      div([
-        div([icon('core')], classes: 'core-large-icon'),
-        h2([Component.text(descriptor.name)]),
-        repositoryLink(descriptor.id),
-        pill(status, positive: running),
-      ], classes: 'core-header'),
-      div([
-        for (final fact in [
-          (t('core.version'), value?.version ?? '—'),
-          (
-            t('core.service'),
-            value?.service ?? 'sky-ui-${descriptor.id}.service',
-          ),
-          (
-            t('runtime.controller'),
-            installed
-                ? t(
-                    value!.controllerReady
-                        ? 'runtime.ready'
-                        : 'runtime.notReady',
-                  )
-                : '—',
-          ),
-          (
-            t('core.memory'),
-            value?.memoryBytes == null
-                ? '—'
-                : '${(value!.memoryBytes! / 1000000).toStringAsFixed(1)} MB',
-          ),
-        ])
-          div([
-            txt(fact.$1, classes: 'muted small'),
-            txt(fact.$2, classes: 'mono'),
-          ], classes: 'core-fact'),
-      ], classes: 'core-facts'),
-      div(
-        [
-          if (actionCore == descriptor.id && coreActionFeedback != null)
-            Component.text(coreActionFeedback!)
-          else if (installed && value?.error != null)
-            Component.text(runtimeMessage(value!.error!.code)),
-        ],
-        classes: 'runtime-notice',
-        attributes: {'role': 'status'},
-      ),
-      div([
-        if (installed) ...[
-          action(
-            t(running ? 'core.stop' : 'core.start'),
-            () => unawaited(
-              runCoreAction(
-                running ? CoreOperation.stop : CoreOperation.start,
-                instanceId: value!.instanceId,
-              ),
-            ),
-            glyph: 'power',
-            disabled: busy || value?.platformSupported != true,
-          ),
-          action(
-            t('core.restart'),
-            () => unawaited(
-              runCoreAction(
-                CoreOperation.restart,
-                instanceId: value!.instanceId,
-              ),
-            ),
-            glyph: 'refresh',
-            disabled: busy || value?.platformSupported != true,
-          ),
-        ],
-        action(
-          t(installed ? 'core.update' : 'core.install'),
-          () => unawaited(prepareCoreUpdate(descriptor.id)),
-          glyph: 'down',
-          disabled: busy || maintenance?.available != true || !availableUpdate,
-        ),
-        if (installed)
-          action(
-            t('core.remove'),
-            () {
-              maintenanceCore = descriptor.id;
-              openModal('coreRemove');
-            },
-            glyph: 'trash',
-            classes: 'button danger',
-            disabled: busy || maintenance?.available != true,
-          ),
-      ], classes: 'core-actions'),
-    ], classes: 'panel core-panel');
+    return EngineCard(
+      descriptor: descriptor,
+      runtime: value,
+      strings: t,
+      updateAvailable: engineUpdates[descriptor.id]?.available == true,
+      maintenanceAvailable: maintenance?.available == true,
+      busy: dataBusy || runtimeBusy || maintenanceBusy || dependencyBusy,
+      feedback: actionCore == descriptor.id && coreActionFeedback != null
+          ? coreActionFeedback
+          : value?.binaryAvailable == true && value?.error != null
+          ? runtimeMessage(value!.error!.code)
+          : null,
+      onOperation: (operation) =>
+          unawaited(runCoreAction(operation, instanceId: value!.instanceId)),
+      onInstallOrUpdate: () => unawaited(prepareCoreUpdate(descriptor.id)),
+      onRemove: () {
+        maintenanceCore = descriptor.id;
+        openModal('coreRemove');
+      },
+    );
   }
 
   String level(String value) => switch (value.toLowerCase()) {

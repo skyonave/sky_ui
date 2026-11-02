@@ -169,8 +169,28 @@ if [[ -z "$bundle" ]]; then
   base="https://github.com/skyonave/sky_ui/releases/download/$version"
   if [[ "$version" == latest ]]; then base=https://github.com/skyonave/sky_ui/releases/latest/download; fi
   bundle="$temp/$asset"
-  curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --output "$bundle" "$base/$asset"
   curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --output "$bundle.sha256" "$base/$asset.sha256"
+  # The cache helper is inside the bundle. Bootstrap reads only an immutable,
+  # checksum-matching archive from its root-only cache before extracting it.
+  download_sha="$(awk -v name="$asset" '$2 == name || $2 == "*"name {print $1}' "$bundle.sha256")"
+  [[ "$download_sha" =~ ^[a-fA-F0-9]{64}$ ]] || fail 'Invalid checksum file.'
+  cache_root=/var/cache/sky-ui-install
+  cached_bundle="$cache_root/panel-$download_sha.tar.gz"
+  if [[ "$(realpath -m -- "$cache_root")" == "$cache_root" && ! -L "$cache_root" && -d "$cache_root" &&
+        "$(stat -c '%u:%g:%a' -- "$cache_root")" == 0:0:700 &&
+        ! -L "$cache_root/managed-by-sky-ui" && -f "$cache_root/managed-by-sky-ui" &&
+        "$(stat -c '%u:%h:%a' -- "$cache_root/managed-by-sky-ui")" == 0:1:600 &&
+        "$(cat "$cache_root/managed-by-sky-ui")" == sky-ui-download-cache-v1 &&
+        ! -L "$cached_bundle" && -f "$cached_bundle" &&
+        "$(stat -c '%u:%h:%a' -- "$cached_bundle")" == 0:1:600 &&
+        "$(stat -c %s -- "$cached_bundle")" -le 167772160 &&
+        "$(( $(date +%s) - $(stat -c %Y -- "$cached_bundle") ))" -lt 86400 &&
+        "$(sha256sum -- "$cached_bundle" | awk '{print $1}')" == "$download_sha" ]]; then
+    cp -- "$cached_bundle" "$bundle"
+    printf 'Reusing verified Sky UI download.\n'
+  else
+    curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --max-filesize 167772160 --output "$bundle" "$base/$asset"
+  fi
 fi
 [[ -f "$bundle" && -f "$bundle.sha256" ]] || fail 'Bundle and adjacent .sha256 file are required.'
 expected="$(awk -v name="$asset" '$2 == name || $2 == "*"name {print $1}' "$bundle.sha256")"
@@ -207,7 +227,7 @@ for file in VERSION ARCH BUILD_MODE bin/caddy web/index.html web/main.dart.js we
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
   deploy/systemd/sky-ui-sing-box.service deploy/systemd/sky-ui-xray.service deploy/systemd/sky-ui-amneziawg.service \
-  deploy/journald-sky-ui.conf deploy/systemd/sky-ui-cleanup.service deploy/systemd/sky-ui-cleanup.timer deploy/prepare_host.sh deploy/prepare_build.sh deploy/host_packages.sh deploy/dart_sdk.sh deploy/build_host.sh deploy/build_versions.sh compatibility/cores/amneziawg.json \
+  deploy/journald-sky-ui.conf deploy/systemd/sky-ui-cleanup.service deploy/systemd/sky-ui-cleanup.timer deploy/prepare_host.sh deploy/prepare_build.sh deploy/host_packages.sh deploy/dart_sdk.sh deploy/download_cache.sh deploy/sky-ui-install-tmpfiles.conf deploy/build_host.sh deploy/build_versions.sh compatibility/cores/amneziawg.json \
   deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/sky-ui deploy/skyui compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
@@ -224,6 +244,10 @@ release_arch="$(tr -d '\r\n' <"$payload/ARCH")"
 [[ "$release_arch" == "$arch" ]] || fail 'Release architecture mismatch.'
 if [[ "$version" != latest ]]; then [[ "$version" == "v$release_version" ]] || fail 'Release version mismatch.'; fi
 if (( verify_only )); then printf 'Verified Sky UI %s for %s. No host changes made.\n' "$release_version" "$arch"; exit 0; fi
+source "$payload/deploy/download_cache.sh"
+if [[ "$build_mode" == source-v1 ]]; then
+  sky_cache_put panel "$actual" "$bundle" || printf 'Sky UI: could not retain the panel download for retry.\n' >&2
+fi
 
 # An identical source release already has a validated local build. Reuse it on
 # repeat installation instead of downloading a temporary SDK and compiling again.
@@ -265,10 +289,14 @@ prepare_fixed_host() {
   helper_dir="$(mktemp -d /var/lib/sky-ui-maintenance/work/prepare.XXXXXXXX)"
   install -m 0700 "$payload/deploy/$script" "$helper_dir/$script"
   install -m 0600 "$payload/deploy/host_packages.sh" "$helper_dir/host_packages.sh"
+  if [[ "$script" == prepare_build.sh ]]; then
+    install -m 0600 "$payload/deploy/download_cache.sh" "$helper_dir/download_cache.sh"
+    install -m 0600 "$payload/deploy/sky-ui-install-tmpfiles.conf" "$helper_dir/sky-ui-install-tmpfiles.conf"
+  fi
   helper_status=0
   systemd-run --quiet --wait --pipe --collect --unit="sky-ui-prepare-${helper_dir##*.}" \
     --property=RuntimeMaxSec=600 /usr/bin/bash "$helper_dir/$script" || helper_status=$?
-  rm -f -- "$helper_dir/$script" "$helper_dir/host_packages.sh"
+  rm -f -- "$helper_dir/$script" "$helper_dir/host_packages.sh" "$helper_dir/download_cache.sh" "$helper_dir/sky-ui-install-tmpfiles.conf"
   rmdir -- "$helper_dir"
   (( helper_status == 0 )) || fail "Host preparation failed (exit $helper_status)."
 }
@@ -458,6 +486,7 @@ systemctl enable --now sky-ui-certificates.timer
 systemctl start sky-ui-certificates.service
 "$release/bin/sky-ops" storage --record-panel "$previous" || printf 'Sky UI: retention history could not be saved.\n' >&2
 systemctl enable --now sky-ui-cleanup.timer
+sky_cache_clear || printf 'Sky UI: retry downloads will be removed by scheduled cleanup.\n' >&2
 changed=0
 printf 'Sky UI %s installed: http://127.0.0.1:%s\n' "$release_version" "$port"
 if [[ ! -f /etc/sky-ui/access.conf ]]; then printf 'Configure public HTTPS and owner access with sudo skyui setup.\n'; fi

@@ -766,6 +766,8 @@ class AppStrings {
       'core.service': 'Служба',
       'core.uptime': 'Время работы',
       'core.memory': 'Память',
+      'core.ram': 'RAM',
+      'core.updateShort': 'Обновить',
       'core.stop': 'Остановить',
       'core.start': 'Запустить',
       'core.restart': 'Перезапустить',

@@ -18,8 +18,9 @@ class Retention {
     this.releaseRoot = releases,
     this.proc = '/proc',
     this.temporaryRoot = '/var/tmp',
+    this.downloadRoot = downloadCache,
   });
-  final String releaseRoot, proc, temporaryRoot;
+  final String releaseRoot, proc, temporaryRoot, downloadRoot;
   final removed = <String>[];
   Map<String, dynamic> read(String path) {
     if (!exists(path)) return {};
@@ -253,6 +254,50 @@ class Retention {
     }
   }
 
+  void pruneDownloads(DateTime clock) {
+    if (!exists(downloadRoot)) return;
+    host.trusted(downloadRoot, directory: true);
+    require(
+      readText('$downloadRoot/managed-by-sky-ui', 128).trim() ==
+          downloadCacheMarker,
+      'unmanaged_download_cache',
+    );
+    final lock = HostLock('$downloadRoot/.lock');
+    try {
+      if (host.lock(lock.fd, 6) != 0) return;
+      final keep = <String>{};
+      final files =
+          Directory(downloadRoot)
+              .listSync(followLinks: false)
+              .where(
+                (f) => RegExp(
+                  r'^(?:panel-[a-f0-9]{64}\.tar\.gz|dart-[a-f0-9]{64}\.zip|\.download\.[A-Za-z0-9]{8})$',
+                ).hasMatch(basename(f.path)),
+              )
+              .toList()
+            ..sort(
+              (a, b) => b.statSync().modified.compareTo(a.statSync().modified),
+            );
+      for (final file in files) {
+        host.trusted(file.path);
+        final name = basename(file.path), info = file.statSync();
+        final kind = name.startsWith('dart-')
+            ? 'dart'
+            : name.startsWith('panel-')
+            ? 'panel'
+            : 'partial';
+        final limit = kind == 'dart' ? 256 * 1024 * 1024 : 160 * 1024 * 1024;
+        if (kind == 'partial' ||
+            clock.difference(info.modified).inHours >= 24 ||
+            info.size > limit ||
+            kind != 'partial' && !keep.add(kind))
+          remove(file.path, downloadRoot);
+      }
+    } finally {
+      lock.close();
+    }
+  }
+
   Map<String, dynamic> clean() {
     host.trusted(state, directory: true);
     if (Directory(state)
@@ -290,6 +335,7 @@ class Retention {
     }
     pruneVersions(releaseRoot, panel, releasePattern, refs, panel: true);
     pruneFiles(DateTime.now());
+    pruneDownloads(DateTime.now());
     if (exists(temporaryRoot))
       for (final dir in Directory(
         temporaryRoot,

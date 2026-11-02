@@ -1,4 +1,11 @@
 # SDK probing runs through the unprivileged builder supplied by the caller.
+as_builder() (
+  # Dart probes inspect ./bin, even with --help. Never inherit a private root cwd.
+  cd -- "$work/source"
+  nice -n 10 runuser -u sky-ui-build -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+    HOME="$work/home" PUB_CACHE="$work/cache" TMPDIR="$work/tmp" \
+    DART_SUPPRESS_ANALYTICS=true CI=true "$@"
+)
 sky_sdk_supported() {
   local output="$1" found major
   [[ "$output" =~ Dart\ SDK\ version:\ ([0-9]+\.[0-9]+\.[0-9]+)\ \(stable\) ]] || return 1
@@ -8,9 +15,15 @@ sky_sdk_supported() {
 }
 sky_compatible_sdk() {
   local candidate="$1" output
-  output="$(as_builder "$candidate" --version 2>&1)" || return 1
-  sky_sdk_supported "$output" || return 1
-  as_builder "$candidate" --suppress-analytics build cli --help >/dev/null 2>&1 || return 1
+  sdk_probe_stage=version;sdk_probe_status=0;sdk_probe_output=
+  if output="$(as_builder "$candidate" --version 2>&1)"; then :
+  else sdk_probe_status=$?;sdk_probe_output="$output";return 1;fi
+  if ! sky_sdk_supported "$output"; then
+    sdk_probe_status=1;sdk_probe_output="$output";return 1
+  fi
+  sdk_probe_stage=build-cli
+  if output="$(as_builder "$candidate" --suppress-analytics build cli --help 2>&1)"; then :
+  else sdk_probe_status=$?;sdk_probe_output="$output";return 1;fi
   sdk="$candidate"
 }
 sky_try_sdk() {

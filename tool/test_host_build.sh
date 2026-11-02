@@ -19,6 +19,7 @@ printf '#!/bin/bash\nprintf "Dart SDK version: 3.14.0 (dev) on linux_x64\\n"\n' 
 if sky_compatible_sdk "$test_dir/dart"; then printf 'Accepted prerelease SDK.\n' >&2;exit 1;fi
 printf '#!/bin/bash\nif [[ "$1" == --version ]]; then printf "Dart SDK version: 3.13.7 (stable) on linux_x64\\n"; else exit 2; fi\n' >"$test_dir/dart"
 if sky_compatible_sdk "$test_dir/dart"; then printf 'Accepted SDK without native build command.\n' >&2;exit 1;fi
+[[ "$sdk_probe_stage" == build-cli && "$sdk_probe_status" == 2 ]]
 source "$root/deploy/host_packages.sh"
 for manager in apt-get dnf zypper pacman; do
   bin="$test_dir/$manager";mkdir "$bin"
@@ -32,4 +33,17 @@ for manager in apt-get dnf zypper pacman; do
     if grep -F -- '-Syu' "$test_dir/$manager.log" >/dev/null; then exit 1; fi
   fi
 done
+if [[ $EUID == 0 ]] && getent passwd sky-ui-build >/dev/null; then
+  source "$root/deploy/dart_sdk.sh"
+  work="$test_dir/builder"
+  chmod 0755 "$test_dir"
+  mkdir -p "$work/source" "$work/home" "$work/cache" "$work/tmp" "$test_dir/private"
+  chmod 0755 "$work"
+  chmod 0700 "$test_dir/private"
+  chown sky-ui-build:sky-ui-build "$work/"{source,home,cache,tmp}
+  (
+    cd "$test_dir/private"
+    [[ "$(as_builder pwd)" == "$work/source" ]]
+  )
+fi
 printf 'PASS: SDK minimum/major/stable selection and four package-manager plans.\n'
