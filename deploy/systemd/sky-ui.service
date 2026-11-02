@@ -6,6 +6,7 @@ StartLimitIntervalSec=60
 StartLimitBurst=5
 
 [Service]
+LogNamespace=sky-ui
 Type=simple
 User=sky-ui
 Group=sky-ui

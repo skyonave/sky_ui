@@ -17,6 +17,7 @@ const engineStrings = <String, String>{
   'coreProgress.step.validate': 'Проверка',
   'coreProgress.step.activate': 'Установка',
   'runtime.error.core_build_failed': 'Не удалось собрать ядро. Подробности показаны на этапе установки.',
+  'runtime.error.core_build_space_required': 'Для сборки AmneziaWG нужно не менее 1 GB свободного места в /var/tmp. Освободи место и повтори установку.',
   'runtime.error.command_failed': 'Системная команда завершилась с ошибкой. Проверь технические детали операции.',
   'builder.installingAwg':
       'Сборка AmneziaWG. Установка может занять несколько минут.',

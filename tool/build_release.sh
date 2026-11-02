@@ -37,6 +37,7 @@ cp "$root/deploy/maintenance.py" "$root/deploy/panel_releases.py" "$root/deploy/
 cp "$root/deploy/engine_install.py" "$root/deploy/amnezia_network.py" "$stage/payload/deploy/"
 cp "$root/deploy/prepare_host.sh" "$stage/payload/deploy/"
 cp "$root/deploy/update_progress.py" "$stage/payload/deploy/"
+cp "$root/deploy/storage.py" "$root/deploy/journald-sky-ui.conf" "$stage/payload/deploy/"
 dart "$root/tool/collect_licenses.dart" "$root/app/api" "$root/app/web" "$stage/payload/licenses/dart"
 cp "$root/LICENSE" "$stage/payload/LICENSE"
 cp "$root/app/web/FEATHER-LICENSE.txt" "$stage/payload/licenses/feather.LICENSE"

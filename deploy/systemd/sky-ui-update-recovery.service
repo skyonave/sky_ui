@@ -4,6 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+LogNamespace=sky-ui
 Type=oneshot
 ExecStart=/usr/bin/python3 /opt/sky-ui/current/deploy/panel_update.py --recover
 TimeoutStartSec=600

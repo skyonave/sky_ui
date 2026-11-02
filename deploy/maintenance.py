@@ -232,9 +232,9 @@ def snapshot_files(preserve_sessions=False):
     return files
 
 
-def create_backup(gid):
+def create_backup(gid, purpose='manual'):
     identity = os.urandom(16).hex()
-    metadata = {'id': identity, 'created': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    metadata = {'id': identity, 'purpose':purpose, 'created': datetime.datetime.now(datetime.timezone.utc).isoformat(),
                 'version': read_regular(CURRENT.resolve(strict=True) / 'VERSION', 128).decode().strip(),
                 'machine': digest(read_regular(Path('/etc/machine-id'), 256)),
                 'coreVersion': run(['runuser', '-u', 'sky-ui-core', '--',
@@ -242,6 +242,7 @@ def create_backup(gid):
     data, manifest = pack_backup(snapshot_files(), metadata)
     atomic(STATE / 'backups' / (identity + '.tar.gz'), data, gid=gid)
     public = {key: metadata[key] for key in ['id', 'created', 'version', 'coreVersion']}
+    public['purpose'] = purpose
     public.update(size=len(data), sha256=digest(data))
     atomic(STATE / 'backups' / (identity + '.json'), json.dumps(public).encode(), gid=gid)
     return public
@@ -296,7 +297,7 @@ def restore_backup(identity, gid):
         elif (CORES / engine / 'current' / engine).is_file():
             args = ['run', '-test', '-config', str(configuration)] if engine == 'xray' else ['check', '-c', str(configuration)]
             run(['runuser', '-u', 'sky-ui-' + engine, '--', str(CORES / engine / 'current' / engine), *args])
-    rescue = create_backup(gid)
+    rescue = create_backup(gid, purpose='rescue')
     previous = snapshot_files()
     running = {unit: active(unit) for unit in UNITS}
     timer_running = active('sky-ui-certificates.timer')
@@ -549,6 +550,8 @@ def update_core(core, tag, gid, *, reporter=None, before_activation=None):
             ready(environment(), version=tag)
         atomic(root / 'previous.json', json.dumps({'path': str(previous)}).encode(), gid=gid)
         (STATE / 'update-intent.json').unlink()
+        import storage
+        storage.best_effort(SimpleNamespace(**globals()),'core',previous,core)
         return {'core': core, 'version': tag}
     except Exception:
         switch_link(link, previous)
@@ -618,6 +621,30 @@ def recover(gid):
             atomic(result, json.dumps(value).encode(), gid=gid)
 
 
+def acquire_lock(descriptor, timeout=30):
+    """Short housekeeping must not cause an already queued owner job to fail."""
+    deadline=time.monotonic()+timeout
+    while True:
+        try:
+            fcntl.flock(descriptor,fcntl.LOCK_EX|fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic()>=deadline: raise
+            time.sleep(.1)
+
+
+def wait_cleanup(timeout=30):
+    deadline=time.monotonic()+timeout
+    while True:
+        try:state=run(['systemctl','show','sky-ui-cleanup.service','--property=ActiveState','--value']).decode().strip()
+        except MaintenanceError:
+            if (STATE/'cleanup-intent.json').exists():raise
+            return
+        if not (STATE/'cleanup-intent.json').exists() and state not in ('active','activating','deactivating'):return
+        require(time.monotonic()<deadline,'maintenance_busy')
+        time.sleep(.1)
+
+
 def main():
     require(os.geteuid() == 0, 'root_required')
     os.umask(0o077)
@@ -626,8 +653,9 @@ def main():
         cli(sys.argv[2:], owner)
         return
     lock = open(STATE / 'worker.lock', 'a')
-    fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    acquire_lock(lock)
     if sys.argv[1:] == ['--recover']:
+        (STATE/'cleanup-intent.json').unlink(missing_ok=True)
         recover(owner.pw_gid)
         return
     require(not (STATE / 'restore-intent.json').exists() and not (STATE / 'update-intent.json').exists()
@@ -737,11 +765,17 @@ def cli(arguments, owner):
         job = {'action': 'install' if installing else 'update', 'core': 'mihomo', 'tag': tag}
     else:
         raise MaintenanceError('request_invalid')
+    wait_cleanup()
     previous_job = json.loads(read_regular(STATE / 'result.json', 4096)) if (STATE / 'result.json').exists() else {}
     require(previous_job.get('status') not in ('running', 'queued'), 'maintenance_busy')
     require(not (STATE / 'inbox/request.json').exists() and not active('sky-ui-maintenance.service') and not (STATE / 'panel-update-intent.json').exists(), 'maintenance_busy')
     job['id'] = os.urandom(16).hex()
     atomic(STATE / 'inbox/request.json', json.dumps(job).encode(), 0o600, owner.pw_uid, owner.pw_gid)
+    try:wait_cleanup()
+    except Exception:
+        pending=STATE/'inbox/request.json'
+        if pending.exists() and json.loads(read_regular(pending,4096)).get('id')==job['id']:pending.unlink()
+        raise
     service = 'sky-ui-update.service' if job['action'] == 'panel-update' else 'sky-ui-maintenance.service'
     run(['systemctl', 'start', '--no-block', service])
     print('Job:', job['id'])

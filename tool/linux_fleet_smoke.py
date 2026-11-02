@@ -153,6 +153,8 @@ assert call('auth/session')[0]['data']['authenticated']
 assert all(hashlib.sha256(Path(p).read_bytes()).hexdigest()==sha for p,sha in before.items())
 assert len(panel()['connections'])==4
 print('PASS: backup, repeated install, credentials, sessions and records preserved.',flush=True)
+run('python3','/source/tool/storage_smoke.py')
+print('PASS: installed automatic retention and isolated journal access.',flush=True)
 
 changed=dict(next(c for c in panel()['connections'] if c['coreId']=='sing-box'));changed['port']=35022
 call('connections/'+changed['id'],'PUT',{'revision':panel()['revision'],'connection':changed})
@@ -180,4 +182,6 @@ for path in ['/opt/sky-ui','/etc/sky-ui','/var/lib/sky-ui','/var/lib/sky-ui-main
 assert not any(p.name.startswith('skyawg') for p in Path('/sys/class/net').iterdir())
 assert subprocess.run(['nft','list','table','ip','sky_ui_awg'],capture_output=True).returncode!=0
 assert Path('/unrelated-fixture').read_text()=='preserve me'
+assert not Path('/etc/systemd/journald@sky-ui.conf').is_symlink()
+assert not any(Path('/var/log/journal').glob('*.sky-ui'))
 print('PASS: full uninstall removes managed services, data, interfaces and NAT without touching the sentinel.',flush=True)

@@ -23,7 +23,8 @@ UNITS = ('sky-ui.service', 'sky-ui-mihomo.service', 'sky-ui-edge.service',
          'sky-ui-sing-box.service', 'sky-ui-xray.service', 'sky-ui-amneziawg.service',
          'sky-ui-maintenance.service', 'sky-ui-maintenance-recovery.service',
          'sky-ui-update.service', 'sky-ui-update-recovery.service',
-         'sky-ui-certificates.service', 'sky-ui-certificates.timer')
+         'sky-ui-certificates.service', 'sky-ui-certificates.timer',
+         'sky-ui-cleanup.service', 'sky-ui-cleanup.timer')
 
 
 def runtime(m, path):
@@ -55,6 +56,8 @@ def rollback(m, intent, gid, *, start=True):
         if source.exists():
             m.atomic(SYSTEMD / unit, core_install.trusted(source).read_bytes(), 0o644)
         else:
+            if unit in ('sky-ui-cleanup.service','sky-ui-cleanup.timer'):
+                m.run(['systemctl','disable','--now',unit])
             (SYSTEMD / unit).unlink(missing_ok=True)
     m.atomic(POLKIT, core_install.trusted(previous / 'deploy/polkit/49-sky-ui.rules').read_bytes(), 0o644)
     for name in ('skyui', 'sky-ui'):
@@ -160,8 +163,8 @@ def main():
     core_install.trusted(m.ETC / 'managed-by-sky-ui')
     owner = pwd.getpwnam('sky-ui')
     with open('/run/lock/sky-ui-install.lock', 'a') as install_lock, (m.STATE / 'worker.lock').open('a') as lock:
-        fcntl.flock(install_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        m.acquire_lock(install_lock)
+        m.acquire_lock(lock)
         if sys.argv[1:] == ['--recover']:
             recover(m, owner.pw_gid, start=True)
             return

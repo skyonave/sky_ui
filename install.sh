@@ -52,7 +52,11 @@ fi
 for command in tar sha256sum awk grep sed mktemp; do
   command -v "$command" >/dev/null || fail "Missing dependency: $command"
 done
-temp="$(mktemp -d)"
+if (( verify_only )); then
+  temp="$(mktemp -d)"
+else
+  temp="$(mktemp -d /var/tmp/sky-ui-install.XXXXXXXX)"
+fi
 previous=
 changed=0
 api_was_running=0
@@ -93,11 +97,11 @@ rollback() {
         fi
       done
       install -m 0644 "$previous/deploy/systemd/sky-ui-edge.service" /etc/systemd/system/sky-ui-edge.service
-      for unit in sky-ui-maintenance.service sky-ui-maintenance-recovery.service sky-ui-update.service sky-ui-update-recovery.service; do
+      for unit in sky-ui-maintenance.service sky-ui-maintenance-recovery.service sky-ui-update.service sky-ui-update-recovery.service sky-ui-cleanup.service sky-ui-cleanup.timer; do
         if [[ -f "$previous/deploy/systemd/$unit" ]]; then
           install -m 0644 "$previous/deploy/systemd/$unit" "/etc/systemd/system/$unit"
         else
-          systemctl disable "$unit" 2>/dev/null || true
+          systemctl disable --now "$unit" 2>/dev/null || true
           rm -f -- "/etc/systemd/system/$unit"
         fi
       done
@@ -158,7 +162,7 @@ for file in VERSION ARCH bin/sky-ui bin/caddy lib/libsqlite3.so web/index.html w
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
   deploy/systemd/sky-ui-sing-box.service deploy/systemd/sky-ui-xray.service deploy/systemd/sky-ui-amneziawg.service \
-  deploy/engine_install.py deploy/amnezia_network.py deploy/prepare_host.sh deploy/update_progress.py compatibility/cores/amneziawg.json \
+  deploy/storage.py deploy/journald-sky-ui.conf deploy/systemd/sky-ui-cleanup.service deploy/systemd/sky-ui-cleanup.timer deploy/engine_install.py deploy/amnezia_network.py deploy/prepare_host.sh deploy/update_progress.py compatibility/cores/amneziawg.json \
   deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/maintenance.py deploy/panel_releases.py deploy/panel_update.py deploy/core_artifacts.py deploy/core_install.py deploy/sky-ui deploy/skyui deploy/cli.py compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
@@ -335,6 +339,8 @@ install -m 0644 "$release/deploy/systemd/sky-ui-maintenance.service" /etc/system
 install -m 0644 "$release/deploy/systemd/sky-ui-maintenance-recovery.service" /etc/systemd/system/sky-ui-maintenance-recovery.service
 install -m 0644 "$release/deploy/systemd/sky-ui-update.service" /etc/systemd/system/sky-ui-update.service
 install -m 0644 "$release/deploy/systemd/sky-ui-update-recovery.service" /etc/systemd/system/sky-ui-update-recovery.service
+install -m 0644 "$release/deploy/systemd/sky-ui-cleanup.service" /etc/systemd/system/sky-ui-cleanup.service
+install -m 0644 "$release/deploy/systemd/sky-ui-cleanup.timer" /etc/systemd/system/sky-ui-cleanup.timer
 install -d -m 0755 /usr/local/bin
 install -m 0755 "$release/deploy/sky-ui" /usr/local/bin/sky-ui
 install -m 0755 "$release/deploy/skyui" /usr/local/bin/skyui
@@ -344,6 +350,7 @@ ln -s "$release" /opt/sky-ui/.next-link
 mv -Tf /opt/sky-ui/.next-link /opt/sky-ui/current
 unlock_worker
 systemctl daemon-reload
+systemctl try-restart systemd-journald@sky-ui.service
 systemctl enable sky-ui-maintenance-recovery.service
 # The core is not boot-enabled: the API restores its persisted desired state.
 systemctl reset-failed sky-ui.service
@@ -364,11 +371,14 @@ fi
 if (( edge_was_running )); then systemctl restart sky-ui-edge.service; fi
 systemctl enable --now sky-ui-certificates.timer
 systemctl start sky-ui-certificates.service
+python3 "$release/deploy/storage.py" --record-panel "$previous" || printf 'Sky UI: retention history could not be saved.\n' >&2
+systemctl enable --now sky-ui-cleanup.timer
 changed=0
 printf 'Sky UI %s installed: http://127.0.0.1:%s\n' "$release_version" "$port"
 if [[ ! -f /etc/sky-ui/access.conf ]]; then printf 'Configure public HTTPS and owner access with sudo skyui setup.\n'; fi
 printf 'The core starts only after a panel action or restoration of a previously saved running state.\n'
 if [[ -z "${SKY_UI_TRANSACTION_LOCK_FD:-}" ]]; then flock -u 9; fi
+systemctl start --no-block sky-ui-cleanup.service || true
 if [[ -z "${SKY_UI_TRANSACTION_LOCK_FD:-}" && ! -f /etc/sky-ui/access.conf ]] && (: </dev/tty) 2>/dev/null; then
   bash /opt/sky-ui/current/deploy/setup.sh
 else

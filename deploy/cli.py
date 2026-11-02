@@ -16,7 +16,8 @@ import maintenance as m
 
 UNITS = ('sky-ui.service', 'sky-ui-mihomo.service', 'sky-ui-sing-box.service', 'sky-ui-xray.service', 'sky-ui-amneziawg.service', 'sky-ui-edge.service',
          'sky-ui-certificates.service', 'sky-ui-certificates.timer',
-         'sky-ui-maintenance.service', 'sky-ui-maintenance-recovery.service', 'sky-ui-update.service', 'sky-ui-update-recovery.service')
+         'sky-ui-maintenance.service', 'sky-ui-maintenance-recovery.service', 'sky-ui-update.service', 'sky-ui-update-recovery.service',
+         'sky-ui-cleanup.service','sky-ui-cleanup.timer')
 ACCOUNTS = ('sky-ui', 'sky-ui-core', 'sky-ui-sing-box', 'sky-ui-xray', 'sky-ui-build', 'sky-ui-edge')
 DIRECTORIES = tuple(map(Path, ('/etc/sky-ui', '/var/lib/sky-ui', '/var/lib/sky-ui-edge',
     '/var/lib/sky-ui-certificates', '/var/lib/sky-ui-maintenance', '/var/lib/sky-ui-amneziawg-network', '/opt/sky-ui')))
@@ -59,13 +60,14 @@ def managed():
 def locked():
     descriptors = []
     try:
+        m.wait_cleanup()
         if (m.STATE / 'panel-update-intent.json').exists():
             raise ValueError('Выполняется обновление Sky UI. Дождитесь завершения.')
         for path in (LOCKS[0], m.STATE / 'worker.lock'):
             fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
             descriptors.append(fd)
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                m.acquire_lock(fd)
             except BlockingIOError:
                 raise ValueError('Установка, настройка или обслуживание уже выполняется.')
         yield
@@ -152,7 +154,7 @@ def logs(target, follow, lines):
              'core': ('sky-ui-mihomo.service',), 'all': UNITS,
              'certificates': ('sky-ui-edge.service', 'sky-ui-certificates.service')}
     units.update({core: ('sky-ui-' + core + '.service',) for core in ('sing-box', 'xray', 'amneziawg')})
-    args = ['journalctl', '--no-pager', '-n', str(lines)]
+    args = ['journalctl', '--namespace=+sky-ui', '--no-pager', '-n', str(lines)]
     for unit in units[target]:
         args += ['-u', unit]
     if follow:
@@ -200,6 +202,10 @@ def removal_plan():
         account = 'sky-ui' if path == m.DATA else 'sky-ui-edge' if path == m.EDGE else None
         trusted(path, directory=True, uid=pwd.getpwnam(account).pw_uid if account else 0)
     files = [SYSTEMD / unit for unit in UNITS] + [POLKIT, *LOCKS]
+    journal_config=SYSTEMD.parent/'journald@sky-ui.conf'
+    if journal_config.exists() or journal_config.is_symlink():
+        if not journal_config.is_symlink() or journal_config.readlink()!=Path('/opt/sky-ui/current/deploy/journald-sky-ui.conf'):
+            raise ValueError('Journal namespace configuration does not belong to Sky UI.')
     for command in COMMANDS:
         trusted(command)
         if command.exists() and '/opt/sky-ui/current/deploy/' not in m.read_regular(command, 16384).decode():
@@ -266,9 +272,15 @@ def uninstall(confirm=input):
             except KeyError:
                 continue
             run('groupdel', account)
+        run('systemctl','stop','systemd-journald@sky-ui.service','systemd-journald@sky-ui.socket','systemd-journald-varlink@sky-ui.socket',check=False,capture=True)
+        machine=Path('/etc/machine-id').read_text().strip()
+        if __import__('re').fullmatch('[0-9a-f]{32}',machine):
+            journal=m.DATA.parent.parent/'log/journal'/(machine+'.sky-ui')
+            if journal.exists(): shutil.rmtree(trusted(journal,directory=True))
         for path in files:
             if path not in LOCKS:
                 path.unlink(missing_ok=True)
+        (SYSTEMD.parent/'journald@sky-ui.conf').unlink(missing_ok=True)
         for unit in UNITS:
             dropin = SYSTEMD / (unit + '.d')
             if dropin.exists():
@@ -290,7 +302,7 @@ def main(argv=None):
     for name, help_text in [('status','Состояние служб и версия'), ('version','Версия Sky UI'), ('update','Обновить Sky UI'),
             ('setup','Настройка IP, домена и администратора'), ('backup','Создать резервную копию'),
             ('backups','Список резервных копий'), ('remove-core','Удалить ядро, сохранив подключения'), ('install-core','Установить проверенное ядро'), ('update-core','Установить проверенную версию ядра'),
-            ('uninstall','Полностью удалить Sky UI и его данные')]:
+            ('cleanup','Удалить ненужные артефакты и логи'), ('uninstall','Полностью удалить Sky UI и его данные')]:
         sub = commands.add_parser(name, help=help_text)
         if name in ('install-core', 'update-core', 'remove-core'):
             sub.add_argument('core', choices=tuple(m.CORE_REPOSITORIES), nargs='?', default='mihomo')
@@ -321,6 +333,9 @@ def main(argv=None):
         status()
     elif command == 'setup':
         setup()
+    elif command == 'cleanup':
+        run('systemctl','start','sky-ui-cleanup.service')
+        print('Свободно: '+format(shutil.disk_usage(m.STATE).free/1073741824,'.1f')+' GB')
     elif command == 'uninstall':
         uninstall()
     elif command in ('logs','certificates'):

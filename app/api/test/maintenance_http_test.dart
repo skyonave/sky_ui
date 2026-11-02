@@ -178,6 +178,36 @@ void main() {
   }
 
   test(
+    'storage cleanup gates writes while retaining the last job and reads',
+    () async {
+      final who = await login();
+      final result = File('${directory.path}/result.json');
+      const original =
+          '{"id":"fixture","action":"backup","status":"completed"}';
+      result.writeAsStringSync(original);
+      final marker = File('${directory.path}/cleanup-intent.json')
+        ..writeAsStringSync('{}');
+      expect(maintenance.busy, isTrue);
+      expect(
+        (await call('/api/v1/auth/session', cookie: who.cookie)).status,
+        200,
+      );
+      final response = await call(
+        '/api/v1/maintenance',
+        method: 'POST',
+        cookie: who.cookie,
+        csrf: who.csrf,
+        payload: {'action': 'backup'},
+      );
+      expect(response.status, 409);
+      expect((response.json['error'] as Map)['code'], 'maintenance_busy');
+      expect(result.readAsStringSync(), original);
+      marker.deleteSync();
+      expect(maintenance.busy, isFalse);
+    },
+  );
+
+  test(
     'manual release checks require owner access and bypass discovery cache',
     () async {
       expect((await call('/api/v1/panel-update?refresh=true')).status, 401);

@@ -74,6 +74,7 @@ class JsonProxyAdapter implements CoreAdapter {
     _observing = true;
     try {
       final result = await runner.run('/usr/bin/journalctl', [
+        '--namespace=+sky-ui',
         '--unit',
         core.service,
         '--no-pager',

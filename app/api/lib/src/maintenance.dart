@@ -21,6 +21,7 @@ class MaintenanceService {
   bool get busy {
     if (!available) return false;
     if (_submitting) return true;
+    if (File('$directory/cleanup-intent.json').existsSync()) return true;
     if (File('$directory/restore-intent.json').existsSync() ||
         File('$directory/update-intent.json').existsSync() ||
         File('$directory/core-remove-intent.json').existsSync() ||
@@ -146,6 +147,10 @@ class MaintenanceService {
     final temporary = File('$directory/inbox/$id.tmp');
     await temporary.writeAsString(jsonEncode(payload), flush: true);
     await temporary.rename(_request.path);
+    if (File('$directory/cleanup-intent.json').existsSync()) {
+      await _request.delete();
+      throw const ApiException('maintenance_busy', status: 409);
+    }
     try {
       final result = await runner.run('systemctl', [
         'start',

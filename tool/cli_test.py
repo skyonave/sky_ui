@@ -132,6 +132,7 @@ class CliTests(unittest.TestCase):
         inbox = c.m.STATE/'inbox'; inbox.mkdir()
         queued = []
         def complete(args, **kwargs):
+            if args[:2]==['systemctl','show']:return b'inactive\n'
             self.assertEqual(args, ['systemctl','start','--no-block','sky-ui-update.service'])
             payload = json.loads((inbox/'request.json').read_text()); queued.append(payload)
             (inbox/'request.json').unlink()
@@ -144,6 +145,11 @@ class CliTests(unittest.TestCase):
         self.assertEqual(queued[0]['action'], 'panel-update')
         self.assertEqual(queued[0]['tag'], 'v0.6.0-dev.5')
         self.assertRegex(queued[0]['id'], '^[a-f0-9]{32}$')
+
+    def test_cleanup_command_starts_the_fixed_cleanup_unit(self):
+        with patch.object(c,'run') as run:
+            c.main(['cleanup'])
+        run.assert_called_once_with('systemctl','start','sky-ui-cleanup.service')
 
 
 if __name__ == '__main__':

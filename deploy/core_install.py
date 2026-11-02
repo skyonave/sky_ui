@@ -122,6 +122,13 @@ def activate(prepared, *, root=CORE, releases=RELEASES):
     try:
         link.symlink_to(slot)
         os.replace(link, root / 'current')
+        # Initial independent installs have no earlier slot to retain.
+        # Later replacements are tracked after the worker health check.
+        if installed is None:
+            marker=root/'retention.json'
+            if not marker.exists():
+                marker.write_text(json.dumps({'current':str(slot),'previous':None}))
+                marker.chmod(0o600)
     finally:
         link.unlink(missing_ok=True)
     return slot / 'mihomo'

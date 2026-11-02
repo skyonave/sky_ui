@@ -4,6 +4,7 @@ After=network-online.target sky-ui.service
 Wants=network-online.target
 
 [Service]
+LogNamespace=sky-ui
 Type=notify
 NotifyAccess=main
 User=sky-ui-edge

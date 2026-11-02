@@ -16,6 +16,7 @@ import time
 import core_artifacts as artifacts
 
 ENGINES = ('sing-box', 'xray', 'amneziawg')
+AWG_BUILD_FREE_BYTES = 1024 * 1024 * 1024
 GO_TOOLCHAINS = {
     'linux-amd64': ('go1.27.3.linux-amd64.tar.gz', '65efbc80fdc1fa2cd2631cad5b481777a68e8725f34e89f50fc6ac714e379b40'),
     'linux-arm64': ('go1.27.3.linux-arm64.tar.gz', 'a06e99309dbcbdca1a8ccd2282c3ee146e55930886e26b4f1193269587165f49'),
@@ -24,6 +25,9 @@ GO_TOOLCHAINS = {
 
 def build_awg(source, work, tag, m, reporter=None):
     """Build the verified upstream source as an account with no panel data access."""
+    # SDK extraction, module/build caches and compiler output need disk space
+    # concurrently. Check before downloading the SDK or stopping any service.
+    m.require(shutil.disk_usage(work).free >= AWG_BUILD_FREE_BYTES, 'core_build_space_required')
     account = pwd.getpwnam('sky-ui-build')
     tree = work / 'source'
     tree.mkdir(mode=0o755)
@@ -69,9 +73,14 @@ def build_awg(source, work, tag, m, reporter=None):
     # traversable by the separate build account; files remain read-only to it.
     for directory, _, _ in os.walk(work / 'go'):
         Path(directory).chmod(0o755)
+    temporary = work / 'tmp'
+    temporary.mkdir(mode=0o700)
+    os.chown(temporary, account.pw_uid, account.pw_gid)
     go = str(work / 'go/bin/go')
     args = ['nice', '-n', '10', 'runuser', '-u', 'sky-ui-build', '--', '/usr/bin/env',
            'HOME=' + str(work), 'GOCACHE=' + str(work / 'cache'),
+           'GOPATH=' + str(work / 'gopath'),
+           'TMPDIR=' + str(temporary), 'GOTMPDIR=' + str(temporary),
            'GOMODCACHE=' + str(work / 'modules'), 'GOTOOLCHAIN=local', 'CGO_ENABLED=0',
            'GOPROXY=https://proxy.golang.org,direct', 'GOSUMDB=sum.golang.org',
            'GOMAXPROCS=1', 'GOMEMLIMIT=128MiB', 'GOFLAGS=-p=1',
@@ -197,7 +206,9 @@ def change(action, core, tag, gid, uid, m, *, reporter=None, before_activation=N
     except artifacts.ArtifactError as error:
         raise m.MaintenanceError(str(error))
     if core == 'amneziawg':
-        with tempfile.TemporaryDirectory(prefix='sky-ui-build-') as temporary:
+        # /tmp may be a small tmpfs. Keep SDK, caches and compiler temporary
+        # files together in the service's private disk-backed /var/tmp.
+        with tempfile.TemporaryDirectory(prefix='sky-ui-build-', dir='/var/tmp') as temporary:
             if reporter: files[core] = build_awg(files.pop('source.tar.gz'), Path(temporary), tag, m, reporter)
             else: files[core] = build_awg(files.pop('source.tar.gz'), Path(temporary), tag, m)
         receipt = json.loads(files['artifact.json'])
@@ -231,6 +242,8 @@ def change(action, core, tag, gid, uid, m, *, reporter=None, before_activation=N
             restart_ready(core, m)
         (m.STATE / 'engine-intent.json').unlink(missing_ok=True)
         raise m.MaintenanceError('update_rolled_back')
+    import storage
+    storage.best_effort(m,'core',previous,core)
     return {'core': core, 'version': tag, 'installed': True}
 
 

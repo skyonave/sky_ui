@@ -6,6 +6,7 @@ Before=sky-ui.service sky-ui-mihomo.service sky-ui-sing-box.service sky-ui-xray.
 ConditionPathExists=/var/lib/sky-ui-maintenance
 
 [Service]
+LogNamespace=sky-ui
 Type=oneshot
 ExecStart=/usr/bin/python3 /opt/sky-ui/current/deploy/maintenance.py --recover
 RemainAfterExit=yes

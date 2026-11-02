@@ -1,0 +1,11 @@
+[Unit]
+Description=Sky UI periodic storage cleanup
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=1h
+RandomizedDelaySec=5min
+Unit=sky-ui-cleanup.service
+
+[Install]
+WantedBy=timers.target

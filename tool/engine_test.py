@@ -21,6 +21,14 @@ import maintenance as maintenance
 
 
 class EngineTests(unittest.TestCase):
+    def test_low_disk_fails_before_toolchain_download_or_build(self):
+        with tempfile.TemporaryDirectory() as temporary, \
+             patch.object(engine.shutil,'disk_usage',return_value=SimpleNamespace(free=engine.AWG_BUILD_FREE_BYTES-1)), \
+             patch.object(engine.artifacts,'download') as download:
+            with self.assertRaisesRegex(maintenance.MaintenanceError,'^core_build_space_required$'):
+                engine.build_awg(b'unused',Path(temporary),'v3.1.20260828',maintenance)
+            download.assert_not_called()
+
     def test_root_sdk_directories_are_executable_under_private_worker_umask(self):
         def archive(files):
             output=io.BytesIO()
@@ -38,10 +46,15 @@ class EngineTests(unittest.TestCase):
                 self.assertEqual((root/'go').stat().st_mode & 0o777,0o755)
                 self.assertEqual((root/'go/bin').stat().st_mode & 0o777,0o755)
                 self.assertEqual((root/'go/pkg/tool').stat().st_mode & 0o777,0o755)
+                self.assertIn('GOPATH='+str(root/'gopath'),args)
+                self.assertIn('GOTMPDIR='+str(root/'tmp'),args)
+                self.assertIn('TMPDIR='+str(root/'tmp'),args)
+                self.assertEqual((root/'tmp').stat().st_mode & 0o777,0o700)
                 (root/'amneziawg').write_bytes(b'compiled fixture')
             previous=os.umask(0o077)
             try:
-                with patch.object(engine.pwd,'getpwnam',return_value=account),patch.object(engine.artifacts,'download',return_value=sdk), \
+                with patch.object(engine.shutil,'disk_usage',return_value=SimpleNamespace(free=engine.AWG_BUILD_FREE_BYTES)), \
+                     patch.object(engine.pwd,'getpwnam',return_value=account),patch.object(engine.artifacts,'download',return_value=sdk), \
                      patch.dict(engine.GO_TOOLCHAINS,{'linux-amd64':('fixture.tar.gz',hashlib.sha256(sdk).hexdigest())}), \
                      patch.object(engine.artifacts,'target_platform',return_value='linux-amd64'):
                     result=engine.build_awg(source,root,'v3.1.20260828',SimpleNamespace(run=compile_probe,require=maintenance.require,read_regular=maintenance.read_regular))

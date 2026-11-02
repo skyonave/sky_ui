@@ -21,6 +21,18 @@ spec.loader.exec_module(m)
 
 
 class MaintenanceTests(unittest.TestCase):
+    def test_cleanup_wait_does_not_consume_or_replace_queued_work(self):
+        request=self.root/'state/inbox/request.json'
+        request.write_text('{"action":"backup"}')
+        with patch.object(m,'run',side_effect=[b'activating\n',b'inactive\n']),patch.object(m.time,'sleep'):
+            m.wait_cleanup()
+        self.assertEqual(request.read_text(),'{"action":"backup"}')
+
+    def test_queued_worker_waits_for_short_lock_contention(self):
+        with patch.object(m.fcntl,'flock',side_effect=[BlockingIOError(),None]) as lock,patch.object(m.time,'sleep'):
+            m.acquire_lock(123)
+        self.assertEqual(lock.call_count,2)
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -159,10 +171,16 @@ class MaintenanceTests(unittest.TestCase):
     def test_cli_reports_pre_worker_service_failure_and_releases_its_request(self):
         owner = SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
         with patch.object(m,'run',return_value=b'failed\n'), patch.object(m,'active',return_value=False), \
-             patch.object(m.time,'monotonic',side_effect=[0,1,7]):
+             patch.object(m.time,'monotonic',side_effect=[0,1,7]),patch.object(m,'wait_cleanup'):
             with self.assertRaisesRegex(m.MaintenanceError,'skyui logs all'):
                 m.cli(['backup'],owner)
         self.assertFalse((m.STATE / 'inbox/request.json').exists())
+
+    def test_cleanup_timeout_does_not_leave_a_job_without_a_worker(self):
+        owner=SimpleNamespace(pw_uid=os.getuid(),pw_gid=os.getgid())
+        with patch.object(m,'wait_cleanup',side_effect=[None,m.MaintenanceError('maintenance_busy')]),patch.object(m,'active',return_value=False):
+            with self.assertRaisesRegex(m.MaintenanceError,'maintenance_busy'):m.cli(['backup'],owner)
+        self.assertFalse((m.STATE/'inbox/request.json').exists())
 
     def removal_fixture(self):
         root=m.CORES/'mihomo';slot=root/('v1.2.3-'+'a'*16);slot.mkdir()
