@@ -35,11 +35,7 @@ owner_dir="$(sed -n 's/^SKY_UI_DATA_DIR=//p' /etc/sky-ui/server.env)"
 [[ "$owner_dir" == /* && "$owner_dir" != / ]] || fail 'Некорректная папка данных.'
 owner_db="$owner_dir/owner.sqlite"
 if [[ -f "$owner_db" ]]; then
-  python3 - "$owner_db" "$temp/old-owner.sqlite" <<'PY'
-import sqlite3,sys
-with sqlite3.connect(sys.argv[1]) as source,sqlite3.connect(sys.argv[2]) as target:
-    source.backup(target)
-PY
+  /opt/sky-ui/current/bin/sky-ops database-copy "$owner_db" "$temp/old-owner.sqlite"
 fi
 rollback() {
   trap - ERR

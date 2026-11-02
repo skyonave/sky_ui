@@ -26,9 +26,8 @@ class AmneziaAdapter extends JsonProxyAdapter {
   Future<void> validate(ManagedCore core) async {
     if (!await File(core.binary).exists())
       throw const ApiException('binary_missing', status: 409);
-    final result = await runner.run('/usr/bin/python3', [
-      '-I',
-      '/opt/sky-ui/current/deploy/amnezia_network.py',
+    final result = await runner.run('/opt/sky-ui/current/bin/sky-ops', [
+      'amnezia',
       'check',
       core.configuration,
     ]);

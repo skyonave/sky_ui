@@ -8,7 +8,7 @@ ConditionPathExists=/var/lib/sky-ui-maintenance
 [Service]
 LogNamespace=sky-ui
 Type=oneshot
-ExecStart=/usr/bin/python3 /opt/sky-ui/current/deploy/maintenance.py --recover
+ExecStart=/opt/sky-ui/current/bin/sky-ops maintenance --recover
 RemainAfterExit=yes
 UMask=0077
 

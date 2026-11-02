@@ -5,7 +5,7 @@ ConditionPathExists=/etc/sky-ui/managed-by-sky-ui
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 /opt/sky-ui/current/deploy/storage.py
+ExecStart=/opt/sky-ui/current/bin/sky-ops storage
 ExecStopPost=/usr/bin/rm -f /var/lib/sky-ui-maintenance/cleanup-intent.json
 TimeoutStartSec=120
 UMask=0077

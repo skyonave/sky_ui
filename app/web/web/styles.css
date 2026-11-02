@@ -530,6 +530,7 @@ textarea { width: 100%; resize: vertical; padding: 10px; color: var(--text); bac
 .update-stage > :last-child { flex-shrink: 0; }
 .update-progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; }
 .update-progress-fill { height: 100%; background: var(--accent); }
+.update-progress-fill.indeterminate { width: 28% !important; animation: core-install-activity 2s linear infinite; }
 .update-metrics { font-size: 16px; line-height: 20px; }
 .update-source { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; }
 .update-source:hover { color: var(--text); }
@@ -548,7 +549,7 @@ textarea { width: 100%; resize: vertical; padding: 10px; color: var(--text); bac
 .core-install-fill { height: 100%; background: var(--accent); }
 .core-install-fill.indeterminate { width: 28% !important; animation: core-install-activity 2s linear infinite; }
 @keyframes core-install-activity { from { transform: translateX(-100%); } to { transform: translateX(360%); } }
-@media(prefers-reduced-motion: reduce) { .core-install-fill.indeterminate { animation: none; transform: none; } }
+@media(prefers-reduced-motion: reduce) { .core-install-fill.indeterminate, .update-progress-fill.indeterminate { animation: none; transform: none; } }
 .core-install-artifact { min-height: 24px; overflow-wrap: anywhere; }
 .core-install-details summary { cursor: pointer; color: var(--muted); }
 .core-install-details summary:hover { color: var(--text); }

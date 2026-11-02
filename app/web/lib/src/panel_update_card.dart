@@ -111,7 +111,8 @@ class PanelUpdateCard extends StatelessComponent {
           [
             div(
               [],
-              classes: 'update-progress-fill ${failed ? 'failed' : ''}',
+              classes:
+                  'update-progress-fill ${failed ? 'failed' : ''} ${updating && percent == null ? 'indeterminate' : ''}',
               attributes: {'style': 'width: ${percent ?? 0}%'},
             ),
           ],

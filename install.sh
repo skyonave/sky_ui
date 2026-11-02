@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+# Candidate validation must always use its packaged native bridge.
+unset SKY_UI_POSIX_LIBRARY
 umask 077
 
 fail() { printf 'Sky UI: %s\n' "$*" >&2; exit 1; }
@@ -16,12 +18,14 @@ version=latest
 bundle=
 port=
 verify_only=0
+prepare_only=
 while (( $# )); do
   case "$1" in
     --version) (( $# >= 2 )) || fail 'Missing version.'; version="$2"; shift 2 ;;
     --bundle) (( $# >= 2 )) || fail 'Missing bundle path.'; bundle="$2"; shift 2 ;;
     --port) (( $# >= 2 )) || fail 'Missing port.'; port="$2"; shift 2 ;;
     --verify-only) verify_only=1; shift ;;
+    --prepare-only) (( $# >= 2 )) || fail 'Missing preparation output.'; prepare_only="$2"; shift 2 ;;
     --help|-h) usage; exit 0 ;;
     *) fail "Unknown option: $1" ;;
   esac
@@ -38,15 +42,39 @@ if (( ! verify_only )); then
   [[ "$(uname -s)" == Linux ]] || fail 'Linux is required.'
   (( EUID == 0 )) || fail 'Run the installer with sudo or as root.'
   [[ -d /run/systemd/system ]] || fail 'systemd must be running as the service manager.'
+  command -v systemctl >/dev/null && command -v awk >/dev/null || fail 'systemctl and awk are required.'
+  systemd_version="$(systemctl --version | awk 'NR == 1 {print $2}')"
+  [[ "$systemd_version" =~ ^[0-9]+$ ]] && (( systemd_version >= 245 )) || fail 'systemd 245 or newer is required for isolated Sky UI logs.'
+  getconf GNU_LIBC_VERSION >/dev/null 2>&1 || fail 'A glibc-based Linux distribution is required by the Dart SDK.'
   [[ ! -e /var/lib/sky-ui-maintenance/core-remove-intent.json ]] || fail 'Core removal recovery is required. Start sky-ui-maintenance-recovery.service first.'
   [[ ! -e /var/lib/sky-ui-maintenance/engine-intent.json ]] || fail 'Engine recovery is required. Start sky-ui-maintenance-recovery.service first.'
+  # Always pair the online entry point with the installer's published release.
+  # Pushing a new source format to main must not break the previous live release.
+  if [[ -z "$bundle" && "${SKY_UI_RELEASE_INSTALLER:-0}" != 1 ]]; then
+    for command in curl sha256sum awk mktemp stat; do command -v "$command" >/dev/null || fail "Missing dependency: $command"; done
+    bootstrap="$(mktemp -d /var/tmp/sky-ui-install.XXXXXXXX)"
+    trap 'rm -rf -- "$bootstrap"' EXIT
+    bootstrap_base="https://github.com/skyonave/sky_ui/releases/download/$version"
+    if [[ "$version" == latest ]]; then bootstrap_base=https://github.com/skyonave/sky_ui/releases/latest/download; fi
+    curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --max-filesize 262144 -o "$bootstrap/install.sh" "$bootstrap_base/install.sh"
+    curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --max-filesize 4096 -o "$bootstrap/install.sh.sha256" "$bootstrap_base/install.sh.sha256"
+    bootstrap_expected="$(awk '$2 == "install.sh" || $2 == "*install.sh" {print $1}' "$bootstrap/install.sh.sha256")"
+    [[ "$bootstrap_expected" =~ ^[a-fA-F0-9]{64}$ && "$(sha256sum "$bootstrap/install.sh" | awk '{print $1}')" == "$bootstrap_expected" ]] || fail 'Release installer checksum mismatch.'
+    bootstrap_args=(--version "$version")
+    if [[ -n "$port" ]]; then bootstrap_args+=(--port "$port"); fi
+    SKY_UI_RELEASE_INSTALLER=1 bash "$bootstrap/install.sh" "${bootstrap_args[@]}"
+    exit $?
+  fi
   command -v flock >/dev/null || fail 'flock is required.'
   if [[ "${SKY_UI_TRANSACTION_LOCK_FD:-}" =~ ^[0-9]+$ ]]; then
     [[ "$(readlink "/proc/self/fd/$SKY_UI_TRANSACTION_LOCK_FD")" == /run/lock/sky-ui-install.lock ]] || fail 'Invalid update transaction lock.'
     exec 9>&"$SKY_UI_TRANSACTION_LOCK_FD"
   else
-    exec 9>/run/lock/sky-ui-install.lock
+    [[ ! -L /run/lock/sky-ui-install.lock && ( ! -e /run/lock/sky-ui-install.lock || -f /run/lock/sky-ui-install.lock ) ]] || fail 'Unsafe installation lock.'
+    exec 9>>/run/lock/sky-ui-install.lock
   fi
+  [[ "$(readlink /proc/self/fd/9)" == /run/lock/sky-ui-install.lock &&
+     -f /proc/self/fd/9 && "$(stat -Lc '%u:%h' /proc/self/fd/9)" == 0:1 ]] || fail 'Unsafe installation lock.'
   flock -n 9 || fail 'Another Sky UI installation is in progress.'
 fi
 for command in tar sha256sum awk grep sed mktemp; do
@@ -115,6 +143,9 @@ rollback() {
         rm -f -- /etc/systemd/system/sky-ui-certificates.service /etc/systemd/system/sky-ui-certificates.timer
       fi
       install -m 0644 "$previous/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
+      for command in skyui sky-ui; do
+        if [[ -f "$previous/deploy/$command" ]]; then install -m 0755 "$previous/deploy/$command" "/usr/local/bin/$command"; fi
+      done
       if [[ -f "$temp/old-Caddyfile" ]]; then install -m 0640 -o root -g sky-ui-edge "$temp/old-Caddyfile" /etc/sky-ui/Caddyfile; fi
       unlock_worker
       systemctl daemon-reload
@@ -146,8 +177,13 @@ expected="$(awk -v name="$asset" '$2 == name || $2 == "*"name {print $1}' "$bund
 [[ "$expected" =~ ^[a-fA-F0-9]{64}$ ]] || fail 'Invalid checksum file.'
 actual="$(sha256sum -- "$bundle" | awk '{print $1}')"
 [[ "$actual" == "$expected" ]] || fail 'Bundle checksum mismatch; nothing was installed.'
+archive_bytes="$(stat -c %s -- "$bundle")"
+(( archive_bytes <= 167772160 )) || fail 'Archive is too large.'
 tar -tzf "$bundle" >"$temp/entries"
 tar -tvzf "$bundle" >"$temp/types"
+(( $(wc -l <"$temp/entries") <= 20000 )) || fail 'Too many archive entries.'
+archive_expanded="$(awk '{sum += $3} END {printf "%.0f", sum}' "$temp/types")"
+(( archive_expanded <= 536870912 )) || fail 'Expanded archive is too large.'
 if grep -vE '^[-d]' "$temp/types" >/dev/null; then fail 'Archive links and special files are forbidden.'; fi
 while IFS= read -r entry; do
   entry="$(printf '%s' "$entry" | sed 's#^\./##;s#/$##')"
@@ -158,14 +194,30 @@ done <"$temp/entries"
 mkdir "$temp/payload"
 tar -xzf "$bundle" -C "$temp/payload" --no-same-owner --no-same-permissions
 payload="$temp/payload"
-for file in VERSION ARCH bin/sky-ui bin/caddy lib/libsqlite3.so web/index.html web/main.dart.js web/styles.css \
+build_mode="$(tr -d '\r\n' <"$payload/BUILD_MODE")"
+[[ "$build_mode" == source-v1 || "$build_mode" == native-v1 ]] || fail 'Invalid build format.'
+release_digest="$actual"
+if [[ "$build_mode" == native-v1 ]]; then
+  release_digest="$(tr -d '\r\n' <"$payload/SOURCE_SHA256")"
+  [[ "$release_digest" =~ ^[a-f0-9]{64}$ ]] || fail 'Missing source identity.'
+else
+  printf '%s\n' "$actual" >"$payload/SOURCE_SHA256"
+fi
+for file in VERSION ARCH BUILD_MODE bin/caddy web/index.html web/main.dart.js web/styles.css \
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
   deploy/systemd/sky-ui-sing-box.service deploy/systemd/sky-ui-xray.service deploy/systemd/sky-ui-amneziawg.service \
-  deploy/storage.py deploy/journald-sky-ui.conf deploy/systemd/sky-ui-cleanup.service deploy/systemd/sky-ui-cleanup.timer deploy/engine_install.py deploy/amnezia_network.py deploy/prepare_host.sh deploy/update_progress.py compatibility/cores/amneziawg.json \
-  deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/certificate_sync.py deploy/maintenance.py deploy/panel_releases.py deploy/panel_update.py deploy/core_artifacts.py deploy/core_install.py deploy/sky-ui deploy/skyui deploy/cli.py compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
+  deploy/journald-sky-ui.conf deploy/systemd/sky-ui-cleanup.service deploy/systemd/sky-ui-cleanup.timer deploy/prepare_host.sh deploy/prepare_build.sh deploy/host_packages.sh deploy/dart_sdk.sh deploy/build_host.sh deploy/build_versions.sh compatibility/cores/amneziawg.json \
+  deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/sky-ui deploy/skyui compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
+if [[ "$build_mode" == source-v1 ]]; then
+  for file in app/api/pubspec.yaml app/api/pubspec.lock app/api/bin/server.dart app/shared/pubspec.yaml app/ops/pubspec.yaml app/ops/pubspec.lock app/ops/bin/sky_ops.dart app/ops/native/posix.c native/sqlite3.c; do
+    [[ -f "$payload/source/$file" ]] || fail "Incomplete build source: $file"
+  done
+else
+  for file in bin/sky-ui bin/sky-ops lib/libsqlite3.so lib/libsky_posix.so; do [[ -f "$payload/$file" ]] || fail "Incomplete native release: $file"; done
+fi
 release_version="$(tr -d '\r\n' <"$payload/VERSION")"
 release_arch="$(tr -d '\r\n' <"$payload/ARCH")"
 [[ "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || fail 'Invalid release metadata.'
@@ -173,9 +225,23 @@ release_arch="$(tr -d '\r\n' <"$payload/ARCH")"
 if [[ "$version" != latest ]]; then [[ "$version" == "v$release_version" ]] || fail 'Release version mismatch.'; fi
 if (( verify_only )); then printf 'Verified Sky UI %s for %s. No host changes made.\n' "$release_version" "$arch"; exit 0; fi
 
-# Native binaries are checked before changing users, services, or configuration.
-chmod 0755 "$payload/bin/sky-ui" "$payload/bin/caddy"
-[[ "$("$payload/bin/sky-ui" --version)" == "Sky UI $release_version" ]] || fail 'The API binary cannot run on this host.'
+# An identical source release already has a validated local build. Reuse it on
+# repeat installation instead of downloading a temporary SDK and compiling again.
+installed_candidate="/opt/sky-ui/releases/$release_version-$arch"
+if [[ "$build_mode" == source-v1 && -f /etc/sky-ui/managed-by-sky-ui &&
+      -f "$installed_candidate/BUNDLE_SHA256" &&
+      "$(cat "$installed_candidate/BUNDLE_SHA256")" == "$release_digest" &&
+      -f "$installed_candidate/bin/sky-ops" && -f "$installed_candidate/lib/libsky_posix.so" ]]; then
+  [[ ! -L "$installed_candidate" && "$(stat -c %u -- "$installed_candidate")" == 0 ]] || fail 'Unsafe installed build.'
+  cp -R "$installed_candidate/bin/." "$payload/bin/"
+  cp -R "$installed_candidate/lib" "$payload/lib"
+  cp "$installed_candidate/BUILDINFO" "$payload/BUILDINFO"
+  rm -rf -- "$payload/source"
+  printf 'native-v1\n' >"$payload/BUILD_MODE"
+  build_mode=native-v1
+  printf 'Reusing the installed native build of Sky UI %s.\n' "$release_version"
+fi
+
 if [[ ! -f /etc/sky-ui/managed-by-sky-ui ]]; then
   for path in /etc/sky-ui /var/lib/sky-ui /var/lib/sky-ui-edge /var/lib/sky-ui-maintenance /var/lib/sky-ui-certificates /opt/sky-ui /usr/local/bin/sky-ui /usr/local/bin/skyui /etc/systemd/system/sky-ui.service /etc/systemd/system/sky-ui-mihomo.service /etc/systemd/system/sky-ui-edge.service /etc/polkit-1/rules.d/49-sky-ui.rules; do
     [[ ! -e "$path" && ! -L "$path" ]] || fail "Refusing to overwrite an unmanaged path: $path"
@@ -185,23 +251,42 @@ if [[ ! -f /etc/sky-ui/managed-by-sky-ui ]]; then
   fi
 fi
 printf 'SKY_UI_STAGE=prepare\n'
-if [[ -w /etc && -w /usr && -w /var/lib ]]; then
-  bash "$payload/deploy/prepare_host.sh"
-else
+prepare_fixed_host() {
+  local script="$1" helper_dir helper_status
+  [[ "$script" == prepare_host.sh || "$script" == prepare_build.sh ]] || fail 'Invalid prerequisite helper.'
+  if [[ -w /etc && -w /usr && -w /var/lib ]]; then
+    bash "$payload/deploy/$script"
+    return
+  fi
   # Older update services have read-only /etc and /var/lib. Execute only the
   # verified, fixed prerequisite helper through the host service manager. The
   # parent keeps both installation locks; this helper never acquires them.
   [[ -f /etc/sky-ui/managed-by-sky-ui ]] || fail 'Host preparation requires an installed panel.'
   helper_dir="$(mktemp -d /var/lib/sky-ui-maintenance/work/prepare.XXXXXXXX)"
-  install -m 0700 "$payload/deploy/prepare_host.sh" "$helper_dir/prepare_host.sh"
+  install -m 0700 "$payload/deploy/$script" "$helper_dir/$script"
+  install -m 0600 "$payload/deploy/host_packages.sh" "$helper_dir/host_packages.sh"
   helper_status=0
   systemd-run --quiet --wait --pipe --collect --unit="sky-ui-prepare-${helper_dir##*.}" \
-    --property=RuntimeMaxSec=300 /usr/bin/bash "$helper_dir/prepare_host.sh" || helper_status=$?
-  rm -f -- "$helper_dir/prepare_host.sh"
+    --property=RuntimeMaxSec=600 /usr/bin/bash "$helper_dir/$script" || helper_status=$?
+  rm -f -- "$helper_dir/$script" "$helper_dir/host_packages.sh"
   rmdir -- "$helper_dir"
   (( helper_status == 0 )) || fail "Host preparation failed (exit $helper_status)."
+}
+if [[ "$build_mode" == source-v1 ]]; then
+  prepare_fixed_host prepare_build.sh
+  bash "$payload/deploy/build_host.sh" "$payload"
 fi
-for command in systemctl getent groupadd useradd install runuser curl python3; do
+chmod 0755 "$temp" "$payload" "$payload/bin" "$payload/lib" "$payload/bin/sky-ui" "$payload/bin/sky-ops" "$payload/bin/caddy"
+[[ "$("$payload/bin/sky-ui" --version)" == "Sky UI $release_version" ]] || fail 'The API binary cannot run on this host.'
+"$payload/bin/sky-ops" --self-test
+if [[ -n "$prepare_only" ]]; then
+  [[ -f /etc/sky-ui/managed-by-sky-ui && -d "$prepare_only" && ! -L "$prepare_only" && "$prepare_only" == /var/lib/sky-ui-maintenance/work/panel-update-*/compiled ]] || fail 'Invalid preparation destination.'
+  tar -czf "$prepare_only/$asset" -C "$payload" .
+  (cd "$prepare_only" && sha256sum "$asset" >"$asset.sha256")
+  exit 0
+fi
+prepare_fixed_host prepare_host.sh
+for command in systemctl getent groupadd useradd install runuser curl; do
   command -v "$command" >/dev/null || fail "Missing dependency: $command"
 done
 chmod 0755 "$temp" "$payload" "$payload/bin"
@@ -209,7 +294,7 @@ validation_binary=-
 # Fresh panels acquire a core only after the owner chooses a protocol. Preserve
 # and migrate a previously installed mihomo without downloading an unrelated core.
 if [[ -L /opt/sky-ui/cores/mihomo/current || -f /opt/sky-ui/current/bin/mihomo ]]; then
-  validation_binary="$(python3 "$payload/deploy/core_install.py" prepare --panel-version "$release_version" --platform "linux-$arch" --output "$temp/core")"
+  validation_binary="$("$payload/bin/sky-ops" core-bootstrap prepare --panel-version "$release_version" --platform "linux-$arch" --output "$temp/core")"
 fi
 printf 'SKY_UI_STAGE=install\n'
 install -d -m 0755 /opt/sky-ui /opt/sky-ui/releases
@@ -292,16 +377,16 @@ if [[ ! -f /etc/sky-ui/owner.seed && -f /etc/sky-ui/admin.hash ]]; then
   install -m 0600 -o sky-ui -g sky-ui /etc/sky-ui/admin.hash /etc/sky-ui/owner.seed
 fi
 if [[ "$validation_binary" != - ]]; then
-  python3 "$payload/deploy/core_install.py" validate --binary "$validation_binary" --directory /var/lib/sky-ui/cores/mihomo --configuration /var/lib/sky-ui/cores/mihomo/config.yaml
+  "$payload/bin/sky-ops" core-bootstrap validate --binary "$validation_binary" --directory /var/lib/sky-ui/cores/mihomo --configuration /var/lib/sky-ui/cores/mihomo/config.yaml
 fi
 release="/opt/sky-ui/releases/$release_version-$arch"
 if [[ -e "$release" ]]; then
-  [[ -f "$release/BUNDLE_SHA256" && "$(cat "$release/BUNDLE_SHA256")" == "$actual" ]] || fail 'This version already exists with different contents. Use a new release version.'
+  [[ -f "$release/BUNDLE_SHA256" && "$(cat "$release/BUNDLE_SHA256")" == "$release_digest" ]] || fail 'This version already exists with different contents. Use a new release version.'
 else
   find "$payload" -type d -exec chmod 0755 {} +
   find "$payload" -type f -exec chmod 0644 {} +
-  chmod 0755 "$payload/bin/sky-ui" "$payload/bin/caddy"
-  printf '%s\n' "$actual" >"$payload/BUNDLE_SHA256"
+  chmod 0755 "$payload/bin/sky-ui" "$payload/bin/sky-ops" "$payload/bin/caddy"
+  printf '%s\n' "$release_digest" >"$payload/BUNDLE_SHA256"
   mv "$payload" "$release"
 fi
 if [[ -L /opt/sky-ui/current ]]; then previous="$(readlink -f /opt/sky-ui/current)"; fi
@@ -323,7 +408,7 @@ changed=1
 cp /etc/sky-ui/server.env "$temp/old-server.env"
 if [[ -L /opt/sky-ui/cores/mihomo/current ]]; then core_previous="$(readlink -f /opt/sky-ui/cores/mihomo/current)"; fi
 if [[ -d "$temp/core" ]]; then core_link_changed=1; fi
-if [[ "$validation_binary" != - ]]; then python3 "$release/deploy/core_install.py" activate --prepared "$temp/core"; fi
+if [[ "$validation_binary" != - ]]; then "$release/bin/sky-ops" core-bootstrap activate --prepared "$temp/core"; fi
 sed -i 's#^SKY_UI_CORE_BINARY=.*#SKY_UI_CORE_BINARY=/opt/sky-ui/cores/mihomo/current/mihomo#' /etc/sky-ui/server.env
 if (( edge_was_running )); then systemctl stop sky-ui-edge.service; fi
 if (( api_was_running )); then systemctl stop sky-ui.service; fi
@@ -371,7 +456,7 @@ fi
 if (( edge_was_running )); then systemctl restart sky-ui-edge.service; fi
 systemctl enable --now sky-ui-certificates.timer
 systemctl start sky-ui-certificates.service
-python3 "$release/deploy/storage.py" --record-panel "$previous" || printf 'Sky UI: retention history could not be saved.\n' >&2
+"$release/bin/sky-ops" storage --record-panel "$previous" || printf 'Sky UI: retention history could not be saved.\n' >&2
 systemctl enable --now sky-ui-cleanup.timer
 changed=0
 printf 'Sky UI %s installed: http://127.0.0.1:%s\n' "$release_version" "$port"

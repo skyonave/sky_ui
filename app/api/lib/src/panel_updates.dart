@@ -10,7 +10,7 @@ import 'process_runner.dart';
 class PanelUpdates {
   PanelUpdates(
     this.runner, {
-    this.script = '/opt/sky-ui/current/deploy/panel_releases.py',
+    this.script = '/opt/sky-ui/current/bin/sky-ops',
     bool? supported,
     String? current,
     String? platform,
@@ -53,8 +53,8 @@ class PanelUpdates {
         checkedAt: DateTime.now().toUtc().toIso8601String(),
       );
     try {
-      final result = await runner.run('python3', [
-        script,
+      final result = await runner.run(script, [
+        'releases',
         'check',
         '--version',
         current,

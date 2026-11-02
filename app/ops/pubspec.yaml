@@ -1,0 +1,14 @@
+name: sky_ui_ops
+description: Native installation and maintenance tools for Sky UI.
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: '>=3.13.0 <4.0.0'
+dependencies:
+  archive: 4.5.2
+  crypto: 3.0.8
+  ffi: 2.2.0
+  sqlite3: 3.8.0
+  yaml: 3.1.4
+dev_dependencies:
+  test: 1.32.0
