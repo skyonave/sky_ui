@@ -10,6 +10,8 @@ import 'package:yaml/yaml.dart';
 import '../../application/access/records.dart';
 import '../../application/access/validation.dart';
 import '../../application/contracts/configuration_codec.dart';
+import '../../application/contracts/connection_diagnostics.dart';
+import '../diagnostic_target.dart';
 import '../../infrastructure/network/socket_owner.dart';
 import '../../infrastructure/process/command_runner.dart';
 import '../../shared/api_exception.dart';
@@ -18,7 +20,29 @@ import '../managed_core.dart';
 import 'schema.dart';
 import 'settings.dart';
 
-class MihomoConfiguration implements ConfigurationCodec, CoreSettingsCodec {
+class MihomoConfiguration
+    implements
+        ConfigurationCodec,
+        CoreSettingsCodec,
+        ConnectionDiagnosticsCodec {
+  @override
+  ConnectionDiagnosticPlan diagnosticPlan(
+    PanelData data,
+    StoredConnection connection,
+  ) {
+    // Diagnose the stored binding even when its certificate has since expired.
+    // Saving/compiling still uses strict schema validation in _settings.
+    final settings = connection.value.settings;
+    return diagnosticTargets(
+      listeners: [
+        for (final s in _sockets(data, validate: false))
+          DiagnosticListener(host: s.host, port: s.port, udp: s.udp),
+      ],
+      settings: settings,
+      realityTarget: _destination(settings),
+    );
+  }
+
   @override
   List<ProtocolField> get coreSettingsFields => MihomoSettings.fields;
   @override
@@ -478,14 +502,17 @@ class MihomoConfiguration implements ConfigurationCodec, CoreSettingsCodec {
     return result;
   }
 
-  List<({String host, int port, bool udp})> _sockets(PanelData data) {
+  List<({String host, int port, bool udp})> _sockets(
+    PanelData data, {
+    bool validate = true,
+  }) {
     final result = <({String host, int port, bool udp})>[];
     for (final listener in _listeners(data)) {
       final c = listener.connection,
-          s = _settings(c),
+          s = validate ? _settings(c) : c.value.settings,
           id = c.value.protocolId,
           transport = s['transport'],
-          host = s['listen']!;
+          host = s['listen'] ?? '::';
       if (id == 'tun') continue;
       final udpOnly =
           {'tuic', 'tuic-v4', 'hysteria2', 'shadowquic'}.contains(id) ||

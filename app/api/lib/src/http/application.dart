@@ -1,6 +1,7 @@
 import 'package:dart_frog/dart_frog.dart';
 
 import '../application/access/panel_service.dart';
+import '../application/connections/diagnostics_service.dart';
 import '../application/engines/core_manager.dart';
 import '../bootstrap/server_config.dart';
 import '../features/auth/owner_auth.dart';
@@ -10,9 +11,11 @@ import '../features/telemetry/system_monitor.dart';
 import '../features/updates/core_updates.dart';
 import '../features/updates/panel_updates.dart';
 import '../infrastructure/process/command_runner.dart';
+import '../infrastructure/network/diagnostic_probe.dart';
 import 'responses.dart';
 import 'routes/access_routes.dart';
 import 'routes/asset_routes.dart';
+import 'routes/diagnostic_routes.dart';
 import 'routes/auth_routes.dart';
 import 'routes/engine_routes.dart';
 import 'routes/maintenance_routes.dart';
@@ -30,6 +33,7 @@ Handler createApplication(
   MaintenanceService? maintenance,
   CoreUpdates? coreUpdates,
   PanelUpdates? panelUpdates,
+  ConnectionDiagnosticsService? diagnostics,
 }) {
   if (config.requireOwnerAuth && auth == null)
     throw StateError('Owner authentication is required.');
@@ -58,7 +62,19 @@ Handler createApplication(
   registerTelemetryRoutes(router, config, system);
   registerCoreUpdateRoutes(router, instances, updates);
   registerEngineRoutes(router, instances, panel, auth);
-  if (panel != null) registerAccessRoutes(router, panel, sniScanner);
+  if (panel != null) {
+    registerAccessRoutes(router, panel, sniScanner);
+    registerDiagnosticRoutes(
+      router,
+      diagnostics ??
+          ConnectionDiagnosticsService(
+            registry: panel.registry,
+            repository: panel.repository,
+            isSynchronized: panel.isSynchronized,
+            probe: NativeDiagnosticProbe(),
+          ),
+    );
+  }
   registerAssetRoutes(router, config);
   return secureApplication(
     config,

@@ -8,6 +8,8 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../../application/access/records.dart';
 import '../../application/access/validation.dart';
 import '../../application/contracts/configuration_codec.dart';
+import '../../application/contracts/connection_diagnostics.dart';
+import '../diagnostic_target.dart';
 import '../../application/core_settings/form.dart';
 import '../../infrastructure/network/socket_owner.dart';
 import '../../shared/api_exception.dart';
@@ -19,7 +21,41 @@ import 'inbound_builder.dart';
 import 'schema.dart';
 
 /// Shared protocol semantics for JSON proxy engines; native documents stay distinct.
-class ProxyConfiguration implements ConfigurationCodec, CoreSettingsCodec {
+class ProxyConfiguration
+    implements
+        ConfigurationCodec,
+        CoreSettingsCodec,
+        ConnectionDiagnosticsCodec {
+  @override
+  ConnectionDiagnosticPlan diagnosticPlan(
+    PanelData data,
+    StoredConnection connection,
+  ) {
+    final settings = _settings(connection);
+    final udp =
+        {'tuic', 'hysteria2'}.contains(connection.value.protocolId) ||
+        settings['transport'] == 'HTTP/3';
+    return diagnosticTargets(
+      listeners: [
+        for (final listener in _listeners(data, false)) ...[
+          DiagnosticListener(
+            host: settings['listen'] ?? '::',
+            port: listener.port,
+            udp: udp,
+          ),
+          if (connection.value.protocolId == 'shadowsocks')
+            DiagnosticListener(
+              host: settings['listen'] ?? '::',
+              port: listener.port,
+              udp: true,
+            ),
+        ],
+      ],
+      settings: settings,
+      realityTarget: settings['realityTarget'],
+    );
+  }
+
   @override
   List<ProtocolField> get coreSettingsFields =>
       coreId == 'xray' ? XraySettings.fields : SingBoxSettings.fields;

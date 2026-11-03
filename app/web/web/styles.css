@@ -153,6 +153,28 @@ tbody tr:hover { background: #1d1a21; }
 .pill.positive { color: var(--success); }
 .pill:not(.positive) .status-dot, .status-dot.off { background: #666666; }
 .row-actions { display: flex; align-items: center; justify-content: flex-end; gap: 3px; }
+.diagnostic-dialog .modal-body { display: flex; flex-direction: column; gap: 16px; }
+.diagnostic-summary { display: flex; gap: 16px; align-items: flex-start; min-height: 86px; }
+.diagnostic-summary > :first-child { flex: 1; }
+.diagnostic-summary-result { min-width: 0; }
+.diagnostic-summary-detail { margin: 8px 0 0; font-size: 14px; line-height: 1.4; }
+.diagnostic-progress { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; flex-shrink: 0; }
+.diagnostic-progress-fill { height: 100%; background: var(--accent); }
+.diagnostic-checks { display: flex; flex-direction: column; }
+.diagnostic-row { display: flex; gap: 12px; padding: 15px 0; border-bottom: 1px solid var(--line); }
+.diagnostic-row:last-child { border-bottom: 0; }
+.diagnostic-symbol { width: 18px; flex-shrink: 0; padding-top: 2px; color: var(--muted); }
+.diagnostic-passed .diagnostic-symbol { color: #9fbbab; }
+.diagnostic-failed .diagnostic-symbol { color: #d49c91; }
+.diagnostic-warning .diagnostic-symbol, .diagnostic-running .diagnostic-symbol { color: var(--accent); }
+.diagnostic-row-content { min-width: 0; flex: 1; }
+.diagnostic-row-heading { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; min-height: 23px; }
+.diagnostic-duration { margin-left: auto; font-size: 14px; }
+.diagnostic-description { margin: 5px 0 0; font-size: 14px; line-height: 1.4; }
+.diagnostic-details { display: flex; gap: 5px 18px; flex-wrap: wrap; margin-top: 6px; font-size: 14px; }
+.diagnostic-detail { overflow-wrap: anywhere; }
+.diagnostic-scope { flex: 1; margin: 0; max-width: 410px; line-height: 1.35; }
+.diagnostic-dialog .modal-footer { flex-wrap: wrap; }
 .table-footer { display: flex; justify-content: space-between; align-items: center; gap: 15px; padding: 11px 0; color: #767676; }
 .table-summary { display: flex; align-items: center; gap: 7px; }
 .table-summary .status-dot { width: 4px; height: 4px; }

@@ -23,6 +23,7 @@ class ConnectionsPage extends StatelessComponent {
     required this.confirmDelete,
     required this.onFilter,
     required this.onSearch,
+    required this.onDiagnose,
     super.key,
   });
   final PanelStore store;
@@ -38,6 +39,7 @@ class ConnectionsPage extends StatelessComponent {
   final void Function(String, String, String) confirmDelete;
   final void Function(String) onFilter;
   final void Function(String) onSearch;
+  final void Function(Connection) onDiagnose;
   final t = const AppStrings();
   Component statistics() => div([
     stat(
@@ -133,7 +135,7 @@ class ConnectionsPage extends StatelessComponent {
     return div([
       el('table', [
         el('colgroup', [
-          for (final width in [30, 16, 14, 20, 10, 10])
+          for (final width in [28, 16, 14, 20, 10, 12])
             el('col', [], attributes: {'style': 'width: $width%'}),
         ]),
         el('thead', [
@@ -226,6 +228,12 @@ class ConnectionsPage extends StatelessComponent {
               ]),
               el('td', [
                 div([
+                  iconButton(
+                    'activity',
+                    '${t('diagnostics.action')}: ${c.name}',
+                    () => onDiagnose(c),
+                    disabled: !canInspect,
+                  ),
                   iconButton(
                     'edit',
                     '${t('common.edit')}: ${c.name}',

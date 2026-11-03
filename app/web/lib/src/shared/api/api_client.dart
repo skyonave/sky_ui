@@ -12,6 +12,40 @@ class ApiClientException implements Exception {
 }
 
 class ApiClient {
+  Future<ConnectionDiagnostics> startDiagnostics(
+    String connection,
+    int revision,
+  ) async => ConnectionDiagnostics.fromJson(
+    Map<String, dynamic>.from(
+      (await _request(
+            '/api/v1/connections/$connection/diagnostics',
+            timeout: const Duration(seconds: 8),
+            method: 'POST',
+            payload: {'revision': revision},
+          ))['data']
+          as Map,
+    ),
+  );
+  Future<ConnectionDiagnostics> diagnostics(
+    String connection,
+    String id,
+  ) async => ConnectionDiagnostics.fromJson(
+    Map<String, dynamic>.from(
+      (await _request(
+            '/api/v1/connections/$connection/diagnostics/$id',
+            timeout: const Duration(seconds: 8),
+          ))['data']
+          as Map,
+    ),
+  );
+  Future<void> cancelDiagnostics(String connection, String id) async {
+    await _request(
+      '/api/v1/connections/$connection/diagnostics/$id',
+      method: 'DELETE',
+      timeout: const Duration(seconds: 8),
+    );
+  }
+
   String? csrfToken;
   void Function()? onUnauthorized;
   Future<OwnerState> owner() async => OwnerState.fromJson(
@@ -143,9 +177,10 @@ class ApiClient {
     bool post = false,
     String? method,
     Map<String, Object?>? payload,
+    Duration timeout = const Duration(seconds: 90),
   }) async {
     final controller = web.AbortController();
-    final timer = Timer(const Duration(seconds: 90), () => controller.abort());
+    final timer = Timer(timeout, () => controller.abort());
     try {
       final response = await web.window
           .fetch(

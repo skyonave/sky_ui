@@ -6,10 +6,28 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../application/access/records.dart';
 import '../../application/contracts/configuration_codec.dart';
+import '../../application/contracts/connection_diagnostics.dart';
 import '../../shared/api_exception.dart';
 import '../managed_core.dart';
 
-class AmneziaConfiguration implements ConfigurationCodec, GrantAllocator {
+class AmneziaConfiguration
+    implements ConfigurationCodec, GrantAllocator, ConnectionDiagnosticsCodec {
+  @override
+  ConnectionDiagnosticPlan diagnosticPlan(
+    PanelData data,
+    StoredConnection connection,
+  ) => ConnectionDiagnosticPlan(
+    listeners: [
+      if (connection.value.enabled)
+        DiagnosticListener(
+          host: '0.0.0.0',
+          port: connection.value.port!,
+          udp: true,
+          interfaceName: interfaceName(connection.value.id),
+        ),
+    ],
+    tlsSkipCode: 'awg_client_required',
+  );
   @override
   String get coreId => 'amneziawg';
   static const integerOptions = <String, (int, int, int)>{

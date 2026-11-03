@@ -233,6 +233,12 @@ class AppController {
   String? editingRecipientId;
 
   Connection? editingConnection;
+  Connection? diagnosticConnection;
+  void diagnoseConnection(Connection value) {
+    if (!canInspect || maintenanceBusy) return;
+    diagnosticConnection = value;
+    openModal('diagnostics');
+  }
 
   String? error;
 

@@ -16,7 +16,7 @@ String _bundleVersion() {
     if (RegExp(r'^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.]+)?$').hasMatch(value))
       return value;
   }
-  return '0.8.0-dev.6';
+  return '0.8.0-dev.7';
 }
 
 class ServerConfig implements AccessEnvironment {

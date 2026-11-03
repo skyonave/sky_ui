@@ -9,6 +9,7 @@ import 'package:web/web.dart' as web;
 
 import '../features/connections/connection_wizard.dart';
 import '../features/connections/connections_page.dart';
+import '../features/connections/diagnostics_dialog.dart';
 import '../features/engines/engine_card.dart';
 import '../features/logs/logs_page.dart';
 import '../features/maintenance/backup_panel.dart';
@@ -35,7 +36,7 @@ class AppView extends StatelessComponent {
   final t = const AppStrings();
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.8.0-dev.6',
+    defaultValue: '0.8.0-dev.7',
   );
   @override
   Component build(BuildContext context) => div([
@@ -156,6 +157,7 @@ class AppView extends StatelessComponent {
     confirmDelete: controller.confirmDelete,
     onFilter: (v) => controller.mutate(() => controller.filter = v),
     onSearch: (v) => controller.mutate(() => controller.search = v),
+    onDiagnose: controller.diagnoseConnection,
   );
 
   Component usersPage() => RecipientsPage(
@@ -393,7 +395,14 @@ class AppView extends StatelessComponent {
     },
   );
 
-  Component modalView() => controller.modal == 'connection'
+  Component modalView() => controller.modal == 'diagnostics'
+      ? ConnectionDiagnosticsDialog(
+          api: controller.api,
+          connection: controller.diagnosticConnection!,
+          revision: controller.panelData?.revision ?? controller.dialogRevision,
+          onClose: controller.closeModal,
+        )
+      : controller.modal == 'connection'
       ? ConnectionWizard(
           api: controller.api,
           store: controller.store,

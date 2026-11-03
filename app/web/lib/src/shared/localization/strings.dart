@@ -1,4 +1,5 @@
 import 'engine_strings.dart';
+import 'diagnostic_strings.dart';
 import 'mihomo_strings.dart';
 
 class AppStrings {
@@ -9,6 +10,7 @@ class AppStrings {
         (_catalogs[locale] ?? _catalogs['ru']!)[key] ??
         mihomoNativeText(key) ??
         engineText(key) ??
+        diagnosticText(key) ??
         key;
     for (final entry in values.entries) {
       message = message.replaceAll('{${entry.key}}', '${entry.value}');
