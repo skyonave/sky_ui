@@ -209,6 +209,8 @@ class PanelUpdateDetails extends StatelessComponent {
                   : 'panelUpdate.notRestored',
             ),
       'panelUpdate.code': p?.errorCode ?? job?.error ?? checkError ?? '—',
+      if (p?.errorCode == 'native_binary_incompatible')
+        'panelUpdate.reason': t('runtime.error.native_binary_incompatible'),
       'panelUpdate.command': p?.command ?? '—',
       'panelUpdate.exitCode': p?.exitCode?.toString() ?? '—',
       'panelUpdate.job': job?.id ?? '—',

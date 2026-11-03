@@ -5,10 +5,14 @@ import 'dart:typed_data';
 import 'package:sky_ui_ops/src/archives.dart';
 import 'package:sky_ui_ops/src/host.dart' show OpsError, digest, require;
 
+import 'native_manifest.dart' show buildSources, elfMatches;
+
 const repo = 'skyonave/sky_ui';
 const assetNames = [
   'sky-ui-linux-amd64.tar.gz',
   'sky-ui-linux-amd64.tar.gz.sha256',
+  'sky-ui-linux-arm64.tar.gz',
+  'sky-ui-linux-arm64.tar.gz.sha256',
   'install.sh',
   'install.sh.sha256',
 ];
@@ -88,12 +92,32 @@ class GitHub {
   }
 }
 
-Map<String, Uint8List> checkAssets(String root, String tag) {
+Map<String, Uint8List> checkAssets(
+  String root,
+  String tag, {
+  List<String> architectures = const ['amd64', 'arm64'],
+}) {
+  require(
+    architectures.isNotEmpty &&
+        architectures.every((a) => ['amd64', 'arm64'].contains(a)),
+    'invalid_architecture',
+  );
+  final names = [
+    for (final arch in architectures) ...[
+      'sky-ui-linux-$arch.tar.gz',
+      'sky-ui-linux-$arch.tar.gz.sha256',
+    ],
+    'install.sh',
+    'install.sh.sha256',
+  ];
   final files = {
-    for (final name in assetNames)
+    for (final name in names)
       name: File('$root/build/releases/$tag/$name').readAsBytesSync(),
   };
-  for (final name in [assetNames.first, 'install.sh']) {
+  for (final name in [
+    for (final arch in architectures) 'sky-ui-linux-$arch.tar.gz',
+    'install.sh',
+  ]) {
     final parts = utf8
         .decode(files['$name.sha256']!)
         .trim()
@@ -103,16 +127,6 @@ Map<String, Uint8List> checkAssets(String root, String tag) {
       'local_checksum_mismatch',
     );
   }
-  final members = tarSelected(
-    files[assetNames.first]!,
-    (_) => true,
-    limit: 512 * 1024 * 1024,
-  );
-  require(
-    utf8.decode(members['VERSION']!).trim() == tag.substring(1) &&
-        utf8.decode(members['BUILD_MODE']!).trim() == 'source-v1',
-    'bundle_version_mismatch',
-  );
   String normalized(List<int> data) =>
       utf8.decode(data).replaceAll('\r\n', '\n');
   require(
@@ -120,32 +134,85 @@ Map<String, Uint8List> checkAssets(String root, String tag) {
         normalized(File('$root/install.sh').readAsBytesSync()),
     'installer_source_mismatch',
   );
-  for (final entry in members.entries) {
-    final name = entry.key;
-    require(
-      !name.endsWith('.py') &&
-          !name.contains('/test/') &&
-          !name.contains('/tool/'),
-      'unexpected_release_member',
+  final sources = buildSources(root);
+  for (final arch in architectures) {
+    final members = tarSelected(
+      files['sky-ui-linux-$arch.tar.gz']!,
+      (_) => true,
+      limit: 256 * 1024 * 1024,
     );
-    final local = name.startsWith('source/app/')
-        ? name.substring(7)
-        : name.startsWith('deploy/') || name.startsWith('compatibility/')
-        ? name
-        : name == 'web/styles.css' ||
-              name == 'web/index.html' ||
-              name.startsWith('web/fonts/')
-        ? 'app/web/$name'
-        : null;
-    if (local != null)
+    require(
+      normalized(members['VERSION']!).trim() == tag.substring(1) &&
+          normalized(members['ARCH']!).trim() == arch &&
+          normalized(members['BUILD_MODE']!).trim() == 'native-v1' &&
+          normalized(members['MIN_GLIBC']!).trim() == '2.31',
+      'bundle_version_mismatch',
+    );
+    final manifest =
+        jsonDecode(normalized(members['BUILD_MANIFEST.json']!)) as Map;
+    require(
+      manifest['architecture'] == arch &&
+          manifest['glibc'] == '2.31' &&
+          jsonEncode(manifest['sources']) == jsonEncode(sources) &&
+          normalized(members['SOURCE_SHA256']!).trim() ==
+              digest(utf8.encode(jsonEncode(sources))),
+      'native_build_source_mismatch',
+    );
+    final recorded = manifest['files'] as Map;
+    require(
+      recorded.length == members.length - 2 &&
+          recorded.entries.every(
+            (e) =>
+                members.containsKey(e.key) &&
+                digest(members[e.key]!) == e.value,
+          ),
+      'native_build_files_mismatch',
+    );
+    for (final name in [
+      'bin/sky-ui',
+      'bin/sky-ops',
+      'bin/caddy',
+      'lib/libsqlite3.so',
+      'lib/libsky_posix.so',
+    ]) {
       require(
-        name.endsWith('.ttf')
-            ? digest(File('$root/$local').readAsBytesSync()) ==
-                  digest(entry.value)
-            : normalized(File('$root/$local').readAsBytesSync()) ==
-                  normalized(entry.value),
-        'bundle_source_mismatch',
+        elfMatches(members[name]!, arch),
+        'native_elf_architecture_mismatch',
       );
+    }
+    for (final entry in members.entries) {
+      final name = entry.key;
+      require(
+        !name.endsWith('.py') &&
+            !name.startsWith('source/') &&
+            ![
+              'deploy/build_host.sh',
+              'deploy/dart_sdk.sh',
+              'deploy/prepare_build.sh',
+              'deploy/build_versions.sh',
+            ].contains(name) &&
+            !name.contains('/test/') &&
+            !name.contains('/tool/'),
+        'unexpected_release_member',
+      );
+      final local =
+          name.startsWith('deploy/') || name.startsWith('compatibility/')
+          ? name
+          : name == 'web/styles.css' ||
+                name == 'web/index.html' ||
+                name.startsWith('web/fonts/')
+          ? 'app/web/$name'
+          : null;
+      if (local != null)
+        require(
+          name.endsWith('.ttf')
+              ? digest(File('$root/$local').readAsBytesSync()) ==
+                    digest(entry.value)
+              : normalized(File('$root/$local').readAsBytesSync()) ==
+                    normalized(entry.value),
+          'bundle_source_mismatch',
+        );
+    }
   }
   return files;
 }
@@ -165,9 +232,24 @@ Future<void> main(List<String> args) async {
       RegExp(r'^v\d+\.\d+\.\d+(?:-[A-Za-z0-9.]+)?$').hasMatch(tag),
       'invalid_version',
     );
-    final files = checkAssets(root, tag);
-    if (args.single == '--check') {
-      stdout.writeln('PASS: $tag assets, checksums and packaged source.');
+    final checkOnly = [
+      '--check',
+      '--check-amd64',
+      '--check-arm64',
+    ].contains(args.single);
+    final files = checkAssets(
+      root,
+      tag,
+      architectures: args.single == '--check-amd64'
+          ? ['amd64']
+          : args.single == '--check-arm64'
+          ? ['arm64']
+          : ['amd64', 'arm64'],
+    );
+    if (checkOnly) {
+      stdout.writeln(
+        'PASS: $tag native assets, checksums and build-source manifests.',
+      );
       return;
     }
     final notes = File(args.single).readAsStringSync();

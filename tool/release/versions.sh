@@ -1,4 +1,4 @@
-# Verified build inputs. The installed SDK may be newer within this major range.
+# Pinned release-builder inputs. End-user installation does not acquire an SDK.
 dart_min=3.13.0
 dart_major=3
 dart_fallback=3.13.7

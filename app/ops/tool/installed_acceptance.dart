@@ -78,7 +78,9 @@ Future<void> main(List<String> args) async {
     args.length == 2 || args.length == 3,
     'Pass the checked installer and prepared native bundle.',
   );
-  final installer = args[0], bundle = args[1], owner = await account('sky-ui');
+  var installer = args[0];
+  final bundle = args[1], owner = await account('sky-ui');
+  final panelOnly = args.length == 3 && args[2] == '--panel-updates';
   await apiReady(environment());
   final password = randomId(24);
   final hash = (await command([
@@ -133,7 +135,7 @@ Future<void> main(List<String> args) async {
     );
     await run(['/usr/local/bin/skyui', 'status']);
     await run(['/usr/local/bin/skyui', 'logs', 'all', '-n', '20']);
-    if (args.length == 3) await exerciseFleet(client, args[2]);
+    if (args.length == 3 && !panelOnly) await exerciseFleet(client, args[2]);
     final secretPaths = [
       '$etc/gateway.secret',
       '$etc/controller.secret',
@@ -183,8 +185,10 @@ Future<void> main(List<String> args) async {
       throw const OpsError('fixture_repeat_install_failed');
     }
     require(
-      repeated.stdout.toString().contains('Reusing the installed native build'),
-      'repeat_install_recompiled',
+      readText('${resolved(current)}/BUILD_MODE').trim() == 'native-v1' &&
+          !repeated.stdout.toString().contains('Dart SDK') &&
+          !Directory('${resolved(current)}/source').existsSync(),
+      'repeat_install_not_native',
     );
     await apiReady(environment());
     require(
@@ -224,7 +228,7 @@ Future<void> main(List<String> args) async {
       'restore_changed_records',
     );
     stdout.writeln('PASS: backup restore and server-side session revocation.');
-    if (args.length == 3) {
+    if (args.length == 3 && !panelOnly) {
       require(
         ((await client.panel())['instanceReadiness'] as Map).values.every(
           (v) => v == true,
@@ -261,11 +265,14 @@ Future<void> main(List<String> args) async {
       );
       await exercisePanelUpdates(client);
     }
+    if (panelOnly) {
+      await exercisePanelUpdates(client);
+      installer = '/source/install.sh';
+    }
     // Probe passes, but activation fails. The public installer must restore the
     // old link and services without revoking the newly established session.
     await temporary('/var/tmp', 'sky-ui-failed-update-', (work) async {
-      // A source release has already become native by this point. Exercise
-      // activation failure using that installed runtime, without compiling again.
+      // Exercise activation failure using the installed native runtime.
       final selected = resolved(current), files = <String, Uint8List>{};
       for (final file in Directory(
         selected,
@@ -297,6 +304,11 @@ Future<void> main(List<String> args) async {
       require(
         result.exitCode != 0 && resolved(current) == original,
         'failed_install_not_rolled_back',
+      );
+      final cached = '$downloadCache/panel-${digest(broken)}.tar.gz';
+      require(
+        exists(cached) && digest(host.read(cached)) == digest(broken),
+        'failed_install_download_not_retained',
       );
       await apiReady(environment());
       require(

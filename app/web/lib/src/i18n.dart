@@ -440,6 +440,7 @@ class AppStrings {
       'panelUpdate.restored': 'Выполнен',
       'panelUpdate.notRestored': 'Не выполнен',
       'panelUpdate.code': 'Code',
+      'panelUpdate.reason': 'Причина',
       'panelUpdate.command': 'Command',
       'panelUpdate.exitCode': 'Exit code',
       'panelUpdate.job': 'Job ID',
@@ -465,6 +466,8 @@ class AppStrings {
           'Обновление не удалось. Предыдущая версия восстановлена.',
       'runtime.error.panel_update_failed':
           'Не удалось обновить Sky UI. Проверьте журнал обслуживания.',
+      'runtime.error.native_binary_incompatible':
+          'Бинарники обновления несовместимы с сервером. Проверьте архитектуру и системные библиотеки. Текущая версия продолжает работать.',
       'share.type': 'Подписка или подключение',
       'share.uri': 'Ссылка подключения',
       'share.uriFormat': '{protocol} · ссылка подключения',

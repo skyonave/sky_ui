@@ -28,18 +28,18 @@ Future<void> main(List<String> args) async {
   }
 
   final feedRows = <Map<String, dynamic>>[];
-  for (final version in ['0.8.0-dev.2', '0.8.0-dev.3', '0.8.0-dev.4']) {
+  for (final version in ['0.8.0-dev.4', '0.8.0-dev.5', '0.8.0-dev.6']) {
     final tag = 'v$version', copy = {...files};
     copy['VERSION'] = bytes('$version\n');
     copy['SOURCE_SHA256'] = bytes(
       '${digest(bytes('isolated native fixture $version'))}\n',
     );
-    if (version.endsWith('.3'))
+    if (version.endsWith('.5'))
       copy['bin/sky-ui'] = bytes(
         '#!/bin/sh\nif [ "\$1" = --version ]; then echo "Sky UI $version"; else exit 23; fi\n',
       );
     var script = installer;
-    if (version.endsWith('.4'))
+    if (version.endsWith('.6'))
       script = script.replaceFirst('set -Eeuo pipefail', '''set -Eeuo pipefail
 if [[ " \$* " != *" --prepare-only "* ]]; then
   touch /var/lib/sky-ui-maintenance/interruption-marker

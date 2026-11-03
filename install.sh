@@ -5,6 +5,7 @@ unset SKY_UI_POSIX_LIBRARY
 umask 077
 
 fail() { printf 'Sky UI: %s\n' "$*" >&2; exit 1; }
+native_fail() { printf 'SKY_UI_ERROR=native_binary_incompatible\n' >&2; fail "$*"; }
 usage() {
   cat <<'HELP'
 Usage: bash install.sh [--version v0.1.0] [--port 39241]
@@ -45,7 +46,7 @@ if (( ! verify_only )); then
   command -v systemctl >/dev/null && command -v awk >/dev/null || fail 'systemctl and awk are required.'
   systemd_version="$(systemctl --version | awk 'NR == 1 {print $2}')"
   [[ "$systemd_version" =~ ^[0-9]+$ ]] && (( systemd_version >= 245 )) || fail 'systemd 245 or newer is required for isolated Sky UI logs.'
-  getconf GNU_LIBC_VERSION >/dev/null 2>&1 || fail 'A glibc-based Linux distribution is required by the Dart SDK.'
+  getconf GNU_LIBC_VERSION >/dev/null 2>&1 || fail 'A glibc-based Linux distribution is required.'
   [[ ! -e /var/lib/sky-ui-maintenance/core-remove-intent.json ]] || fail 'Core removal recovery is required. Start sky-ui-maintenance-recovery.service first.'
   [[ ! -e /var/lib/sky-ui-maintenance/engine-intent.json ]] || fail 'Engine recovery is required. Start sky-ui-maintenance-recovery.service first.'
   # Always pair the online entry point with the installer's published release.
@@ -215,57 +216,35 @@ mkdir "$temp/payload"
 tar -xzf "$bundle" -C "$temp/payload" --no-same-owner --no-same-permissions
 payload="$temp/payload"
 build_mode="$(tr -d '\r\n' <"$payload/BUILD_MODE")"
-[[ "$build_mode" == source-v1 || "$build_mode" == native-v1 ]] || fail 'Invalid build format.'
-release_digest="$actual"
-if [[ "$build_mode" == native-v1 ]]; then
-  release_digest="$(tr -d '\r\n' <"$payload/SOURCE_SHA256")"
-  [[ "$release_digest" =~ ^[a-f0-9]{64}$ ]] || fail 'Missing source identity.'
-else
-  printf '%s\n' "$actual" >"$payload/SOURCE_SHA256"
-fi
-for file in VERSION ARCH BUILD_MODE bin/caddy web/index.html web/main.dart.js web/styles.css \
+[[ "$build_mode" == native-v1 ]] || fail 'This installer requires a prebuilt native release.'
+release_digest="$(tr -d '\r\n' <"$payload/SOURCE_SHA256")"
+[[ "$release_digest" =~ ^[a-f0-9]{64}$ ]] || fail 'Missing source identity.'
+for file in VERSION ARCH BUILD_MODE MIN_GLIBC BUILD_MANIFEST.json licenses/dart-sdk.LICENSE bin/caddy web/index.html web/main.dart.js web/styles.css \
   web/fonts/PxPlus_IBM_VGA8.ttf web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt \
   deploy/systemd/sky-ui.service deploy/systemd/sky-ui-mihomo.service deploy/polkit/49-sky-ui.rules \
   deploy/systemd/sky-ui-sing-box.service deploy/systemd/sky-ui-xray.service deploy/systemd/sky-ui-amneziawg.service \
-  deploy/journald-sky-ui.conf deploy/systemd/sky-ui-cleanup.service deploy/systemd/sky-ui-cleanup.timer deploy/prepare_host.sh deploy/prepare_build.sh deploy/host_packages.sh deploy/dart_sdk.sh deploy/download_cache.sh deploy/sky-ui-install-tmpfiles.conf deploy/build_host.sh deploy/build_versions.sh compatibility/cores/amneziawg.json \
+  deploy/journald-sky-ui.conf deploy/systemd/sky-ui-cleanup.service deploy/systemd/sky-ui-cleanup.timer deploy/prepare_host.sh deploy/host_packages.sh deploy/download_cache.sh deploy/sky-ui-install-tmpfiles.conf compatibility/cores/amneziawg.json \
   deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/sky-ui deploy/skyui compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
-if [[ "$build_mode" == source-v1 ]]; then
-  for file in app/api/pubspec.yaml app/api/pubspec.lock app/api/bin/server.dart app/shared/pubspec.yaml app/ops/pubspec.yaml app/ops/pubspec.lock app/ops/bin/sky_ops.dart app/ops/native/posix.c native/sqlite3.c; do
-    [[ -f "$payload/source/$file" ]] || fail "Incomplete build source: $file"
-  done
-else
-  for file in bin/sky-ui bin/sky-ops lib/libsqlite3.so lib/libsky_posix.so; do [[ -f "$payload/$file" ]] || fail "Incomplete native release: $file"; done
-fi
+for file in bin/sky-ui bin/sky-ops lib/libsqlite3.so lib/libsky_posix.so; do [[ -f "$payload/$file" ]] || fail "Incomplete native release: $file"; done
+[[ ! -d "$payload/source" ]] || fail 'Native releases must not contain build sources.'
 release_version="$(tr -d '\r\n' <"$payload/VERSION")"
 release_arch="$(tr -d '\r\n' <"$payload/ARCH")"
 [[ "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || fail 'Invalid release metadata.'
 [[ "$release_arch" == "$arch" ]] || fail 'Release architecture mismatch.'
 if [[ "$version" != latest ]]; then [[ "$version" == "v$release_version" ]] || fail 'Release version mismatch.'; fi
+minimum_glibc="$(tr -d '\r\n' <"$payload/MIN_GLIBC")"
+[[ "$minimum_glibc" == 2.31 ]] || fail 'Unknown native compatibility baseline.'
+if (( ! verify_only )); then
+  host_glibc="$(getconf GNU_LIBC_VERSION | awk '{print $2}')"
+  [[ "$host_glibc" =~ ^[0-9]+\.[0-9]+$ && "$(printf '%s\n%s\n' "$minimum_glibc" "$host_glibc" | sort -V | head -n 1)" == "$minimum_glibc" ]] || native_fail "This release needs glibc $minimum_glibc or newer; found $host_glibc. Nothing was installed."
+fi
 if (( verify_only )); then printf 'Verified Sky UI %s for %s. No host changes made.\n' "$release_version" "$arch"; exit 0; fi
 source "$payload/deploy/download_cache.sh"
-if [[ "$build_mode" == source-v1 ]]; then
+if [[ -z "$prepare_only" ]]; then
   sky_cache_put panel "$actual" "$bundle" || printf 'Sky UI: could not retain the panel download for retry.\n' >&2
 fi
-
-# An identical source release already has a validated local build. Reuse it on
-# repeat installation instead of downloading a temporary SDK and compiling again.
-installed_candidate="/opt/sky-ui/releases/$release_version-$arch"
-if [[ "$build_mode" == source-v1 && -f /etc/sky-ui/managed-by-sky-ui &&
-      -f "$installed_candidate/BUNDLE_SHA256" &&
-      "$(cat "$installed_candidate/BUNDLE_SHA256")" == "$release_digest" &&
-      -f "$installed_candidate/bin/sky-ops" && -f "$installed_candidate/lib/libsky_posix.so" ]]; then
-  [[ ! -L "$installed_candidate" && "$(stat -c %u -- "$installed_candidate")" == 0 ]] || fail 'Unsafe installed build.'
-  cp -R "$installed_candidate/bin/." "$payload/bin/"
-  cp -R "$installed_candidate/lib" "$payload/lib"
-  cp "$installed_candidate/BUILDINFO" "$payload/BUILDINFO"
-  rm -rf -- "$payload/source"
-  printf 'native-v1\n' >"$payload/BUILD_MODE"
-  build_mode=native-v1
-  printf 'Reusing the installed native build of Sky UI %s.\n' "$release_version"
-fi
-
 if [[ ! -f /etc/sky-ui/managed-by-sky-ui ]]; then
   for path in /etc/sky-ui /var/lib/sky-ui /var/lib/sky-ui-edge /var/lib/sky-ui-maintenance /var/lib/sky-ui-certificates /opt/sky-ui /usr/local/bin/sky-ui /usr/local/bin/skyui /etc/systemd/system/sky-ui.service /etc/systemd/system/sky-ui-mihomo.service /etc/systemd/system/sky-ui-edge.service /etc/polkit-1/rules.d/49-sky-ui.rules; do
     [[ ! -e "$path" && ! -L "$path" ]] || fail "Refusing to overwrite an unmanaged path: $path"
@@ -277,7 +256,7 @@ fi
 printf 'SKY_UI_STAGE=prepare\n'
 prepare_fixed_host() {
   local script="$1" helper_dir helper_status
-  [[ "$script" == prepare_host.sh || "$script" == prepare_build.sh ]] || fail 'Invalid prerequisite helper.'
+  [[ "$script" == prepare_host.sh ]] || fail 'Invalid prerequisite helper.'
   if [[ -w /etc && -w /usr && -w /var/lib ]]; then
     bash "$payload/deploy/$script"
     return
@@ -289,24 +268,16 @@ prepare_fixed_host() {
   helper_dir="$(mktemp -d /var/lib/sky-ui-maintenance/work/prepare.XXXXXXXX)"
   install -m 0700 "$payload/deploy/$script" "$helper_dir/$script"
   install -m 0600 "$payload/deploy/host_packages.sh" "$helper_dir/host_packages.sh"
-  if [[ "$script" == prepare_build.sh ]]; then
-    install -m 0600 "$payload/deploy/download_cache.sh" "$helper_dir/download_cache.sh"
-    install -m 0600 "$payload/deploy/sky-ui-install-tmpfiles.conf" "$helper_dir/sky-ui-install-tmpfiles.conf"
-  fi
   helper_status=0
   systemd-run --quiet --wait --pipe --collect --unit="sky-ui-prepare-${helper_dir##*.}" \
     --property=RuntimeMaxSec=600 /usr/bin/bash "$helper_dir/$script" || helper_status=$?
-  rm -f -- "$helper_dir/$script" "$helper_dir/host_packages.sh" "$helper_dir/download_cache.sh" "$helper_dir/sky-ui-install-tmpfiles.conf"
+  rm -f -- "$helper_dir/$script" "$helper_dir/host_packages.sh"
   rmdir -- "$helper_dir"
   (( helper_status == 0 )) || fail "Host preparation failed (exit $helper_status)."
 }
-if [[ "$build_mode" == source-v1 ]]; then
-  prepare_fixed_host prepare_build.sh
-  bash "$payload/deploy/build_host.sh" "$payload"
-fi
 chmod 0755 "$temp" "$payload" "$payload/bin" "$payload/lib" "$payload/bin/sky-ui" "$payload/bin/sky-ops" "$payload/bin/caddy"
-[[ "$("$payload/bin/sky-ui" --version)" == "Sky UI $release_version" ]] || fail 'The API binary cannot run on this host.'
-"$payload/bin/sky-ops" --self-test
+[[ "$("$payload/bin/sky-ui" --version)" == "Sky UI $release_version" ]] || native_fail 'The API binary cannot run on this host.'
+"$payload/bin/sky-ops" --self-test || native_fail 'The CLI or native libraries cannot run on this host.'
 if [[ -n "$prepare_only" ]]; then
   [[ -f /etc/sky-ui/managed-by-sky-ui && -d "$prepare_only" && ! -L "$prepare_only" && "$prepare_only" == /var/lib/sky-ui-maintenance/work/panel-update-*/compiled ]] || fail 'Invalid preparation destination.'
   tar -czf "$prepare_only/$asset" -C "$payload" .

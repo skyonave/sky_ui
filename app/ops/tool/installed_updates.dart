@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:sky_ui_ops/src/host.dart';
@@ -40,9 +41,9 @@ Future<void> exercisePanelUpdates(Client client) async {
     throw const OpsError('fixture_update_timeout');
   }
 
-  var result = await finish(await queue('0.8.0-dev.2'));
+  var result = await finish(await queue('0.8.0-dev.4'));
   require(
-    result['status'] == 'completed' && panelVersion() == '0.8.0-dev.2',
+    result['status'] == 'completed' && panelVersion() == '0.8.0-dev.4',
     'fixture_panel_update_failed_${result['error']}',
   );
   await apiReady(environment());
@@ -51,7 +52,20 @@ Future<void> exercisePanelUpdates(Client client) async {
     'panel_update_revoked_session',
   );
   final selected = resolved(current);
-  result = await finish(await queue('0.8.0-dev.3'));
+  // A legacy-worker fixture uses the old source for the first transition. All
+  // subsequent failure/recovery checks use the candidate's worker implementation.
+  if (File('/source/new-fixture-worker/bundle/bin/fixture_worker')
+      .existsSync()) {
+    host.atomic(
+      '/run/systemd/system/sky-ui-update.service.d/native-fixture.conf',
+      utf8.encode(
+        '[Service]\nExecStart=\nExecStart=/source/new-fixture-worker/bundle/bin/fixture_worker /source/protocol-first-fixtures --panel\nEnvironment=SKY_UI_POSIX_LIBRARY=/source/libsky_posix.so\nEnvironment=SKY_UI_TEST_PARENT_NET_NS=${Platform.environment['SKY_UI_TEST_PARENT_NET_NS']}\nMemoryMax=200M\nMemorySwapMax=0\n',
+      ),
+      mode: 0x1a4,
+    );
+    await run(['systemctl', 'daemon-reload']);
+  }
+  result = await finish(await queue('0.8.0-dev.5'));
   require(
     result['status'] == 'failed' &&
         result['progress']['rolledBack'] == true &&
@@ -67,7 +81,7 @@ Future<void> exercisePanelUpdates(Client client) async {
     'PASS: native panel updater, installer lock, prepared bundle, failed activation rollback and session preservation.',
   );
   unlink('$state/interruption-marker');
-  await queue('0.8.0-dev.4');
+  await queue('0.8.0-dev.6');
   final end = DateTime.now().add(const Duration(seconds: 45));
   while (!exists('$state/interruption-marker') && DateTime.now().isBefore(end))
     await sleep();

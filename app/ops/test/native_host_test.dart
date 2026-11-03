@@ -144,6 +144,42 @@ void main() {
           );
         },
       );
+      test('installer exposes only allowlisted failure reasons', () async {
+        for (final reason in [
+          'native_binary_incompatible',
+          'private-fixture-output',
+        ]) {
+          final reporter = Reporter(
+            {'id': 'b' * 32, 'action': 'panel-update', 'status': 'running'},
+            '0.8.0-dev.1',
+            'v0.8.0-dev.2',
+            host.gid(),
+            output: '$root/result.json',
+          );
+          await expectLater(
+            runInstaller([
+              '/bin/bash',
+              '-c',
+              'echo SKY_UI_ERROR=$reason; exit 1',
+            ], reporter),
+            throwsA(
+              isA<InstallerFailure>()
+                  .having((e) => e.exitCode, 'exit', 1)
+                  .having(
+                    (e) => e.code,
+                    'reason',
+                    reason == 'native_binary_incompatible'
+                        ? reason
+                        : 'installer_failed',
+                  ),
+            ),
+          );
+          expect(
+            jsonEncode(reporter.result),
+            isNot(contains('private-fixture-output')),
+          );
+        }
+      });
       test(
         'SQLite snapshot contains live WAL and clears only copied sessions',
         () async {

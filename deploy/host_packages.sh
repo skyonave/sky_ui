@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
-# Source-only package-manager abstraction; install fixed package names only.
+# Runtime package-manager abstraction; install fixed package names only.
 sky_packages() {
   local purpose="$1"
+  [[ "$purpose" == runtime ]] || return 1
   local -a packages
   if command -v apt-get >/dev/null; then
     local polkit_package=policykit-1
     apt-get update
     if apt-cache show polkitd >/dev/null 2>&1; then polkit_package=polkitd; fi
     packages=(ca-certificates curl tar gzip coreutils findutils mawk util-linux passwd openssl "$polkit_package" nftables iproute2 acl)
-    if [[ "$purpose" == build ]]; then packages+=(gcc clang libc6-dev unzip debianutils); fi
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
   elif command -v dnf >/dev/null; then
     # Minimal RPM images provide the same commands in conflicting package variants.
@@ -17,15 +17,12 @@ sky_packages() {
     if command -v rpm >/dev/null && rpm -q curl-minimal >/dev/null 2>&1; then curl_package=curl-minimal; fi
     if command -v rpm >/dev/null && rpm -q coreutils-single >/dev/null 2>&1; then coreutils_package=coreutils-single; fi
     packages=(ca-certificates "$curl_package" tar gzip "$coreutils_package" findutils gawk util-linux shadow-utils openssl polkit nftables iproute acl)
-    if [[ "$purpose" == build ]]; then packages+=(gcc clang glibc-devel unzip which); fi
     dnf install -y "${packages[@]}"
   elif command -v zypper >/dev/null; then
     packages=(ca-certificates curl tar gzip coreutils findutils gawk util-linux shadow openssl polkit nftables iproute2 acl)
-    if [[ "$purpose" == build ]]; then packages+=(gcc clang glibc-devel unzip which); fi
     zypper --non-interactive install --no-recommends "${packages[@]}"
   elif command -v pacman >/dev/null; then
     packages=(ca-certificates curl tar gzip coreutils findutils gawk util-linux shadow openssl polkit nftables iproute2 acl)
-    if [[ "$purpose" == build ]]; then packages+=(gcc clang glibc unzip which); fi
     # Use the host's existing repository snapshot; never upgrade the entire host.
     pacman -S --needed --noconfirm "${packages[@]}"
   else

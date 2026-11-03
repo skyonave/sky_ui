@@ -35,7 +35,8 @@ sky_cache_get() (
   local name file
   name=$(sky_cache_name "$1" "$2") || return 1
   sky_cache_init || return 1
-  exec 7>>"$sky_download_cache/.lock"
+  [[ -w "$sky_download_cache" ]] || return 1
+  exec 7>>"$sky_download_cache/.lock" || return 1
   [[ "$(stat -Lc '%u:%h' /proc/self/fd/7)" == 0:1 ]] || return 1
   flock 7 || return 1
   sky_cache_prune_locked || return 1
@@ -55,7 +56,8 @@ sky_cache_put() (
   size=$(stat -c %s -- "$3") || return 1
   (( size > 0 && size <= limit )) || return 1
   sky_cache_init || return 1
-  exec 7>>"$sky_download_cache/.lock"
+  [[ -w "$sky_download_cache" ]] || return 1
+  exec 7>>"$sky_download_cache/.lock" || return 1
   [[ "$(stat -Lc '%u:%h' /proc/self/fd/7)" == 0:1 ]] || return 1
   flock 7 || return 1
   sky_cache_prune_locked || return 1
@@ -76,7 +78,8 @@ sky_cache_put() (
 sky_cache_clear() (
   [[ -e "$sky_download_cache" || -L "$sky_download_cache" ]] || return 0
   sky_cache_init || return 1
-  exec 7>>"$sky_download_cache/.lock"
+  [[ -w "$sky_download_cache" ]] || return 1
+  exec 7>>"$sky_download_cache/.lock" || return 1
   [[ "$(stat -Lc '%u:%h' /proc/self/fd/7)" == 0:1 ]] || return 1
   flock 7 || return 1
   local file

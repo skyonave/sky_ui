@@ -86,7 +86,8 @@ class Reporter {
 }
 
 class InstallerFailure extends OpsError {
-  const InstallerFailure(this.exitCode) : super('installer_failed');
+  const InstallerFailure(this.exitCode, {String? reason})
+    : super(reason ?? 'installer_failed');
   final int exitCode;
 }
 
@@ -165,6 +166,7 @@ Future<void> runInstaller(
   final buffer = calloc<Uint8>(65536);
   final output = <int>[];
   var pending = '';
+  String? failureReason;
   void chunk(List<int> bytes) {
     output.addAll(bytes);
     if (output.length > 262144) output.removeRange(0, output.length - 262144);
@@ -183,6 +185,9 @@ Future<void> runInstaller(
           'artifact': name == 'toolchain' ? 'Dart SDK' : null,
         });
       }
+      // Only explicit public reason codes may leave the private installer log.
+      if (line == 'SKY_UI_ERROR=native_binary_incompatible')
+        failureReason = 'native_binary_incompatible';
     }
   }
 
@@ -226,7 +231,7 @@ Future<void> runInstaller(
       if (DateTime.now().isAfter(end)) throw const InstallerFailure(124);
       if (!exited || !eof) await sleep(50);
     }
-    if (code != 0) throw InstallerFailure(code);
+    if (code != 0) throw InstallerFailure(code, reason: failureReason);
     complete = true;
   } finally {
     if (pid >= 0 && !complete) {

@@ -3,7 +3,11 @@ import 'dart:io';
 Future<void> main(List<String> args) async {
   final root = File(Platform.script.toFilePath()).parent.parent.path;
   final forwarded = args
-      .map((arg) => arg == '--check' ? arg : File(arg).absolute.path)
+      .map(
+        (arg) => ['--check', '--check-amd64', '--check-arm64'].contains(arg)
+            ? arg
+            : File(arg).absolute.path,
+      )
       .toList();
   final process = await Process.start(
     Platform.resolvedExecutable,

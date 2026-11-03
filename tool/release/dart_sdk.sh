@@ -1,6 +1,5 @@
-# SDK probing runs through the unprivileged builder supplied by the caller.
+# Release-builder SDK checks; never shipped to the installed panel.
 as_builder() (
-  # Dart probes inspect ./bin, even with --help. Never inherit a private root cwd.
   cd -- "$work/source"
   nice -n 10 runuser -u sky-ui-build -- env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     HOME="$work/home" PUB_CACHE="$work/cache" TMPDIR="$work/tmp" \

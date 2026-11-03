@@ -333,6 +333,10 @@ Future<void> panelUpdateMain(List<String> args, {Fetch? fetch}) async {
         reporter.failed(code, {
           'failedStage': reporter.progress['stage'],
           'rolledBack': false,
+          if (error is InstallerFailure) ...{
+            'exitCode': error.exitCode,
+            'command': 'install.sh',
+          },
         });
     } finally {
       atomicJson('$state/result.json', result, gid: owner.gid);

@@ -13,7 +13,7 @@
 | [Xray](https://github.com/XTLS/Xray-core) | v26.10.31 | VLESS, Shadowsocks |
 | [AmneziaWG Go](https://github.com/amnezia-vpn/amneziawg-go) | v3.1.20260828 | AmneziaWG 3.1 |
 
-Linux amd64, glibc and systemd 245+. Native builds tested on Ubuntu 24.04, Debian 12 and Rocky Linux 9. Verified versions are listed in the [compatibility catalog](compatibility/cores).
+Linux amd64 and arm64, glibc 2.31+, systemd 245+. Verified versions are listed in the [compatibility catalog](compatibility/cores).
 
 
 ## English
@@ -33,9 +33,7 @@ The installer downloads the panel. Choose a protocol when creating a connection;
 
 Run `sudo skyui setup` to change the address or recover administrator access. Run `sudo skyui --help` for local management, backups and HTTPS settings. `sudo skyui uninstall` removes the installation and its data after confirmation.
 
-The installer compiles the server and management tools on your machine. It reuses a compatible Dart SDK (3.13 or newer, below 4.0), or downloads a temporary SDK. Build sources, temporary SDK and caches are removed afterwards. The installed panel runs native binaries. Build dependencies are installed through the system package manager.
-
-After a failed attempt, verified panel and SDK downloads are kept for retry for up to one day. A successful installation clears them.
+The installer downloads ready-to-run binaries. Dart SDK and compilers are not required. Releases target glibc 2.31 or newer and systemd 245 or newer. Engines are downloaded separately.
 
 Core updates use the project's [compatibility catalog](compatibility/cores). Only releases verified for your panel version and server architecture can be installed.
 
@@ -58,9 +56,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/mai
 
 `sudo skyui setup` меняет адрес и восстанавливает доступ администратора. Все команды управления, резервного копирования и HTTPS доступны в `sudo skyui --help`. `sudo skyui uninstall` удаляет установку и её данные.
 
-Сервер и инструменты управления собираются на вашей машине. Установщик использует подходящий Dart SDK (от 3.13, ниже 4.0), а если его нет, скачивает временный. После сборки исходники, временный SDK и кэши удаляются. Установленная панель работает из бинарников. Зависимости для сборки устанавливаются через пакетный менеджер системы.
-
-Если установка не удалась, проверенные архивы панели и SDK сохраняются для повторной попытки на сутки. После успешной установки они удаляются.
+Установщик скачивает готовые бинарники. Dart SDK и компиляторы не нужны. Требуются glibc от 2.31 и systemd от 245. Ядра скачиваются отдельно.
 
 Обновления берутся из [каталога совместимости проекта](compatibility/cores). Устанавливаются только версии, проверенные для вашей версии панели и архитектуры сервера.
 

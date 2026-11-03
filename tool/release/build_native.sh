@@ -6,19 +6,15 @@ fail() { printf 'Sky UI build: %s\n' "$*" >&2; exit 1; }
 [[ $EUID == 0 && $# == 1 ]] || fail 'Root and one verified payload directory are required.'
 payload="$(realpath -- "$1")"
 [[ -d "$payload/source/app/api" && -d "$payload/source/app/ops" ]] || fail 'Missing build source.'
-source "$payload/deploy/build_versions.sh"
-source "$payload/deploy/host_packages.sh"
-source "$payload/deploy/dart_sdk.sh"
-source "$payload/deploy/download_cache.sh"
+source "$(dirname -- "$0")/versions.sh"
+source "$(dirname -- "$0")/../../deploy/host_packages.sh"
+source "$(dirname -- "$0")/dart_sdk.sh"
+
 printf 'SKY_UI_STAGE=prepare\n'
-if ! command -v cc >/dev/null || ! command -v clang >/dev/null || ! command -v which >/dev/null || ! command -v unzip >/dev/null || ! command -v runuser >/dev/null; then
-  sky_packages build
-fi
+for command in cc clang which unzip runuser readelf; do command -v "$command" >/dev/null || fail "Missing release build tool: $command"; done
 sky_builder
 available="$(df -B1 --output=avail "$payload" | tail -n 1 | tr -d ' ')"
 [[ "$available" =~ ^[0-9]+$ ]] && (( available >= 1610612736 )) || fail 'At least 1.5 GB of free disk space is required for local compilation.'
-memory_kb="$(awk '/^MemAvailable:|^SwapFree:/ {total += $2} END {printf "%.0f", total}' /proc/meminfo)"
-[[ "$memory_kb" =~ ^[0-9]+$ ]] && (( memory_kb >= 524288 )) || fail 'At least 512 MB of available RAM and swap is required for local compilation.'
 work="$(mktemp -d /var/tmp/sky-ui-build.XXXXXXXX)"
 cleanup() { rm -rf -- "$work"; }
 trap cleanup EXIT
@@ -36,37 +32,12 @@ if command -v dart >/dev/null; then
   sky_try_sdk "$candidate" || true
   if [[ -z "$sdk" && -x "$(dirname -- "$candidate")/cache/dart-sdk/bin/dart" ]]; then sky_try_sdk "$(dirname -- "$candidate")/cache/dart-sdk/bin/dart" || true; fi
 fi
-if [[ -z "$sdk" && -n "${SUDO_USER:-}" && "$SUDO_USER" != root ]]; then
-  user_home="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
-  for candidate in "$user_home/dart-sdk/bin/dart" "$user_home/flutter/bin/cache/dart-sdk/bin/dart" "$user_home/.local/share/dart-sdk/bin/dart"; do
-    if [[ -x "$candidate" ]]; then sky_try_sdk "$candidate" && break || true; fi
-  done
-fi
-printf 'SKY_UI_STAGE=toolchain\n'
-if [[ -z "$sdk" ]]; then
-  if sky_cache_get dart "$sdk_sha" "$work/dart.zip"; then
-    printf 'Reusing verified Dart SDK download %s (%s).\n' "$dart_fallback" "$sdk_arch"
-  else
-    printf 'Downloading temporary Dart SDK %s (%s).\n' "$dart_fallback" "$sdk_arch"
-    curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --max-time 600 --max-filesize 268435456 \
-      -o "$work/dart.zip" "https://storage.googleapis.com/dart-archive/channels/stable/release/$dart_fallback/sdk/dartsdk-linux-$sdk_arch-release.zip"
-  fi
-  printf '%s  %s\n' "$sdk_sha" "$work/dart.zip" | sha256sum --check --status || fail 'Dart SDK checksum mismatch.'
-  sky_cache_put dart "$sdk_sha" "$work/dart.zip" || printf 'Sky UI: could not retain the SDK download for retry.\n' >&2
-  unzip -q "$work/dart.zip" -d "$work"
-  rm -f -- "$work/dart.zip"
-  # The SDK is read-only to the build account; only owned caches are writable.
-  find "$work/dart-sdk" -type d -exec chmod 0755 {} +
-  find "$work/dart-sdk" -type f -perm /111 -exec chmod 0755 {} +
-  find "$work/dart-sdk" -type f ! -perm /111 -exec chmod 0644 {} +
-  if ! sky_compatible_sdk "$work/dart-sdk/bin/dart"; then
-    printf 'Dart SDK probe failed (%s, exit %s):\n' "$sdk_probe_stage" "$sdk_probe_status" >&2
-    printf '%s\n' "$sdk_probe_output" | tail -c 16384 >&2
-    fail 'The downloaded SDK could not pass its build capability check.'
-  fi
-else
-  printf 'Using existing Dart SDK %s: %s\n' "$sdk_version" "$sdk"
-fi
+[[ -n "$sdk" && "$sdk_version" == "$dart_fallback" ]] || fail "Release builds require the pinned Dart SDK $dart_fallback on PATH."
+case "$(uname -m)" in x86_64) host_arch=amd64 ;; aarch64|arm64) host_arch=arm64 ;; *) fail 'Unsupported build host.' ;; esac
+[[ "$arch" == "$host_arch" ]] || fail 'Build native releases on a runner of the target architecture.'
+sdk_root="$(dirname -- "$(dirname -- "$(realpath -- "$sdk")")")"
+install -m 0644 "$sdk_root/LICENSE" "$payload/licenses/dart-sdk.LICENSE"
+printf 'Using release Dart SDK %s.\n' "$sdk_version"
 printf 'SKY_UI_STAGE=build\n'
 # The verified release contains SQLite source, not a build-host shared library.
 [[ -f "$work/source/native/sqlite3.c" ]] || fail 'Missing SQLite source.'
@@ -78,6 +49,7 @@ hooks:
     sqlite3:
       source: source
       path: $work/source/native/sqlite3.c
+      additional_libraries: [dl, pthread]
 HOOKS
   if ! as_builder bash -ec 'cd -- "$1"; "$2" --suppress-analytics pub get --enforce-lockfile; "$2" --suppress-analytics build cli --target "$3" --output "$4" --verbosity warning' \
     sky-ui-build "$work/source/app/$package" "$sdk" "bin/$([[ "$package" == api ]] && printf server || printf sky_ops).dart" "$work/output/$package" >"$work/$package-build.log" 2>&1; then
@@ -103,7 +75,7 @@ chmod 0755 "$payload" "$payload/bin" "$payload/lib"
 install -m 0644 "$work/output/libsky_posix.so" "$work/output/ops/bundle/lib/libsky_posix.so"
 as_builder "$work/output/ops/bundle/bin/sky_ops" --self-test
 [[ "$("$payload/bin/sky-ui" --version)" == "Sky UI $(tr -d '\r\n' <"$payload/VERSION")" ]] || fail 'Candidate API version mismatch.'
-printf 'Dart: %s\nArchitecture: %s\nLibc: %s\nBuild: target-host\n' "$sdk_version" "$arch" "$(getconf GNU_LIBC_VERSION)" >"$payload/BUILDINFO"
+printf 'Dart: %s\nArchitecture: %s\nLibc: %s\nBuild: release-runner\n' "$sdk_version" "$arch" "$(getconf GNU_LIBC_VERSION)" >"$payload/BUILDINFO"
 printf 'native-v1\n' >"$payload/BUILD_MODE"
 rm -rf -- "$payload/source"
-printf 'Target-host compilation complete. Temporary SDK, source and caches will be removed.\n'
+printf 'Native release compilation complete. Temporary build workspace will be removed.\n'

@@ -34,7 +34,7 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.8.0-dev.2',
+    defaultValue: '0.8.0-dev.3',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
