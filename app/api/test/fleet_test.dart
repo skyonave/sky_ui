@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:sky_ui_api/sky_ui_api.dart';
-import 'package:sky_ui_api/src/cores/proxy_configuration.dart';
-import 'package:sky_ui_api/src/cores/amnezia_configuration.dart';
-import 'package:sky_ui_api/src/cores/json_proxy_adapter.dart';
+import 'package:sky_ui_api/src/engines/proxy/configuration.dart';
+import 'package:sky_ui_api/src/engines/amnezia/configuration.dart';
+import 'package:sky_ui_api/src/engines/proxy/adapter.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:test/test.dart';
 import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor;
@@ -92,6 +92,7 @@ void main() {
       defaultAddress: 'example.com',
     );
     panel = PanelService(
+      configurationStore: ConfigurationFiles(config.dataDirectory),
       config: config,
       manager: managers['xray']!,
       additionalManagers: [managers['sing-box']!],

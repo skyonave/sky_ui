@@ -1,8 +1,8 @@
 import 'dart:io';
-import 'package:sky_ui_api/src/panel/connection_tools.dart';
-import 'package:sky_ui_api/src/panel/client_exporter.dart';
-import 'package:sky_ui_api/src/panel/domain.dart';
-import 'package:sky_ui_api/src/cores/amnezia_configuration.dart';
+import 'package:sky_ui_api/src/application/connections/field_generators.dart';
+import 'package:sky_ui_api/src/application/subscriptions/client_exporter.dart';
+import 'package:sky_ui_api/src/application/access/records.dart';
+import 'package:sky_ui_api/src/engines/amnezia/configuration.dart';
 import 'package:test/test.dart';
 
 void main() {

@@ -1,10 +1,10 @@
 import 'package:jaspr/client.dart';
 import 'package:jaspr/dom.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
-import 'package:sky_ui_web/src/engine_card.dart';
-import 'package:sky_ui_web/src/i18n.dart';
-import 'package:sky_ui_web/src/protocol_catalog.dart';
-import 'package:sky_ui_web/src/ui.dart';
+import 'package:sky_ui_web/src/features/engines/engine_card.dart';
+import 'package:sky_ui_web/src/shared/localization/strings.dart';
+import 'package:sky_ui_web/src/shared/protocols/catalog.dart';
+import 'package:sky_ui_web/src/shared/components/primitives.dart';
 
 // Visual fixture only. Uses the production card; no owner APIs or persistence.
 void main() => runApp(const CoreCardsSmoke(), attachTo: '#app');

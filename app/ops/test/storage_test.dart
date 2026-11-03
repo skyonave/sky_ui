@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/storage.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/features/storage/retention.dart';
 
 void main() {
   group(

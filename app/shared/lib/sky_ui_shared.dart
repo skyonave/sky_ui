@@ -1,12 +1,12 @@
 library;
 
-export 'src/models.dart';
-export 'src/protocols.dart';
-export 'src/runtime.dart';
-export 'src/panel.dart';
-export 'src/system.dart';
-export 'src/owner.dart';
-export 'src/maintenance.dart';
-export 'src/updates.dart';
-export 'src/product_protocols.dart';
-export 'src/core_settings.dart';
+export 'src/access/models.dart';
+export 'src/protocols/schema.dart';
+export 'src/engines/runtime.dart';
+export 'src/access/snapshots.dart';
+export 'src/telemetry/system.dart';
+export 'src/auth/owner.dart';
+export 'src/maintenance/jobs.dart';
+export 'src/updates/releases.dart';
+export 'src/protocols/catalog.dart';
+export 'src/engines/settings.dart';

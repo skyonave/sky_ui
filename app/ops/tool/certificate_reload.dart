@@ -2,8 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/certificates.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/features/certificates/certificates.dart';
 
 Future<void> main(List<String> args) async {
   require(

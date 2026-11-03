@@ -1,7 +1,7 @@
 import 'package:jaspr/client.dart';
 import 'package:jaspr/dom.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
-import 'package:sky_ui_web/src/core_install_progress.dart';
+import 'package:sky_ui_web/src/features/engines/install_progress.dart';
 
 /// Render the real progress component without any credentials or engine jobs.
 void main() {

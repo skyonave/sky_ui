@@ -37,6 +37,10 @@ The installer downloads ready-to-run binaries. Dart SDK and compilers are not re
 
 Core updates use the project's [compatibility catalog](compatibility/cores). Only releases verified for your panel version and server architecture can be installed.
 
+### Source layout
+
+[app/web](app/web) is the Jaspr UI, [app/api](app/api) is the Dart Frog API, [app/shared](app/shared) contains portable contracts, and [app/ops](app/ops) handles the CLI and server maintenance. Features are grouped inside each application. Run `dart tool/check.dart` to check dependencies, analyze the code and run tests.
+
 New panel releases appear in the sidebar. Confirm the update there or run `sudo skyui update`. A failed update restores the previous panel and its data.
 
 ## Русский
@@ -59,5 +63,9 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/mai
 Установщик скачивает готовые бинарники. Dart SDK и компиляторы не нужны. Требуются glibc от 2.31 и systemd от 245. Ядра скачиваются отдельно.
 
 Обновления берутся из [каталога совместимости проекта](compatibility/cores). Устанавливаются только версии, проверенные для вашей версии панели и архитектуры сервера.
+
+### Структура проекта
+
+[app/web](app/web) содержит интерфейс Jaspr, [app/api](app/api) сервер Dart Frog, [app/shared](app/shared) общие контракты, [app/ops](app/ops) CLI и обслуживание сервера. Внутри приложений код сгруппирован по функциям. Команда `dart tool/check.dart` проверяет зависимости, анализирует код и запускает тесты.
 
 Новая версия панели появится в боковой панели. Обновись оттуда или через `sudo skyui update`. При ошибке вернутся предыдущая версия и её данные.

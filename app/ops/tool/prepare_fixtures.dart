@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/artifacts.dart';
-import 'package:sky_ui_ops/src/engines.dart';
-import 'package:sky_ui_ops/src/archives.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/shared/artifacts.dart';
+import 'package:sky_ui_ops/src/features/engines/installer.dart';
+import 'package:sky_ui_ops/src/shared/archives.dart';
 
 Future<void> main(List<String> args) async {
   require(

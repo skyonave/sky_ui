@@ -1,5 +1,5 @@
 import 'dart:convert';
-import 'package:sky_ui_api/src/cores/mihomo_settings.dart';
+import 'package:sky_ui_api/src/engines/mihomo/settings.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:test/test.dart';

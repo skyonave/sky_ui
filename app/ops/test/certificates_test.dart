@@ -1,8 +1,8 @@
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/certificates.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/features/certificates/certificates.dart';
 
 void main() {
   group(

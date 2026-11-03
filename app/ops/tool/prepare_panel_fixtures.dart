@@ -2,9 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/archives.dart';
-import 'package:sky_ui_ops/src/releases.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/shared/archives.dart';
+import 'package:sky_ui_ops/src/features/updates/release_catalog.dart';
 
 Future<void> main(List<String> args) async {
   require(

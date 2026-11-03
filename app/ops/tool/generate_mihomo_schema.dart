@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/archives.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/shared/archives.dart';
 
-import '../../api/lib/src/cores/mihomo_native.g.dart';
+import '../../api/lib/src/engines/mihomo/native_fields.g.dart';
 
 Future<void> main(List<String> args) async {
   require(
@@ -124,7 +124,7 @@ Future<void> main(List<String> args) async {
   }
 
   // Preserve the reviewed inventory rather than expanding product scope.
-  final generated = File('$root/app/api/lib/src/cores/mihomo_native.g.dart');
+  final generated = File('$root/app/api/lib/src/engines/mihomo/native_fields.g.dart');
   const inventory = mihomoNativeInventory;
   const names = {
     'vless': 'VlessOption',

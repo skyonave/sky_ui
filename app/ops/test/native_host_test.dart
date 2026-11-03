@@ -3,9 +3,9 @@ import 'dart:io';
 
 import 'package:test/test.dart';
 import 'package:sqlite3/sqlite3.dart';
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/backups.dart';
-import 'package:sky_ui_ops/src/progress.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/features/backups/backups.dart';
+import 'package:sky_ui_ops/src/shared/progress.dart';
 
 void main() {
   group(

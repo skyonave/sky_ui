@@ -1,5 +1,5 @@
-import 'package:sky_ui_api/src/core_updates.dart';
-import 'package:sky_ui_api/src/errors.dart';
+import 'package:sky_ui_api/src/features/updates/core_updates.dart';
+import 'package:sky_ui_api/src/shared/api_exception.dart';
 import 'package:test/test.dart';
 
 Map<String, dynamic> release(

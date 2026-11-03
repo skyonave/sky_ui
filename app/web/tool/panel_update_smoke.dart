@@ -1,8 +1,8 @@
 import 'package:jaspr/client.dart';
 import 'package:jaspr/dom.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
-import 'package:sky_ui_web/src/api_client.dart';
-import 'package:sky_ui_web/src/panel_update_card.dart';
+import 'package:sky_ui_web/src/shared/api/api_client.dart';
+import 'package:sky_ui_web/src/features/updates/update_card.dart';
 
 /// Browser fixture using the production update card and HTTP client.
 void main() => runApp(const UpdateSmoke(), attachTo: '#app');

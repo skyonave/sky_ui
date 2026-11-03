@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:sky_ui_api/src/sni_scanner.dart';
+import 'package:sky_ui_api/src/features/connections/sni_scanner.dart';
 import 'package:test/test.dart';
 
 void main() {

@@ -2,8 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:sky_ui_ops/src/archives.dart';
-import 'package:sky_ui_ops/src/host.dart' show OpsError, digest, require;
+import 'package:sky_ui_ops/src/shared/archives.dart';
+import 'package:sky_ui_ops/src/platform/host.dart' show OpsError, digest, require;
 
 import 'native_manifest.dart' show buildSources, elfMatches;
 

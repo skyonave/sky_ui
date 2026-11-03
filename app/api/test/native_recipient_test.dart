@@ -139,6 +139,7 @@ void main() {
         );
         final codec = MihomoConfiguration(supervisor: supervisor, core: core);
         final panel = PanelService(
+          configurationStore: ConfigurationFiles(directory.path),
           config: ServerConfig(
             port: 39242,
             webOrigin: Uri.parse('http://127.0.0.1:39242'),

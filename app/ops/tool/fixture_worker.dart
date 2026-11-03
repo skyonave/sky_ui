@@ -2,10 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/maintenance.dart';
-import 'package:sky_ui_ops/src/progress.dart';
-import 'package:sky_ui_ops/src/panel_update.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/features/maintenance/worker.dart';
+import 'package:sky_ui_ops/src/shared/progress.dart';
+import 'package:sky_ui_ops/src/features/updates/panel_updater.dart';
 
 import 'installed_acceptance.dart' show isolated;
 

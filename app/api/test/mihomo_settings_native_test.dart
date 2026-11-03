@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
-import 'package:sky_ui_api/src/cores/mihomo_settings.dart';
+import 'package:sky_ui_api/src/engines/mihomo/settings.dart';
 import 'package:test/test.dart';
 import 'support/socks_probe.dart' show freeProxyPort;
 

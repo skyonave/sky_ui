@@ -1,7 +1,7 @@
 import 'dart:convert';
-import 'package:sky_ui_api/src/panel_updates.dart';
-import 'package:sky_ui_api/src/process_runner.dart';
-import 'package:sky_ui_api/src/errors.dart';
+import 'package:sky_ui_api/src/features/updates/panel_updates.dart';
+import 'package:sky_ui_api/src/infrastructure/process/command_runner.dart';
+import 'package:sky_ui_api/src/shared/api_exception.dart';
 import 'package:test/test.dart';
 
 class ReleaseRunner implements CommandRunner {

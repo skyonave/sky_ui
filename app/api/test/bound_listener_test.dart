@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'package:sky_ui_api/src/cores/socket_owner.dart';
+import 'package:sky_ui_api/src/infrastructure/network/socket_owner.dart';
 import 'package:test/test.dart';
 
 void main() {

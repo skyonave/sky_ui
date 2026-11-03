@@ -1,7 +1,23 @@
 import 'dart:io';
 
+import 'check_architecture.dart' as architecture;
+
 Future<void> main(List<String> args) async {
   final root = File(Platform.script.toFilePath()).parent.parent.path;
+  final violations = architecture.checkArchitecture(Directory(root));
+  if (violations.isNotEmpty) {
+    stderr.writeln(violations.join('\n'));
+    exitCode = 1;
+    return;
+  }
+  final guardTest = await Process.run(Platform.resolvedExecutable, [
+    '$root/tool/architecture_check_test.dart',
+  ]);
+  if (guardTest.exitCode != 0) {
+    stderr.write(guardTest.stderr);
+    exitCode = guardTest.exitCode;
+    return;
+  }
   for (final package in ['api', 'ops']) {
     for (final arguments in [
       ['analyze'],
@@ -27,4 +43,12 @@ Future<void> main(List<String> args) async {
     mode: ProcessStartMode.inheritStdio,
   );
   exitCode = await process.exitCode;
+  if (exitCode != 0) return;
+  final constructor = await Process.start(
+    Platform.resolvedExecutable,
+    ['run', 'tool/connection_draft_check.dart'],
+    workingDirectory: '$root/app/web',
+    mode: ProcessStartMode.inheritStdio,
+  );
+  exitCode = await constructor.exitCode;
 }

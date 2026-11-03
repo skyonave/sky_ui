@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'package:sky_ui_ops/src/host.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
 
 class SocketBytes {
   SocketBytes(Socket socket) : chunks = StreamIterator(socket);

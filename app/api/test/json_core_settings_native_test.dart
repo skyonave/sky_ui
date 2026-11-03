@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
-import 'package:sky_ui_api/src/cores/sing_box_settings.dart';
-import 'package:sky_ui_api/src/cores/xray_settings.dart';
+import 'package:sky_ui_api/src/engines/sing_box/settings.dart';
+import 'package:sky_ui_api/src/engines/xray/settings.dart';
 import 'package:test/test.dart';
 import 'support/socks_probe.dart';
 

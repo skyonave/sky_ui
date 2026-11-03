@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'package:sky_ui_api/sky_ui_api.dart';
-import 'package:sky_ui_api/src/cores/mihomo_schema.dart';
+import 'package:sky_ui_api/src/engines/mihomo/schema.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:test/test.dart';
-import '../../web/lib/src/i18n.dart';
+import '../../web/lib/src/shared/localization/strings.dart';
 
 void main() {
   test(

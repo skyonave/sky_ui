@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:sky_ui_ops/src/host.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
 
 Future<int> freePort() async {
   final socket = await ServerSocket.bind('127.0.0.1', 0);

@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:bcrypt/bcrypt.dart';
 import 'package:dart_frog/dart_frog.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
-import 'package:sky_ui_api/src/auth/owner_auth.dart';
+import 'package:sky_ui_api/src/features/auth/owner_auth.dart';
 import 'package:test/test.dart';
 import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor, fixtureCore;
 

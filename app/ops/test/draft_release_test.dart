@@ -1,5 +1,5 @@
 import 'package:test/test.dart';
-import 'package:sky_ui_ops/src/host.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
 
 import '../tool/draft_release.dart' show checkIdentity;
 

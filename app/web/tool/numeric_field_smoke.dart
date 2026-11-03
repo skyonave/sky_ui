@@ -1,7 +1,7 @@
 import 'package:jaspr/client.dart';
 import 'package:jaspr/dom.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
-import 'package:sky_ui_web/src/protocol_field.dart';
+import 'package:sky_ui_web/src/shared/forms/protocol_field.dart';
 
 /// Browser regression fixture for the production numeric field and step changes.
 void main() => runApp(const NumericFieldSmoke(), attachTo: '#app');

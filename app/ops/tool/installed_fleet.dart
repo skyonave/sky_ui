@@ -1,9 +1,9 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/backups.dart';
-import 'package:sky_ui_ops/src/maintenance.dart' show waitCleanup;
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/features/backups/backups.dart';
+import 'package:sky_ui_ops/src/features/maintenance/worker.dart' show waitCleanup;
 
 import 'installed_acceptance.dart' show Client, isolated;
 

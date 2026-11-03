@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/backups.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/features/backups/backups.dart';
 
 import 'installed_acceptance.dart' show Client, isolated;
 

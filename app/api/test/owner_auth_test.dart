@@ -1,7 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:bcrypt/bcrypt.dart';
-import 'package:sky_ui_api/src/auth/owner_auth.dart';
+import 'package:sky_ui_api/src/features/auth/owner_auth.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';

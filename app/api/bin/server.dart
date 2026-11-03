@@ -2,12 +2,12 @@ import 'dart:async';
 import 'dart:io';
 import 'package:dart_frog/dart_frog.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
-import 'package:sky_ui_api/src/auth/owner_auth.dart';
-import 'package:sky_ui_api/src/maintenance.dart';
-import 'package:sky_ui_api/src/cores/json_proxy_adapter.dart';
-import 'package:sky_ui_api/src/cores/proxy_configuration.dart';
-import 'package:sky_ui_api/src/cores/amnezia_adapter.dart';
-import 'package:sky_ui_api/src/cores/amnezia_configuration.dart';
+import 'package:sky_ui_api/src/features/auth/owner_auth.dart';
+import 'package:sky_ui_api/src/features/maintenance/service.dart';
+import 'package:sky_ui_api/src/engines/proxy/adapter.dart';
+import 'package:sky_ui_api/src/engines/proxy/configuration.dart';
+import 'package:sky_ui_api/src/engines/amnezia/adapter.dart';
+import 'package:sky_ui_api/src/engines/amnezia/configuration.dart';
 
 Future<void> main(List<String> args) async {
   if (args.contains('--version')) {
@@ -65,6 +65,7 @@ Future<void> main(List<String> args) async {
     networkAdministration: config.networkAdministration,
   );
   final panel = PanelService(
+    configurationStore: ConfigurationFiles(config.dataDirectory),
     config: config,
     manager: manager,
     repository: repository,

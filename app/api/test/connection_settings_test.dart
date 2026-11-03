@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:sky_ui_api/sky_ui_api.dart';
-import 'package:sky_ui_api/src/cores/proxy_configuration.dart';
+import 'package:sky_ui_api/src/engines/proxy/configuration.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:test/test.dart';
 import 'core_manager_test.dart' show FakeSupervisor;

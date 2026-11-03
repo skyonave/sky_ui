@@ -3,12 +3,12 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:test/test.dart';
-import 'package:sky_ui_ops/src/host.dart';
-import 'package:sky_ui_ops/src/archives.dart';
-import 'package:sky_ui_ops/src/artifacts.dart';
-import 'package:sky_ui_ops/src/amnezia.dart';
-import 'package:sky_ui_ops/src/releases.dart';
-import 'package:sky_ui_ops/src/storage.dart';
+import 'package:sky_ui_ops/src/platform/host.dart';
+import 'package:sky_ui_ops/src/shared/archives.dart';
+import 'package:sky_ui_ops/src/shared/artifacts.dart';
+import 'package:sky_ui_ops/src/features/engines/amnezia.dart';
+import 'package:sky_ui_ops/src/features/updates/release_catalog.dart';
+import 'package:sky_ui_ops/src/features/storage/retention.dart';
 
 Uint8List bytes(String text) => Uint8List.fromList(utf8.encode(text));
 Map<String, dynamic> clone(Map<String, dynamic> value) =>

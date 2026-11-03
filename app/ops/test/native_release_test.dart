@@ -34,7 +34,7 @@ void main() {
     () {
       expect(sourceInput('deploy/__pycache__/legacy.cpython-312.pyc'), isFalse);
       expect(sourceInput('app/api/bin/server.exe'), isFalse);
-      expect(sourceInput('app/ops/lib/src/cli.dart'), isTrue);
+      expect(sourceInput('app/ops/lib/src/cli/commands.dart'), isTrue);
       expect(sourceInput('deploy/skyui'), isTrue);
       expect(sourceInput('app/web/web/fonts/PxPlus_IBM_VGA8.ttf'), isTrue);
     },

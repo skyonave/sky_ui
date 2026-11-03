@@ -10,6 +10,8 @@ case "${SKY_UI_RELEASE_ARCH:-$(uname -m)}" in
   *) printf 'Unsupported release architecture.\n' >&2; exit 1 ;;
 esac
 source "$root/tool/release/versions.sh"
+dart "$root/tool/check_architecture.dart"
+dart "$root/tool/architecture_check_test.dart"
 version="$(tr -d '\r\n' <"$root/VERSION")"
 [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]
 output="$root/build/releases"
@@ -56,6 +58,7 @@ cp -R "$root/app/shared/lib" "$payload/source/app/shared/"
 cd "$root/app/web"
 dart pub get --enforce-lockfile
 dart analyze lib web tool
+dart run tool/connection_draft_check.dart
 dart compile js -O2 -DSKY_UI_VERSION="$version" web/main.dart -o "$payload/web/main.dart.js"
 rm -f -- "$payload/web/main.dart.js.deps" "$payload/web/main.dart.js.map"
 cp web/index.html web/styles.css "$payload/web/"

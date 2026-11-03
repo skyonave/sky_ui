@@ -1,5 +1,5 @@
-import 'package:sky_ui_api/src/panel/client_exporter.dart';
-import 'package:sky_ui_api/src/errors.dart';
+import 'package:sky_ui_api/src/application/subscriptions/client_exporter.dart';
+import 'package:sky_ui_api/src/shared/api_exception.dart';
 import 'package:test/test.dart';
 
 void main() {

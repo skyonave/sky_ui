@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:sky_ui_ops/src/host.dart' show digest, require;
+import 'package:sky_ui_ops/src/platform/host.dart' show digest, require;
 
 bool sourceInput(String path) {
   final name = path.replaceAll('\\', '/').split('/').last;
@@ -26,6 +26,9 @@ Map<String, String> buildSources(String root) {
     'LICENSE',
     'install.sh',
     'tool/build_release.sh',
+    'tool/check_architecture.dart',
+    'tool/architecture_check_test.dart',
+    'app/web/tool/connection_draft_check.dart',
     'tool/build_release_environment.sh',
     'app/web/FEATHER-LICENSE.txt',
     'app/ops/tool/native_manifest.dart',

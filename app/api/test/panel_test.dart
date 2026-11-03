@@ -72,6 +72,7 @@ void main() {
   );
   PanelService service({List<CoreManager> additionalManagers = const []}) =>
       PanelService(
+        configurationStore: ConfigurationFiles(config.dataDirectory),
         config: config,
         manager: manager,
         repository: repository,
