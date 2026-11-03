@@ -305,7 +305,7 @@ install -d -m 0770 -o sky-ui-core -g sky-ui /var/lib/sky-ui/cores/mihomo
 install -d -m 0750 -o root -g sky-ui /var/lib/sky-ui-maintenance /var/lib/sky-ui-maintenance/backups /var/lib/sky-ui-maintenance/validation
 install -d -m 0700 -o root -g root /var/lib/sky-ui-maintenance/work
 install -d -m 0700 -o sky-ui -g sky-ui /var/lib/sky-ui-maintenance/inbox
-install -d -m 0755 -o root -g root /opt/sky-ui/cores /opt/sky-ui/cores/mihomo
+install -d -m 0755 -o root -g root /opt/sky-ui/cores /opt/sky-ui/cores/mihomo /opt/sky-ui/tools
 for engine in sing-box xray amneziawg; do
   install -d -m 0755 -o root -g root "/opt/sky-ui/cores/$engine"
   install -d -m 0770 -o sky-ui -g sky-ui "/var/lib/sky-ui/cores/$engine"

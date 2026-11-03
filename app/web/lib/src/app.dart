@@ -16,6 +16,7 @@ import 'protocol_field.dart';
 import 'panel_update_card.dart';
 import 'core_install_progress.dart';
 import 'engine_card.dart';
+import 'sni_picker.dart';
 
 class SkyApp extends StatefulComponent {
   const SkyApp({
@@ -34,11 +35,14 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.8.0-dev.3',
+    defaultValue: '0.8.0-dev.4',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
   bool dataBusy = false, ownerBusy = false, ownerSessionsLoading = false;
+  final generatingFields = <String>{};
+  final generatedDrafts = <String>{};
+  int fieldGeneration = 0;
   final ownerDraft = <String, String>{};
   List<OwnerSession> ownerSessions = [];
   String? revokeSessionId;
@@ -604,10 +608,13 @@ class _SkyAppState extends State<SkyApp> {
     dependencyReconnecting = false;
     connectionErrors = {};
     advancedGroups.clear();
+    generatingFields.clear();
+    generatedDrafts.clear();
+    fieldGeneration++;
     selectedProtocol = connection?.protocolId;
     selectedCore = connection?.coreId;
     draft = connection == null
-        ? {'name': '', 'port': '8443'}
+        ? {'name': '', 'port': ''}
         : {
             'name': connection.name,
             'port': '${connection.port}',
@@ -627,18 +634,60 @@ class _SkyAppState extends State<SkyApp> {
     if (!store.supports(coreId, selectedProtocol)) return;
     setState(() {
       selectedCore = coreId;
+      generatingFields.clear();
+      fieldGeneration++;
       connectionErrors = {};
       final definition = store.definition(coreId, selectedProtocol!);
       draft = definition.defaults({
         for (final f in definition.fields)
           if (draft[f.id] != null) f.id: draft[f.id]!,
         'name': draft['name'] ?? '',
-        'port': draft['port'] ?? '8443',
+        'port': draft['port'] ?? '',
       });
       connectionStep = coreInstalled(coreId) ? 'core' : 'dependency';
       if (coreInstalled(coreId)) advanceConnection();
       error = null;
     });
+    if (editingId == null && generatedDrafts.add('$coreId:$selectedProtocol')) {
+      unawaited(generateConnectionFields('defaults'));
+    }
+  }
+
+  Future<void> generateConnectionFields(String field) async {
+    final core = selectedCore, protocol = selectedProtocol;
+    if (core == null ||
+        protocol == null ||
+        generatingFields.isNotEmpty ||
+        dataBusy)
+      return;
+    final generation = ++fieldGeneration;
+    final before = Map<String, String>.from(draft);
+    setState(() => generatingFields.add(field));
+    try {
+      final patch = await api.generateConnectionFields(
+        draftRevision,
+        core,
+        protocol,
+        field,
+        before,
+      );
+      if (!mounted || modal != 'connection' || generation != fieldGeneration)
+        return;
+      // Never overwrite input edited while the request was in flight.
+      if (patch.keys.any((key) => draft[key] != before[key])) return;
+      setState(() {
+        draft.addAll(patch);
+        for (final key in patch.keys) {
+          connectionErrors.remove(key);
+        }
+      });
+    } on ApiClientException catch (failure) {
+      if (mounted && generation == fieldGeneration)
+        setState(() => error = runtimeMessage(failure.code));
+    } finally {
+      if (mounted && generation == fieldGeneration)
+        setState(() => generatingFields.remove(field));
+    }
   }
 
   void chooseProtocol(ProtocolDefinition protocol) {
@@ -647,6 +696,8 @@ class _SkyAppState extends State<SkyApp> {
     setState(() {
       selectedProtocol = protocol.id;
       selectedCore = null;
+      fieldGeneration++;
+      generatingFields.clear();
       connectionErrors = {};
       advancedGroups.clear();
       connectionStep = 'core';
@@ -658,7 +709,11 @@ class _SkyAppState extends State<SkyApp> {
   }
 
   Future<void> saveConnection() async {
-    if (selectedCore == null || selectedProtocol == null || !canEdit) return;
+    if (selectedCore == null ||
+        selectedProtocol == null ||
+        !canEdit ||
+        generatingFields.isNotEmpty)
+      return;
     if (!store.supports(selectedCore, selectedProtocol)) {
       setState(() => error = t('protocol.unavailable'));
       return;
@@ -1511,7 +1566,10 @@ class _SkyAppState extends State<SkyApp> {
       updateAvailable: engineUpdates[descriptor.id]?.available == true,
       maintenanceAvailable: maintenance?.available == true,
       busy: dataBusy || runtimeBusy || maintenanceBusy || dependencyBusy,
-      feedback: actionCore == descriptor.id && coreActionFeedback != null
+      feedback:
+          value?.processState == CoreProcessState.failed && value?.error != null
+          ? runtimeMessage(value!.error!.code)
+          : actionCore == descriptor.id && coreActionFeedback != null
           ? coreActionFeedback
           : value?.binaryAvailable == true && value?.error != null
           ? runtimeMessage(value!.error!.code)
@@ -2801,6 +2859,7 @@ class _SkyAppState extends State<SkyApp> {
               field(
                 const ProtocolField(
                   'port',
+                  generator: 'port',
                   kind: 'integer',
                   minimum: 1,
                   maximum: 65535,
@@ -2819,7 +2878,9 @@ class _SkyAppState extends State<SkyApp> {
         ], classes: 'form-grid'),
         if (fields.any((f) => f.advanced)) ...[
           action(
-            t('builder.advanced'),
+            t('builder.advancedCount', {
+              'count': fields.where((f) => f.advanced).length,
+            }),
             () => setState(() {
               if (!advancedGroups.add(connectionStep))
                 advancedGroups.remove(connectionStep);
@@ -2968,7 +3029,29 @@ class _SkyAppState extends State<SkyApp> {
       field: f,
       values: draft,
       error: connectionErrors[f.id],
-      busy: dataBusy,
+      busy: dataBusy || generatingFields.isNotEmpty,
+      onGenerate: f.generator == null
+          ? null
+          : () => generateConnectionFields(f.id),
+      extra: f.id == 'serverName' && draft['security'] == 'REALITY'
+          ? SniPicker(
+              api: api,
+              revision: draftRevision,
+              onSelected: (domain) {
+                setState(() {
+                  draft['serverName'] = domain;
+                  final fields = store
+                      .definition(selectedCore!, selectedProtocol!)
+                      .fields;
+                  if (fields.any((f) => f.id == 'realityTarget'))
+                    draft['realityTarget'] = '$domain:443';
+                  if (fields.any((f) => f.id == 'handshakePort'))
+                    draft['handshakePort'] = '443';
+                });
+              },
+              key: ValueKey('sni:$selectedCore:$selectedProtocol:$editingId'),
+            )
+          : null,
       prefix: '$selectedCore-$selectedProtocol-',
       configured: original?.configuredSecrets.contains(f.id) == true,
       blockedOptions: blockedChoices(f),

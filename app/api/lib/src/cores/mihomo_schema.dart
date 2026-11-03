@@ -382,6 +382,12 @@ class MihomoSchemas {
       options = ['', ...options];
     return ProtocolField(
       'native.$name',
+      generator: switch (name) {
+        'ws-path' || 'xhttp-config.path' => 'path',
+        'grpc-service-name' => 'service',
+        'obfs-password' => 'token',
+        _ => null,
+      },
       kind: kind,
       itemKind: type == '[]int' || type.startsWith('[]uint')
           ? 'integer'

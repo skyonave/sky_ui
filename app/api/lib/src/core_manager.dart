@@ -87,12 +87,15 @@ class CoreManager {
         service.loaded &&
         service.state == CoreProcessState.active &&
         await adapter.controllerReady(core);
-    if (ready) unawaited(adapter.observeLogs(core));
-    error ??= _operationError ?? service.error;
+    if (ready || service.loaded && core.controller.port == 0)
+      unawaited(adapter.observeLogs(core));
+    error ??= service.error ?? _operationError;
     if (error == null && !binary.available)
       error = const ApiError('binary_missing');
     if (error == null && service.state == CoreProcessState.active && !ready)
-      error = const ApiError('controller_not_ready');
+      error = ApiError(
+        core.controller.port == 0 ? 'engine_not_ready' : 'controller_not_ready',
+      );
     return CoreSnapshot(
       instanceId: core.id,
       coreId: core.coreId,
@@ -184,6 +187,8 @@ class CoreManager {
             throw ApiException(
               operation == CoreOperation.stop
                   ? 'service_stop_timeout'
+                  : core.controller.port == 0
+                  ? 'engine_not_ready'
                   : 'controller_not_ready',
               status: 504,
             );

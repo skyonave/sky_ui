@@ -6,6 +6,13 @@ import 'dart:typed_data';
 import 'host.dart';
 
 const awgTable = 'sky_ui_awg';
+
+// iproute2 emits host routes without /32, including DHCP-provided DNS routes.
+({int ip, int prefix, int network, int broadcast})? awgRoute(
+  String destination,
+) => destination == 'default'
+    ? null
+    : ipv4(destination, cidr: destination.contains('/'));
 final awgOptions = {
   'Jc': 'jc',
   'Jmin': 'jmin',
@@ -264,8 +271,8 @@ Future<void> runAwg(String configuration, String binary) async {
       final net = ipv4(i['address'] as String);
       for (final route in routes) {
         final dst = route['dst'] ?? 'default';
-        if (dst != 'default') {
-          final r = ipv4(dst as String);
+        final r = awgRoute(dst as String);
+        if (r != null) {
           awgRequire(
             !(net.network <= r.broadcast && r.network <= net.broadcast),
           );

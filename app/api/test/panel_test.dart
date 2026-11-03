@@ -73,6 +73,7 @@ void main() {
     repository: repository,
     codecs: {'mihomo': codec},
     exporter: ClashExporter(),
+    portProbe: (_) async => true,
     additionalExporters: [V2RayExporter()],
   );
   Future<PanelSnapshot> connection() =>
@@ -173,6 +174,17 @@ void main() {
       );
     },
   );
+  test('draft generators preserve stored records and skip registered ports', () async {
+    final c = (await connection()).connections.single;
+    final before = repository.read().connections.single;
+    final revision = repository.revision;
+    final generated = await panel.generateConnectionFields(revision, 'mihomo', 'vless', 'port', {'port': '${c.port}'});
+    expect(int.parse(generated['port']!), isNot(c.port));
+    expect(int.parse(generated['port']!), inInclusiveRange(20000, 59999));
+    expect(repository.revision, revision);
+    expect(repository.read().connections.single.secrets, before.secrets);
+    await expectLater(panel.generateConnectionFields(revision, 'mihomo', 'vless', 'tlsPrivateKey', {}), throwsA(isA<ApiException>()));
+  });
   tearDown(() async {
     repository.close();
     await directory.delete(recursive: true);

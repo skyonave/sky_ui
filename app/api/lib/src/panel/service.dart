@@ -10,6 +10,7 @@ import 'configuration_codec.dart';
 import 'domain.dart';
 import 'repository.dart';
 import 'validation.dart';
+import 'connection_tools.dart';
 
 class PanelService {
   PanelService({
@@ -18,6 +19,7 @@ class PanelService {
     required this.repository,
     required Map<String, ConfigurationCodec> codecs,
     required this.exporter,
+    this.portProbe = connectionPortAvailable,
     List<CoreManager> additionalManagers = const [],
     List<ClientExporter> additionalExporters = const [],
   }) : exporters = {
@@ -30,6 +32,7 @@ class PanelService {
          for (final item in additionalManagers) item.core.id: item,
        };
   final ServerConfig config;
+  final Future<bool> Function(int) portProbe;
   final CoreManager manager;
   final PanelRepository repository;
   final Map<String, ConfigurationCodec> codecs;
@@ -60,6 +63,58 @@ class PanelService {
   final Map<String, ClientExporter> exporters;
   bool busy = false;
   final _portRandom = Random.secure();
+
+  Future<Map<String, String>> generateConnectionFields(
+    int revision,
+    String coreId,
+    String protocolId,
+    String fieldId,
+    Map<String, String> values,
+  ) => _exclusive((_) async {
+    final data = repository.read();
+    await _check(revision);
+    final definition = _codec(
+      coreId,
+    ).protocols.where((p) => p.id == protocolId && p.available).firstOrNull;
+    if (definition == null)
+      throw const ApiException('protocol_unavailable', status: 422);
+    final current = definition.defaults(values), result = <String, String>{};
+    if (fieldId == 'port' ||
+        fieldId == 'defaults' && (values['port'] ?? '').isEmpty) {
+      final reserved = <int>{
+        22,
+        80,
+        443,
+        config.port,
+        for (final owner in managers.values) owner.core.controller.port,
+        for (final c in data.connections)
+          if (c.value.port != null) c.value.port!,
+        for (final g in data.grants)
+          if (int.tryParse(g.credentials['port'] ?? '') != null)
+            int.parse(g.credentials['port']!),
+        if (int.tryParse(values['port'] ?? '') != null)
+          int.parse(values['port']!),
+      };
+      result['port'] =
+          '${await randomConnectionPort(reserved, probe: portProbe)}';
+      if (fieldId == 'port') return result;
+    }
+    for (final field in definition.activeFields(current)) {
+      if (field.generator == null ||
+          fieldId != 'defaults' && field.id != fieldId ||
+          result.containsKey(field.id))
+        continue;
+      result.addAll(
+        generateConnectionValue(field.id, field.generator!, {
+          ...current,
+          ...result,
+        }),
+      );
+    }
+    if (result.isEmpty && fieldId != 'defaults')
+      throw const ApiException('generation_unsupported', status: 422);
+    return result;
+  });
 
   Map<String, dynamic> _recovery(DeploymentIntent intent) {
     try {
@@ -496,6 +551,11 @@ class PanelService {
         old.value.port != port &&
         data.grants.any((g) => g.credentials['port'] == '$port'))
       throw const ApiException('port_in_use', status: 422);
+    if (port != null &&
+        (old == null || old.value.port != port) &&
+        !await portProbe(port)) {
+      throw const ApiException('port_in_use', status: 422);
+    }
     final secretInput = {...input.settings};
     for (final f
         in definition
@@ -735,7 +795,10 @@ class PanelService {
     ];
   }
 
-  Future<void> _canExport(String recipientId) async {
+  Future<void> _canExport(
+    String recipientId, {
+    Set<String>? connectionIds,
+  }) async {
     if (busy) throw const ApiException('configuration_busy', status: 503);
     if (!await isSynchronized())
       throw const ApiException('configuration_out_of_sync', status: 503);
@@ -744,6 +807,7 @@ class PanelService {
         .where(
           (c) =>
               c.value.enabled &&
+              (connectionIds == null || connectionIds.contains(c.value.id)) &&
               data.grants.any(
                 (g) =>
                     g.connectionId == c.value.id &&
@@ -779,37 +843,55 @@ class PanelService {
       subscriptionUrl: config.webOrigin.resolve('/s/${user.token}').toString(),
       links: links,
       subscriptionUrls: {
-        if (exporter.canExport(endpoints))
+        if (exportableEndpoints(exporter, endpoints).isNotEmpty)
           'clash': config.webOrigin.resolve('/s/${user.token}.yaml').toString(),
-        if (V2RayExporter().canExport(endpoints))
+        if (exportableEndpoints(V2RayExporter(), endpoints).isNotEmpty)
           'v2ray': config.webOrigin.resolve('/s/${user.token}.txt').toString(),
       },
     );
   });
-  Future<String> subscription(String token, {String format = 'clash'}) =>
-      _exclusive((_) async {
-        final id = repository.recipientForToken(token);
-        if (id == null) throw const ApiException('not_found', status: 404);
-        final data = repository.read();
-        if (!data.recipients.any((u) => u.id == id && u.enabled))
-          throw const ApiException('not_found', status: 404);
-        if (!data.grants.any(
-          (g) =>
-              g.recipientId == id &&
-              data.connections.any(
-                (c) => c.value.id == g.connectionId && c.value.enabled,
-              ),
-        )) {
-          throw const ApiException('not_found', status: 404);
-        }
-        await _canExport(id);
-        final endpoints = _clientEndpoints(data, id);
-        return switch (format) {
-          'clash' => exporter.profile(endpoints),
-          'v2ray' => V2RayExporter().profile(endpoints),
-          _ => throw const ApiException('export_unavailable', status: 422),
-        };
-      });
+  Future<String> subscription(
+    String token, {
+    String format = 'clash',
+    String? clientId,
+  }) => _exclusive((_) async {
+    final id = repository.recipientForToken(token);
+    if (id == null) throw const ApiException('not_found', status: 404);
+    final data = repository.read();
+    if (!data.recipients.any((u) => u.id == id && u.enabled))
+      throw const ApiException('not_found', status: 404);
+    if (!data.grants.any(
+      (g) =>
+          g.recipientId == id &&
+          data.connections.any(
+            (c) => c.value.id == g.connectionId && c.value.enabled,
+          ),
+    )) {
+      throw const ApiException('not_found', status: 404);
+    }
+    final endpoints = _clientEndpoints(data, id);
+    final client = format == 'clash'
+        ? exporter
+        : format == 'v2ray'
+        ? V2RayExporter()
+        : null;
+    if (client == null)
+      throw const ApiException('export_unavailable', status: 422);
+    final selected = exportableEndpoints(client, endpoints, client: clientId);
+    if (selected.isEmpty)
+      throw const ApiException('export_unavailable', status: 422);
+    final selectedIds = {
+      for (final grant in data.grants)
+        if (selected.any((endpoint) => endpoint.id == grant.id))
+          grant.connectionId,
+    };
+    await _canExport(id, connectionIds: selectedIds);
+    return switch (format) {
+      'clash' => exporter.profile(selected),
+      'v2ray' => V2RayExporter().profile(selected),
+      _ => throw const ApiException('export_unavailable', status: 422),
+    };
+  });
   Future<CoreSnapshot> executeCore(
     CoreOperation operation, {
     String? instanceId,

@@ -14,6 +14,7 @@ import 'panel_updates.dart';
 import 'process_runner.dart';
 import 'auth/owner_auth.dart';
 import 'maintenance.dart';
+import 'sni_scanner.dart';
 
 Handler createApplication(
   ServerConfig config,
@@ -39,6 +40,7 @@ Handler createApplication(
     methodNotAllowedHandler: (_) => failure('method_not_allowed', 405),
   );
   final system = SystemMonitor(config.dataDirectory);
+  final sniScanner = SniScanner();
   final updates = coreUpdates ?? CoreUpdates();
   final instances = panel?.managers ?? {manager.core.id: manager};
   final applicationUpdates =
@@ -460,6 +462,50 @@ Handler createApplication(
     Response data(PanelSnapshot snapshot) =>
         Response.json(body: {'data': snapshot.toJson()});
     router.get('/api/v1/panel', (_) async => data(await panel.snapshot()));
+    router.get(
+      '/api/v1/connection-tools/sni',
+      (_) => Response.json(body: {'data': sniScanner.snapshot}),
+    );
+    router.post('/api/v1/connection-tools/sni', (context) async {
+      final value = await body(context);
+      if (value['revision'] != panel.repository.revision)
+        throw const ApiException('state_changed', status: 409);
+      return Response.json(
+        statusCode: 202,
+        body: {'data': sniScanner.start(panel.repository.read().address)},
+      );
+    });
+    router.delete('/api/v1/connection-tools/sni/<id>', (
+      RequestContext context,
+      String id,
+    ) {
+      sniScanner.cancel(id);
+      return Response.json(body: {'data': sniScanner.snapshot});
+    });
+    router.post('/api/v1/connection-tools/generate', (context) async {
+      final value = await body(context);
+      if (value['core'] is! String ||
+          value['protocol'] is! String ||
+          value['field'] is! String ||
+          value['values'] is! Map ||
+          (value['values'] as Map).length > 256 ||
+          (value['values'] as Map).entries.any(
+            (e) => e.key is! String || e.value is! String,
+          )) {
+        throw const ApiException('request_invalid', status: 400);
+      }
+      return Response.json(
+        body: {
+          'data': await panel.generateConnectionFields(
+            value['revision'] as int,
+            value['core'] as String,
+            value['protocol'] as String,
+            value['field'] as String,
+            Map<String, String>.from(value['values'] as Map),
+          ),
+        },
+      );
+    });
     Future<Response> saveConnection(
       RequestContext context, {
       String? id,
@@ -549,6 +595,9 @@ Handler createApplication(
         body: await panel.subscription(
           filename.substring(0, 43),
           format: format,
+          clientId: subscriptionClientFor(
+            context.request.headers['user-agent'] ?? '',
+          ),
         ),
         headers: {
           'content-type': format == 'v2ray'
@@ -558,7 +607,7 @@ Handler createApplication(
               ? 'inline; filename=Sky-UI.txt'
               : 'inline; filename=Sky-UI.yaml',
           'profile-update-interval': '6',
-          if (filename.length == 43) 'vary': 'User-Agent',
+          'vary': 'User-Agent',
           'x-robots-tag': 'noindex, nofollow, noarchive',
         },
       );

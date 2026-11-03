@@ -86,7 +86,12 @@ void main() {
     );
     expect(exporter.links([endpoint({})]), hasLength(1));
     final customAlpn = endpoint({'clientAlpn': 'h2'});
-    expect(exporter.links([customAlpn]), isEmpty);
+    expect(
+      Uri.parse(
+        exporter.links([customAlpn]).single.uri,
+      ).queryParameters['alpn'],
+      'h2',
+    );
     final profile = jsonDecode(exporter.profile([customAlpn])) as Map;
     expect((profile['proxies'] as List).single['alpn'], ['h2']);
   });

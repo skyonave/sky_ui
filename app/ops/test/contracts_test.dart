@@ -246,6 +246,13 @@ void main() {
     });
   });
   group('AWG privileged input boundary', () {
+    test('DHCP host routes and CIDR routes share the overlap check', () {
+      expect(awgRoute('default'), isNull);
+      expect(awgRoute('8.8.8.8')!.prefix, 32);
+      expect(awgRoute('177.177.212.1')!.prefix, 32);
+      expect(awgRoute('10.66.0.0/24')!.network, ipv4('10.66.0.1/24').network);
+      expect(() => awgRoute('8.8.8.999'), throwsA(anything));
+    });
     test('native UAPI and options', () {
       final fixture = validateAwg(awgFixture()),
           payload = utf8.decode(uapiPayload(object(fixture['interfaces'][0])));

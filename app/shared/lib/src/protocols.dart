@@ -33,11 +33,13 @@ class ProtocolField {
     this.deriveValueMap = const {},
     this.itemKind = 'text',
     this.rowKeyField,
+    this.generator,
   }) : _labelKey = labelKey,
        _helpKey = helpKey;
   final String id, defaultValue, kind, group;
   final String itemKind;
   final String? rowKeyField;
+  final String? generator;
   final List<String> options;
   final bool required, secret, advanced;
   final String? _labelKey, _helpKey, pattern;
@@ -158,6 +160,7 @@ class ProtocolField {
     'deriveValueMap': deriveValueMap,
     'itemKind': itemKind,
     'rowKeyField': rowKeyField,
+    'generator': generator,
   };
   factory ProtocolField.fromJson(Map<String, dynamic> json) => ProtocolField(
     json['id'] as String,
@@ -191,6 +194,7 @@ class ProtocolField {
     ),
     itemKind: json['itemKind'] as String? ?? 'text',
     rowKeyField: json['rowKeyField'] as String?,
+    generator: json['generator'] as String?,
   );
 }
 

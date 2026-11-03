@@ -98,6 +98,7 @@ void main() {
       repository: repository,
       codecs: codecs,
       exporter: ClashExporter(),
+      portProbe: (_) async => true,
       additionalExporters: [V2RayExporter()],
     );
     await panel.initialize();

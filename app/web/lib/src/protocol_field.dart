@@ -18,6 +18,8 @@ class ProtocolFieldView extends StatelessComponent {
     this.configured = false,
     this.blockedOptions = const {},
     this.guideScope = '',
+    this.onGenerate,
+    this.extra,
     super.key,
   });
   final ProtocolField field;
@@ -28,6 +30,8 @@ class ProtocolFieldView extends StatelessComponent {
   final Map<String, String> blockedOptions;
   final String prefix;
   final String guideScope;
+  final void Function()? onGenerate;
+  final Component? extra;
   static const t = AppStrings();
   String choice(String value) {
     if (value.isEmpty) return t('builder.default');
@@ -122,86 +126,102 @@ class ProtocolFieldView extends StatelessComponent {
             txt(t('builder.guideTitle'), classes: 'transport-guide-title'),
             p([Component.text(guide)]),
           ], classes: 'transport-guide'),
-        if (field.kind == 'rows')
-          rows(value, id)
-        else if (field.kind == 'boolean')
-          input<bool>(
-            id: id,
-            type: InputType.checkbox,
-            checked: value == 'true',
-            disabled: busy,
-            onChange: (v) => onChanged('$v', true),
-          )
-        else if (field.kind == 'multiline' || field.kind == 'lines')
-          textarea(
-            [Component.text(value)],
-            id: id,
-            rows: field.kind == 'lines' ? 3 : 6,
-            disabled: busy,
-            onInput: (v) => onChanged(v, false),
-            attributes: {
-              'maxlength': '${field.maxLength}',
-              'autocomplete': 'off',
-              if (configured) 'placeholder': t('builder.secretStored'),
-            },
-          )
-        else if (field.kind != 'choice' && field.options.isNotEmpty)
-          select(
+        if (field.kind != 'choice')
+          div(
             [
-              for (final option in field.options)
-                el(
-                  'option',
-                  [Component.text(choice(option))],
+              if (field.kind == 'rows')
+                rows(value, id)
+              else if (field.kind == 'boolean')
+                input<bool>(
+                  id: id,
+                  type: InputType.checkbox,
+                  checked: value == 'true',
+                  disabled: busy,
+                  onChange: (v) => onChanged('$v', true),
+                )
+              else if (field.kind == 'multiline' || field.kind == 'lines')
+                textarea(
+                  [Component.text(value)],
+                  id: id,
+                  rows: field.kind == 'lines' ? 3 : 6,
+                  disabled: busy,
+                  onInput: (v) => onChanged(v, false),
                   attributes: {
-                    'value': option,
-                    if (value == option) 'selected': '',
-                    if (!field.allowedOptions(values).contains(option))
-                      'disabled': '',
+                    'maxlength': '${field.maxLength}',
+                    'autocomplete': 'off',
+                    if (configured) 'placeholder': t('builder.secretStored'),
+                  },
+                )
+              else if (field.kind != 'choice' && field.options.isNotEmpty)
+                select(
+                  [
+                    for (final option in field.options)
+                      el(
+                        'option',
+                        [Component.text(choice(option))],
+                        attributes: {
+                          'value': option,
+                          if (value == option) 'selected': '',
+                          if (!field.allowedOptions(values).contains(option))
+                            'disabled': '',
+                        },
+                      ),
+                  ],
+                  id: id,
+                  value: value,
+                  disabled: busy,
+                  onChange: (v) => onChanged(v.first, true),
+                )
+              else if (field.kind == 'integer' && !field.secret)
+                input<num>(
+                  id: id,
+                  value: value,
+                  disabled: busy,
+                  type: InputType.number,
+                  onInput: (v) => onChanged(v.isFinite ? '$v' : '', false),
+                  attributes: {
+                    if (field.minimum != null) 'min': '${field.minimum}',
+                    if (field.maximum != null) 'max': '${field.maximum}',
+                    if (field.required) 'aria-required': 'true',
+                    if (error != null) 'aria-invalid': 'true',
+                    if (field.derived(values)) 'readonly': '',
+                    'autocomplete': 'off',
+                  },
+                )
+              else if (field.kind != 'choice')
+                input<String>(
+                  id: id,
+                  value: value,
+                  disabled: busy,
+                  type: field.secret ? InputType.password : InputType.text,
+                  onInput: (v) => onChanged(v, false),
+                  attributes: {
+                    'maxlength': '${field.maxLength}',
+                    if (field.minimum != null) 'min': '${field.minimum}',
+                    if (field.maximum != null) 'max': '${field.maximum}',
+                    if (field.required) 'aria-required': 'true',
+                    if (error != null) 'aria-invalid': 'true',
+                    if (configured) 'placeholder': t('builder.secretStored'),
+                    'autocomplete': 'off',
+                    if (field.derived(values)) 'readonly': '',
                   },
                 ),
+              if (onGenerate != null)
+                iconButton(
+                  'refresh',
+                  t('builder.generateField', {'name': t(field.labelKey)}),
+                  onGenerate!,
+                  classes: 'icon-button field-generator',
+                  disabled: busy,
+                ),
             ],
-            id: id,
-            value: value,
-            disabled: busy,
-            onChange: (v) => onChanged(v.first, true),
-          )
-        else if (field.kind == 'integer' && !field.secret)
-          input<num>(
-            id: id,
-            value: value,
-            disabled: busy,
-            type: InputType.number,
-            onInput: (v) => onChanged(v.isFinite ? '$v' : '', false),
-            attributes: {
-              if (field.minimum != null) 'min': '${field.minimum}',
-              if (field.maximum != null) 'max': '${field.maximum}',
-              if (field.required) 'aria-required': 'true',
-              if (error != null) 'aria-invalid': 'true',
-              if (field.derived(values)) 'readonly': '',
-              'autocomplete': 'off',
-            },
-          )
-        else if (field.kind != 'choice')
-          input<String>(
-            id: id,
-            value: value,
-            disabled: busy,
-            type: field.secret ? InputType.password : InputType.text,
-            onInput: (v) => onChanged(v, false),
-            attributes: {
-              'maxlength': '${field.maxLength}',
-              if (field.minimum != null) 'min': '${field.minimum}',
-              if (field.maximum != null) 'max': '${field.maximum}',
-              if (field.required) 'aria-required': 'true',
-              if (error != null) 'aria-invalid': 'true',
-              if (configured) 'placeholder': t('builder.secretStored'),
-              'autocomplete': 'off',
-              if (field.derived(values)) 'readonly': '',
-            },
+            classes:
+                'field-control ${onGenerate != null ? 'with-generator' : ''}',
           ),
         if (hint != null) p([Component.text(hint)], classes: 'field-hint'),
         if (error != null)
           txt(t('builder.error.$error'), classes: 'field-error'),
+        if (extra != null) extra!,
       ],
       classes:
           'field ${field.kind == 'choice' || field.kind == 'rows' || field.kind == 'multiline' ? 'full-field' : ''}',

@@ -66,6 +66,17 @@ class AmneziaConfiguration implements ConfigurationCodec, GrantAllocator {
           maximum: entry.value.$3,
           labelKey: 'awg.${entry.key}',
           helpKey: 'awg.${entry.key}.help',
+          generator: entry.key.startsWith('H') && entry.key.length == 2
+              ? 'awg-header'
+              : ['S1', 'S2'].contains(entry.key)
+              ? 'awg-padding'
+              : ['S3', 'S4'].contains(entry.key)
+              ? 'awg-small-padding'
+              : entry.key == 'Jc'
+              ? 'awg-junk-count'
+              : ['Jmin', 'Jmax'].contains(entry.key)
+              ? 'awg-junk-size'
+              : null,
         ),
       const ProtocolField(
         'awg.ContentPaddingAddition',
@@ -86,7 +97,7 @@ class AmneziaConfiguration implements ConfigurationCodec, GrantAllocator {
       const ProtocolField(
         'awg.DisableCookies',
         kind: 'boolean',
-        defaultValue: 'true',
+        defaultValue: 'false',
         advanced: true,
         labelKey: 'awg.DisableCookies',
         helpKey: 'awg.DisableCookies.help',

@@ -102,7 +102,51 @@ class ProxyConfiguration implements ConfigurationCodec {
           required: true,
           advanced: true,
         ),
+        if (coreId == 'sing-box' &&
+            {'shadowsocks', 'hysteria2', 'tuic'}.contains(id))
+          const ProtocolField(
+            'udpTimeout',
+            kind: 'integer',
+            advanced: true,
+            defaultValue: '300',
+            minimum: 10,
+            maximum: 3600,
+          ),
+        if (id == 'naive')
+          const ProtocolField(
+            'naiveCongestionControl',
+            options: ['bbr', 'cubic', 'reno'],
+            defaultValue: 'bbr',
+            advanced: true,
+            when: {
+              'transport': ['HTTP/3'],
+            },
+          ),
         if (!ss) ...[
+          ProtocolField(
+            'tlsMaxVersion',
+            group: 'security',
+            advanced: true,
+            options: id == 'hysteria2' || id == 'tuic'
+                ? const ['1.3']
+                : const ['1.2', '1.3'],
+            defaultValue: '1.3',
+            when: tls,
+          ),
+          ProtocolField(
+            'tlsMinVersion',
+            group: 'security',
+            options: id == 'hysteria2' || id == 'tuic'
+                ? const ['1.3']
+                : const ['1.2', '1.3'],
+            defaultValue: id == 'hysteria2' || id == 'tuic' ? '1.3' : '1.2',
+            when: tls,
+            optionWhen: const {
+              '1.2': {
+                'transport': ['TCP', 'WebSocket', 'gRPC', 'XHTTP', 'HTTP/2'],
+              },
+            },
+          ),
           ProtocolField(
             'serverName',
             required: true,
@@ -158,6 +202,28 @@ class ProxyConfiguration implements ConfigurationCodec {
         ],
         if (vless) ...[
           const ProtocolField(
+            'clientAlpn',
+            kind: 'lines',
+            group: 'security',
+            advanced: true,
+            maxLength: 64,
+            when: {
+              'security': ['TLS'],
+            },
+          ),
+          const ProtocolField(
+            'realityMaxTimeDiff',
+            kind: 'integer',
+            group: 'security',
+            advanced: true,
+            defaultValue: '0',
+            minimum: 0,
+            maximum: 3600,
+            when: {
+              'security': ['REALITY'],
+            },
+          ),
+          const ProtocolField(
             'realityTarget',
             defaultValue: 'www.kernel.org:443',
             required: true,
@@ -178,9 +244,31 @@ class ProxyConfiguration implements ConfigurationCodec {
             'clientFingerprint',
             defaultValue: 'chrome',
             advanced: true,
+            options: [
+              'chrome',
+              'firefox',
+              'safari',
+              'ios',
+              'android',
+              'edge',
+              '360',
+              'qq',
+              'random',
+              'randomized',
+            ],
+          ),
+          const ProtocolField(
+            'websocketHost',
+            advanced: true,
+            group: 'transport',
+            maxLength: 253,
+            when: {
+              'transport': ['WebSocket'],
+            },
           ),
           const ProtocolField(
             'websocketPath',
+            generator: 'path',
             defaultValue: '/tunnel',
             required: true,
             when: {
@@ -189,6 +277,7 @@ class ProxyConfiguration implements ConfigurationCodec {
           ),
           const ProtocolField(
             'grpcServiceName',
+            generator: 'service',
             defaultValue: 'tunnel',
             required: true,
             when: {
@@ -198,6 +287,7 @@ class ProxyConfiguration implements ConfigurationCodec {
           if (coreId == 'xray') ...[
             const ProtocolField(
               'xhttpPath',
+              generator: 'path',
               defaultValue: '/tunnel',
               required: true,
               when: {
@@ -231,6 +321,11 @@ class ProxyConfiguration implements ConfigurationCodec {
           ),
         if (id == 'hysteria2') ...[
           const ProtocolField(
+            'hysteriaMasquerade',
+            advanced: true,
+            maxLength: 2048,
+          ),
+          const ProtocolField(
             'obfs',
             kind: 'choice',
             group: 'security',
@@ -239,6 +334,7 @@ class ProxyConfiguration implements ConfigurationCodec {
           ),
           const ProtocolField(
             'obfsPassword',
+            generator: 'token',
             secret: true,
             when: {
               'obfs': ['salamander'],
@@ -259,13 +355,30 @@ class ProxyConfiguration implements ConfigurationCodec {
             maximum: 100000,
           ),
         ],
-        if (id == 'tuic')
+        if (id == 'tuic') ...[
+          const ProtocolField(
+            'tuicAuthTimeout',
+            kind: 'integer',
+            advanced: true,
+            defaultValue: '3',
+            minimum: 1,
+            maximum: 30,
+          ),
+          const ProtocolField(
+            'tuicHeartbeat',
+            kind: 'integer',
+            advanced: true,
+            defaultValue: '10',
+            minimum: 1,
+            maximum: 120,
+          ),
           const ProtocolField(
             'congestionController',
             kind: 'choice',
             options: ['bbr', 'cubic', 'new_reno'],
             defaultValue: 'bbr',
           ),
+        ],
       ],
       isolatedBindings: ss,
       clientFieldBindings: const {
@@ -285,7 +398,7 @@ class ProxyConfiguration implements ConfigurationCodec {
     final values = d.defaults(connection.settings);
     for (final entry in connection.settings.entries) {
       final field = d.fields.firstWhere((f) => f.id == entry.key);
-      if (field.kind == 'choice' &&
+      if (field.options.isNotEmpty &&
           !field.allowedOptions(values).contains(entry.value)) {
         throw ApiException(
           'settings_unsupported',
@@ -301,6 +414,45 @@ class ProxyConfiguration implements ConfigurationCodec {
           '';
     }
     final errors = d.validateFields(values);
+    if (values['hysteriaMasquerade']?.isNotEmpty == true) {
+      final url = Uri.tryParse(values['hysteriaMasquerade']!);
+      if (url == null ||
+          url.scheme != 'https' ||
+          !validAddress(url.host) ||
+          url.userInfo.isNotEmpty ||
+          url.hasFragment)
+        errors['hysteriaMasquerade'] = 'format_invalid';
+    }
+    if (values['security'] == 'TLS' &&
+        double.parse(values['tlsMinVersion']!) >
+            double.parse(values['tlsMaxVersion']!)) {
+      errors['tlsMaxVersion'] = 'range_invalid';
+    }
+    final alpn = (values['clientAlpn'] ?? '')
+        .split('\n')
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .toList();
+    final allowedAlpn = switch (values['transport']) {
+      'WebSocket' => {'http/1.1'},
+      'gRPC' => {'h2'},
+      _ => {'h2', 'http/1.1'},
+    };
+    if (alpn.any((value) => !allowedAlpn.contains(value)))
+      errors['clientAlpn'] = 'choice_invalid';
+    if (values.containsKey('clientAlpn'))
+      values['clientAlpn'] = alpn.toSet().join('\n');
+    if (values['websocketHost']?.isNotEmpty == true) {
+      final host = Uri.tryParse('http://${values['websocketHost']}');
+      if (host == null ||
+          !validAddress(host.host) ||
+          host.userInfo.isNotEmpty ||
+          host.path.isNotEmpty ||
+          host.hasQuery ||
+          host.hasFragment ||
+          host.hasPort && (host.port < 1 || host.port > 65535))
+        errors['websocketHost'] = 'format_invalid';
+    }
     if (InternetAddress.tryParse(values['listen'] ?? '') == null)
       errors['listen'] = 'format_invalid';
     if (values['serverName']?.isNotEmpty == true &&
@@ -412,6 +564,8 @@ class ProxyConfiguration implements ConfigurationCodec {
               // Current mihomo advertises this REALITY wire version even in
               // recent builds; Xray's implicit minimum otherwise rejects it.
               'minClientVer': '1.8.2',
+              if ((int.tryParse(s['realityMaxTimeDiff'] ?? '') ?? 0) > 0)
+                'maxTimeDiff': int.parse(s['realityMaxTimeDiff']!) * 1000,
             }
           : {
               'enabled': true,
@@ -424,6 +578,8 @@ class ProxyConfiguration implements ConfigurationCodec {
                 },
                 'private_key': connection.secrets['privateKey'],
                 'short_id': [connection.secrets['shortId']],
+                if ((int.tryParse(s['realityMaxTimeDiff'] ?? '') ?? 0) > 0)
+                  'max_time_difference': '${s['realityMaxTimeDiff']}s',
               },
             };
     }
@@ -434,7 +590,10 @@ class ProxyConfiguration implements ConfigurationCodec {
     if (xray)
       return {
         'serverName': s['serverName'],
-        'minVersion': '1.2',
+        'minVersion': s['tlsMinVersion'] ?? '1.2',
+        'maxVersion': s['tlsMaxVersion'] ?? '1.3',
+        if ((s['clientAlpn'] ?? '').isNotEmpty)
+          'alpn': s['clientAlpn']!.split('\n'),
         'certificates': [
           {
             if (panel) ...{
@@ -452,6 +611,10 @@ class ProxyConfiguration implements ConfigurationCodec {
     return {
       'enabled': true,
       'server_name': s['serverName'],
+      'min_version': s['tlsMinVersion'] ?? '1.2',
+      'max_version': s['tlsMaxVersion'] ?? '1.3',
+      if ((s['clientAlpn'] ?? '').isNotEmpty)
+        'alpn': s['clientAlpn']!.split('\n'),
       if (connection.value.protocolId == 'tuic') 'alpn': ['h3'],
       if (panel) ...{
         'certificate_path':
@@ -529,7 +692,11 @@ class ProxyConfiguration implements ConfigurationCodec {
             else
               'tlsSettings': _tls(c, xray: true),
             if (s['transport'] == 'WebSocket')
-              'wsSettings': {'path': s['websocketPath']},
+              'wsSettings': {
+                'path': s['websocketPath'],
+                if ((s['websocketHost'] ?? '').isNotEmpty)
+                  'host': s['websocketHost'],
+              },
             if (s['transport'] == 'gRPC')
               'grpcSettings': {'serviceName': s['grpcServiceName']},
             if (s['transport'] == 'XHTTP')
@@ -545,6 +712,8 @@ class ProxyConfiguration implements ConfigurationCodec {
       'tag': tag,
       'listen': s['listen'] ?? '::',
       'listen_port': port,
+      if ((s['udpTimeout'] ?? '').isNotEmpty)
+        'udp_timeout': '${s['udpTimeout']}s',
       if (id == 'shadowsocks') ...{
         'method': s['cipher'],
         'password': grants.single.credentials['password'],
@@ -560,14 +729,21 @@ class ProxyConfiguration implements ConfigurationCodec {
             'service_name': s['grpcServiceName'],
         },
       if (id == 'naive') 'network': s['transport'] == 'HTTP/3' ? 'udp' : 'tcp',
+      if (id == 'naive' && s['transport'] == 'HTTP/3')
+        'quic_congestion_control': s['naiveCongestionControl'] ?? 'bbr',
       if (id == 'hysteria2') ...{
+        if ((s['hysteriaMasquerade'] ?? '').isNotEmpty)
+          'masquerade': s['hysteriaMasquerade'],
         'up_mbps': int.parse(s['upMbps'] ?? '100'),
         'down_mbps': int.parse(s['downMbps'] ?? '100'),
         if (s['obfs']?.isNotEmpty == true)
           'obfs': {'type': s['obfs'], 'password': s['obfsPassword']},
       },
-      if (id == 'tuic')
+      if (id == 'tuic') ...{
         'congestion_control': s['congestionController'] ?? 'bbr',
+        'auth_timeout': '${s['tuicAuthTimeout'] ?? '3'}s',
+        'heartbeat': '${s['tuicHeartbeat'] ?? '10'}s',
+      },
     };
   }
 
@@ -740,7 +916,9 @@ class ProxyConfiguration implements ConfigurationCodec {
           'serverName',
           'flow',
           'clientFingerprint',
+          'clientAlpn',
           'websocketPath',
+          'websocketHost',
           'grpcServiceName',
           'cipher',
           'congestionController',

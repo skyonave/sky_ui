@@ -106,6 +106,7 @@ class MaintenanceService {
           'install',
           'remove',
           'panel-update',
+          'install-sni-scanner',
         ].contains(action) ||
         (action == 'restore' && !idPattern.hasMatch(backupId ?? '')) ||
         (action == 'remove' && !coreRepositories.containsKey(core)) ||

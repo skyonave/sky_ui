@@ -13,6 +13,7 @@ import 'amnezia.dart';
 import 'certificates.dart';
 import 'progress.dart';
 import 'panel_update.dart';
+import 'sni_tool.dart';
 
 const intentNames = [
   'restore-intent.json',
@@ -33,6 +34,7 @@ Map<String, dynamic> consumeRequest(int uid, {bool remove = true}) {
     'install': {'id', 'action', 'core', 'tag'},
     'remove': {'id', 'action', 'core'},
     'panel-update': {'id', 'action', 'tag'},
+    'install-sni-scanner': {'id', 'action'},
   };
   final action = value['action'];
   require(
@@ -276,8 +278,16 @@ Future<void> maintenanceMain(
     unlink('$state/inbox/request.json');
     final api = await active('sky-ui.service');
     var stopped = false;
-    final reporter = ['install', 'update'].contains(job['action'])
-        ? Reporter(result, null, job['tag'] as String, owner.gid)
+    final reporter =
+        ['install', 'update', 'install-sni-scanner'].contains(job['action'])
+        ? Reporter(
+            result,
+            null,
+            job['action'] == 'install-sni-scanner'
+                ? sniToolVersion
+                : job['tag'] as String,
+            owner.gid,
+          )
         : null;
     Future<void> beforeActivation() async {
       if (api && !stopped) {
@@ -295,6 +305,7 @@ Future<void> maintenanceMain(
       result['data'] = switch (job['action']) {
         'backup' => await createBackup(owner.gid),
         'restore' => await restoreBackup(job['backupId'] as String, owner.gid),
+        'install-sni-scanner' => await installSniTool(reporter!, fetch: fetch),
         _ => await changeEngine(
           job['action'] as String,
           job['core'] as String,

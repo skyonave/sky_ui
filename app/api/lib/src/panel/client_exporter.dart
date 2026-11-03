@@ -26,6 +26,45 @@ abstract interface class ClientExporter {
   List<ShareLink> links(List<ClientEndpoint> endpoints);
 }
 
+String? subscriptionClientFor(String userAgent) =>
+    RegExp(
+      r'(?:^|[\s;(])v2box(?:[/\s;()]|$)',
+      caseSensitive: false,
+    ).hasMatch(userAgent)
+    ? 'v2box'
+    : null;
+
+bool subscriptionClientSupports(ClientEndpoint endpoint, String? client) {
+  if (client != 'v2box') return true;
+  // Only the protocols advertised by V2Box's publisher, with verified URI semantics.
+  if (!{
+    'vless',
+    'vmess',
+    'trojan',
+    'shadowsocks',
+    'hysteria2',
+  }.contains(endpoint.protocolId))
+    return false;
+  if (endpoint.protocolId == 'hysteria2') {
+    final options =
+        jsonDecode(endpoint.settings['protocolOptions'] ?? '{}') as Map;
+    if (!{'', 'salamander'}.contains(options['obfs'] ?? '')) return false;
+  }
+  return true;
+}
+
+List<ClientEndpoint> exportableEndpoints(
+  ClientExporter exporter,
+  List<ClientEndpoint> endpoints, {
+  String? client,
+}) => endpoints
+    .where(
+      (endpoint) =>
+          exporter.canExport([endpoint]) &&
+          subscriptionClientSupports(endpoint, client),
+    )
+    .toList();
+
 /// Clash client format. Inputs describe protocol semantics, never a server-core configuration.
 class ClashExporter implements ClientExporter {
   @override
@@ -208,7 +247,11 @@ class ClashExporter implements ClientExporter {
           out['cipher'] = s['clientCipher'] ?? 'auto';
         }
         if (s['websocketPath'] != null)
-          out['ws-opts'] = {'path': s['websocketPath']};
+          out['ws-opts'] = {
+            'path': s['websocketPath'],
+            if ((s['websocketHost'] ?? '').isNotEmpty)
+              'headers': {'Host': s['websocketHost']},
+          };
         if (s['grpcServiceName'] != null)
           out['grpc-opts'] = {'grpc-service-name': s['grpcServiceName']};
         if (s['xhttpOptions'] != null)
@@ -223,7 +266,11 @@ class ClashExporter implements ClientExporter {
             _ => 'tcp',
           };
           if (s['websocketPath'] != null)
-            out['ws-opts'] = {'path': s['websocketPath']};
+            out['ws-opts'] = {
+              'path': s['websocketPath'],
+              if ((s['websocketHost'] ?? '').isNotEmpty)
+                'headers': {'Host': s['websocketHost']},
+            };
           if (s['grpcServiceName'] != null)
             out['grpc-opts'] = {'grpc-service-name': s['grpcServiceName']};
         }
@@ -323,7 +370,9 @@ class ShareUriCodec {
         continue;
       }
       if (k['fingerprint'] != null || k['clientCertificate'] != null) continue;
-      if ((s['clientAlpn'] ?? '').isNotEmpty) continue;
+      if ((s['clientAlpn'] ?? '').isNotEmpty &&
+          !{'vless', 'trojan'}.contains(id))
+        continue;
       if (s['xhttpOptions'] != null &&
           (jsonDecode(s['xhttpOptions']!) as Map).keys.any(
             (key) => !{'path', 'mode', 'host'}.contains(key),
@@ -361,6 +410,10 @@ class ShareUriCodec {
           if (s['security'] == 'REALITY') 'sid': k['shortId']!,
           if (s['flow'] != null && s['flow'] != 'None') 'flow': s['flow']!,
           if (s['websocketPath'] != null) 'path': s['websocketPath']!,
+          if ((s['websocketHost'] ?? '').isNotEmpty)
+            'host': s['websocketHost']!,
+          if ((s['clientAlpn'] ?? '').isNotEmpty)
+            'alpn': s['clientAlpn']!.split('\n').join(','),
           if (s['grpcServiceName'] != null)
             'serviceName': s['grpcServiceName']!,
         };

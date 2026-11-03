@@ -15,4 +15,5 @@ ProtectHome=yes
 NoNewPrivileges=yes
 ProtectSystem=strict
 ReadWritePaths=/var/lib/sky-ui-maintenance /var/lib/sky-ui /var/lib/sky-ui-edge /var/lib/sky-ui-certificates /etc/sky-ui /opt/sky-ui/cores
+ReadWritePaths=-/opt/sky-ui/tools
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

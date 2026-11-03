@@ -209,6 +209,43 @@ class ApiClient {
   Future<PanelSnapshot> panel() async => PanelSnapshot.fromJson(
     Map<String, dynamic>.from((await _request('/api/v1/panel'))['data'] as Map),
   );
+  Future<Map<String, dynamic>> sniScan({int? revision, String? cancel}) async =>
+      Map<String, dynamic>.from(
+        (await _request(
+              '/api/v1/connection-tools/sni${cancel == null ? '' : '/$cancel'}',
+              method: cancel != null
+                  ? 'DELETE'
+                  : revision != null
+                  ? 'POST'
+                  : 'GET',
+              payload: cancel != null
+                  ? {}
+                  : revision != null
+                  ? {'revision': revision}
+                  : null,
+            ))['data']
+            as Map,
+      );
+  Future<Map<String, String>> generateConnectionFields(
+    int revision,
+    String core,
+    String protocol,
+    String field,
+    Map<String, String> values,
+  ) async => Map<String, String>.from(
+    (await _request(
+          '/api/v1/connection-tools/generate',
+          post: true,
+          payload: {
+            'revision': revision,
+            'core': core,
+            'protocol': protocol,
+            'field': field,
+            'values': values,
+          },
+        ))['data']
+        as Map,
+  );
   Future<PanelSnapshot> _mutate(
     String path,
     String method,
