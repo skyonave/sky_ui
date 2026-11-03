@@ -64,6 +64,48 @@ class PanelService {
   bool busy = false;
   final _portRandom = Random.secure();
 
+  Future<CoreSettings> coreSettings(String id) => _exclusive((_) async {
+    final owner = managers[id];
+    if (owner == null)
+      throw const ApiException('core_unavailable', status: 404);
+    final native = _codec(owner.core.coreId);
+    if (native is! CoreSettingsCodec)
+      throw const ApiException('core_settings_unavailable', status: 501);
+    await _check(repository.revision);
+    if (!(await owner.snapshot()).binaryAvailable)
+      throw const ApiException('binary_missing', status: 409);
+    return CoreSettings(
+      instanceId: id,
+      coreId: owner.core.coreId,
+      revision: repository.revision,
+      fields: (native as CoreSettingsCodec).coreSettingsFields,
+      values: (native as CoreSettingsCodec).readCoreSettings(
+        await File(owner.core.configuration).readAsString(),
+        repository.read().coreSettings[id],
+      ),
+    );
+  });
+
+  Future<PanelSnapshot> saveCoreSettings(
+    int revision,
+    String id,
+    Map<String, String> values,
+  ) => _change(revision, (data) async {
+    final owner = managers[id];
+    if (owner == null)
+      throw const ApiException('core_unavailable', status: 404);
+    final native = _codec(owner.core.coreId);
+    if (native is! CoreSettingsCodec)
+      throw const ApiException('core_settings_unavailable', status: 501);
+    if (!(await owner.snapshot()).binaryAvailable)
+      throw const ApiException('binary_missing', status: 409);
+    data.coreSettings[id] = (native as CoreSettingsCodec).prepareCoreSettings(
+      await File(owner.core.configuration).readAsString(),
+      data.coreSettings[id],
+      values,
+    );
+  });
+
   Future<Map<String, String>> generateConnectionFields(
     int revision,
     String coreId,
@@ -209,6 +251,10 @@ class PanelService {
       readiness[owner.core.id] = ready;
     }
     return PanelSnapshot(
+      settingsInstances: [
+        for (final owner in managers.values)
+          if (_codec(owner.core.coreId) is CoreSettingsCodec) owner.core.id,
+      ],
       revision: repository.revision,
       connections: data.connections
           .map(
@@ -326,6 +372,7 @@ class PanelService {
         }
         final previous = await file.readAsString();
         String signature(PanelData data) => jsonEncode({
+          'coreSettings': data.coreSettings,
           'connections': data.connections
               .map((c) => {'value': c.value.toJson(), 'secrets': c.secrets})
               .toList(),

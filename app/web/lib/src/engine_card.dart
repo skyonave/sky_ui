@@ -10,6 +10,8 @@ class EngineCard extends StatelessComponent {
     required this.onOperation,
     required this.onInstallOrUpdate,
     required this.onRemove,
+    this.onSettings,
+    this.settingsAvailable = false,
     this.runtime,
     this.feedback,
     this.updateAvailable = false,
@@ -26,6 +28,8 @@ class EngineCard extends StatelessComponent {
   final AppStrings strings;
   final void Function(CoreOperation) onOperation;
   final void Function() onInstallOrUpdate, onRemove;
+  final void Function()? onSettings;
+  final bool settingsAvailable;
 
   @override
   Component build(BuildContext context) {
@@ -65,6 +69,13 @@ class EngineCard extends StatelessComponent {
                     'aria-label': 'GitHub: ${descriptor.name}',
                     'title': 'GitHub: ${descriptor.name}',
                   },
+                ),
+                iconButton(
+                  'settings',
+                  '${t('coreSettings.title')}: ${descriptor.name}',
+                  onSettings ?? () {},
+                  disabled: busy || !installed || !settingsAvailable,
+                  classes: 'icon-button engine-settings',
                 ),
               ], classes: 'engine-name'),
               txt(

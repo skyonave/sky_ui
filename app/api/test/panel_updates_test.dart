@@ -7,6 +7,7 @@ import 'package:test/test.dart';
 class ReleaseRunner implements CommandRunner {
   final calls = <List<String>>[];
   bool approved = true;
+  bool failed = false;
   @override
   Future<CommandResult> run(
     String executable,
@@ -14,6 +15,7 @@ class ReleaseRunner implements CommandRunner {
     Duration timeout = const Duration(seconds: 15),
   }) async {
     calls.add([executable, ...arguments]);
+    if (failed) return const CommandResult(1, '');
     return CommandResult(
       0,
       jsonEncode({
@@ -32,6 +34,53 @@ class ReleaseRunner implements CommandRunner {
 }
 
 void main() {
+  test(
+    'automatic discovery runs on first load and at most once per hour',
+    () async {
+      var time = DateTime.utc(2026, 11, 3);
+      final runner = ReleaseRunner();
+      final service = PanelUpdates(
+        runner,
+        supported: true,
+        current: '0.6.0-dev.4',
+        now: () => time,
+      );
+      await Future.wait(List.generate(4, (_) => service.get()));
+      expect(runner.calls, hasLength(1));
+      time = time.add(const Duration(minutes: 59, seconds: 59));
+      await service.get();
+      expect(runner.calls, hasLength(1));
+      time = time.add(const Duration(seconds: 1));
+      await service.get();
+      expect(runner.calls, hasLength(2));
+      await service.get(refresh: true);
+      expect(runner.calls, hasLength(3));
+      await service.requireApproved('v0.6.0-dev.5');
+      expect(runner.calls, hasLength(4));
+    },
+  );
+  test(
+    'failed checks are also throttled and manual retry bypasses the hour',
+    () async {
+      var time = DateTime.utc(2026, 11, 3);
+      final runner = ReleaseRunner()..failed = true;
+      final service = PanelUpdates(
+        runner,
+        supported: true,
+        current: '0.6.0-dev.4',
+        now: () => time,
+      );
+      await expectLater(service.get(), throwsA(isA<ApiException>()));
+      time = time.add(const Duration(minutes: 59));
+      await expectLater(service.get(), throwsA(isA<ApiException>()));
+      expect(runner.calls, hasLength(1));
+      runner.failed = false;
+      expect((await service.get(refresh: true)).available, true);
+      expect(runner.calls, hasLength(2));
+      await service.get();
+      expect(runner.calls, hasLength(2));
+    },
+  );
   test(
     'checks are cached but confirmation revalidates release availability',
     () async {

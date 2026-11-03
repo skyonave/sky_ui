@@ -2,6 +2,20 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../config.dart';
 import 'domain.dart';
 
+/// Optional capability. Native settings stay inside the owning adapter.
+abstract interface class CoreSettingsCodec {
+  List<ProtocolField> get coreSettingsFields;
+  Map<String, String> readCoreSettings(
+    String native,
+    Map<String, String>? stored,
+  );
+  Map<String, String> prepareCoreSettings(
+    String native,
+    Map<String, String>? stored,
+    Map<String, String> input,
+  );
+}
+
 /// Protocols with per-recipient address/resource allocation opt in explicitly.
 abstract interface class GrantAllocator {
   Map<String, String> allocateGrant(

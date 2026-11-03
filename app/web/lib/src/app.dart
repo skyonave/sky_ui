@@ -35,7 +35,7 @@ class SkyApp extends StatefulComponent {
 class _SkyAppState extends State<SkyApp> {
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.8.0-dev.4',
+    defaultValue: '0.8.0-dev.5',
   );
   final store = PanelStore();
   PanelSnapshot? panelData;
@@ -50,6 +50,11 @@ class _SkyAppState extends State<SkyApp> {
   int dataGeneration = 0;
   int draftRevision = 0;
   int? settingsRevision;
+  CoreSettings? engineSettings;
+  final engineSettingsDraft = <String, String>{};
+  Map<String, String> engineSettingsErrors = {};
+  bool engineSettingsLoading = false;
+  int engineSettingsGeneration = 0;
   String? dataError;
   RecipientShare? shareData;
   bool shareLoading = false;
@@ -95,6 +100,7 @@ class _SkyAppState extends State<SkyApp> {
       logsLive = false,
       clearingLogs = false;
   final selectedLogLevels = <String>{
+    'trace',
     'debug',
     'info',
     'warning',
@@ -388,7 +394,7 @@ class _SkyAppState extends State<SkyApp> {
       unawaited(refreshPanel());
       if (panelUpdateChecked == null ||
           DateTime.now().difference(panelUpdateChecked!) >
-              const Duration(minutes: 1))
+              const Duration(hours: 1))
         unawaited(refreshPanelUpdate());
       if (page == 'settings') unawaited(refreshOwnerSessions());
       if (page == 'core') unawaited(refreshCoreUpdates());
@@ -585,6 +591,7 @@ class _SkyAppState extends State<SkyApp> {
   void closeModal() {
     if (dataBusy || clearingLogs || ownerBusy || maintenanceSubmitting) return;
     ownerDraft.clear();
+    engineSettingsGeneration++;
     dependencyGeneration++;
     dependencyBusy = false;
     shareGeneration++;
@@ -1577,10 +1584,78 @@ class _SkyAppState extends State<SkyApp> {
       onOperation: (operation) =>
           unawaited(runCoreAction(operation, instanceId: value!.instanceId)),
       onInstallOrUpdate: () => unawaited(prepareCoreUpdate(descriptor.id)),
+      settingsAvailable:
+          panelData?.settingsInstances.contains(value?.instanceId) == true &&
+          canEdit,
+      onSettings: () => unawaited(openEngineSettings(value!.instanceId)),
       onRemove: () {
         maintenanceCore = descriptor.id;
         openModal('coreRemove');
       },
+    );
+  }
+
+  Future<void> openEngineSettings(String id) async {
+    final generation = ++engineSettingsGeneration;
+    engineSettings = null;
+    engineSettingsDraft.clear();
+    engineSettingsErrors = {};
+    engineSettingsLoading = true;
+    openModal('coreSettings');
+    try {
+      final value = await api.coreSettings(id);
+      if (mounted && generation == engineSettingsGeneration)
+        setState(() {
+          engineSettings = value;
+          engineSettingsDraft.addAll(value.values);
+        });
+    } on ApiClientException catch (e) {
+      if (mounted && generation == engineSettingsGeneration)
+        setState(() => error = runtimeMessage(e.code));
+    } finally {
+      if (mounted && generation == engineSettingsGeneration)
+        setState(() => engineSettingsLoading = false);
+    }
+  }
+
+  Component engineSettingsForm() => div([
+    if (engineSettingsLoading) txt(t('common.loading'), classes: 'muted'),
+    if (engineSettings != null) ...[
+      txt(engineSettings!.coreId, classes: 'availability-chip'),
+      for (final group in ['dns', 'access', 'logs'])
+        el('section', [
+          h3([Component.text(t('coreSettings.group.$group'))]),
+          div([
+            for (final field in engineSettings!.fields.where(
+              (f) => f.group == group && f.visible(engineSettingsDraft),
+            ))
+              ProtocolFieldView(
+                field: field,
+                values: engineSettingsDraft,
+                prefix: 'engine-',
+                busy: dataBusy,
+                error: engineSettingsErrors[field.id],
+                onChanged: (value, rebuild) => setState(() {
+                  engineSettingsDraft[field.id] = value;
+                  engineSettingsErrors.remove(field.id);
+                  error = null;
+                }),
+                key: ValueKey('engine-${field.id}'),
+              ),
+          ], classes: 'form-grid'),
+        ], classes: 'core-settings-section'),
+      p([Component.text(t('coreSettings.applyHint'))], classes: 'muted small'),
+    ],
+  ], classes: 'core-settings-form');
+
+  Future<void> saveEngineSettings() async {
+    final settings = engineSettings;
+    if (settings == null || dataBusy) return;
+    engineSettingsErrors = {};
+    await changePanel(
+      () => api.saveCoreSettings(settings, {...engineSettingsDraft}),
+      dismiss: true,
+      onError: (e) => engineSettingsErrors = e.fields,
     );
   }
 
@@ -1636,11 +1711,12 @@ class _SkyAppState extends State<SkyApp> {
           label([
             input<bool>(
               type: InputType.checkbox,
-              checked: selectedLogLevels.length == 5,
+              checked: selectedLogLevels.length == 6,
               onChange: (checked) => setState(() {
                 selectedLogLevels.clear();
                 if (checked)
                   selectedLogLevels.addAll([
+                    'trace',
                     'debug',
                     'info',
                     'warning',
@@ -1653,6 +1729,7 @@ class _SkyAppState extends State<SkyApp> {
             txt(t('logs.all')),
           ], classes: 'log-level-option'),
           for (final entry in [
+            ('trace', 'TRACE'),
             ('debug', 'DEBUG'),
             ('info', 'INFO'),
             ('warning', 'WARN'),
@@ -1839,8 +1916,25 @@ class _SkyAppState extends State<SkyApp> {
     div([
       h2([Component.text(t('settings.system'))]),
       plannedSetting('settings.domain', 'common.edit'),
-      plannedSetting('settings.dns', 'settings.configure'),
-      plannedSetting('settings.logging', 'settings.configure'),
+      for (final descriptor in coreCatalog.where(
+        (c) =>
+            panelData?.settingsInstances.contains(store.instanceIds[c.id]) ==
+            true,
+      ))
+        div([
+          div([
+            txt(t('coreSettings.forCore', {'core': descriptor.name})),
+            if (!coreInstalled(descriptor.id))
+              txt(t('core.notInstalled'), classes: 'availability-chip'),
+          ], classes: 'setting-label'),
+          action(
+            t('settings.configure'),
+            () => unawaited(
+              openEngineSettings(store.instanceIds[descriptor.id]!),
+            ),
+            disabled: !canEdit || !coreInstalled(descriptor.id),
+          ),
+        ], classes: 'setting-row'),
     ], classes: 'panel settings-panel'),
   ]);
 
@@ -2299,6 +2393,7 @@ class _SkyAppState extends State<SkyApp> {
                   'coreUpdate' => 'core.update',
                   'coreInstall' => 'core.install',
                   'coreRemove' => 'core.remove',
+                  'coreSettings' => 'coreSettings.title',
                   'panelUpdate' => 'panelUpdate.title',
                   'panelUpdateDetails' => 'panelUpdate.details',
                   _ => 'modal.deleteTitle',
@@ -2341,6 +2436,7 @@ class _SkyAppState extends State<SkyApp> {
         ], classes: 'modal-header'),
         div([
           if (modal == 'connection') connectionForm(),
+          if (modal == 'coreSettings') engineSettingsForm(),
           if (modal == 'panelUpdateDetails')
             PanelUpdateDetails(
               job: maintenanceJob?.action == 'panel-update'
@@ -2475,6 +2571,16 @@ class _SkyAppState extends State<SkyApp> {
                   classes: 'button primary',
                   disabled: ownerBusy,
                 ),
+              if (modal == 'coreSettings')
+                action(
+                  t(dataBusy ? 'coreSettings.applying' : 'coreSettings.apply'),
+                  () => unawaited(saveEngineSettings()),
+                  classes: 'button primary',
+                  disabled:
+                      engineSettingsLoading ||
+                      engineSettings == null ||
+                      !canEdit,
+                ),
               if (modal == 'revokeSession')
                 action(
                   t('admin.revoke'),
@@ -2569,7 +2675,8 @@ class _SkyAppState extends State<SkyApp> {
             ], classes: 'modal-footer-actions'),
           ], classes: 'modal-footer'),
       ],
-      classes: 'modal ${modal == 'connection' ? 'wide' : ''}',
+      classes:
+          'modal ${modal == 'connection' || modal == 'coreSettings' ? 'wide' : ''}',
       attributes: {
         'role': 'dialog',
         'aria-modal': 'true',

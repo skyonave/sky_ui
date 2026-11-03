@@ -14,7 +14,9 @@ class PanelUpdates {
     bool? supported,
     String? current,
     String? platform,
-  }) : supported = supported ?? (Platform.isLinux && File(script).existsSync()),
+    DateTime Function()? now,
+  }) : now = now ?? DateTime.now,
+       supported = supported ?? (Platform.isLinux && File(script).existsSync()),
        current = current ?? skyUiVersion,
        platform =
            platform ??
@@ -26,21 +28,35 @@ class PanelUpdates {
   final CommandRunner runner;
   final String script, current, platform;
   final bool supported;
+  final DateTime Function() now;
   PanelUpdateInfo? _cached;
   DateTime? _checked;
   Future<PanelUpdateInfo>? _pending;
+  ApiException? _failure;
 
   Future<PanelUpdateInfo> get({bool refresh = false}) async {
+    if (_pending != null) return _pending!;
     if (!refresh &&
-        _cached != null &&
-        DateTime.now().difference(_checked!) < const Duration(minutes: 5))
-      return _cached!;
-    return _pending ??= _read()
-        .then((value) {
-          _cached = value;
-          _checked = DateTime.now();
-          return value;
-        })
+        _checked != null &&
+        now().difference(_checked!) < const Duration(hours: 1)) {
+      if (_failure != null) throw _failure!;
+      if (_cached != null) return _cached!;
+    }
+    _checked = now();
+    return _pending = _read()
+        .then(
+          (value) {
+            _cached = value;
+            _failure = null;
+            return value;
+          },
+          onError: (Object error) {
+            _failure = error is ApiException
+                ? error
+                : const ApiException('release_feed_unavailable', status: 503);
+            throw _failure!;
+          },
+        )
         .whenComplete(() => _pending = null);
   }
 

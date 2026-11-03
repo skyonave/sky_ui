@@ -102,6 +102,9 @@ class PanelRepository {
   );
   void clearPending() => _db.execute('DELETE FROM deployment WHERE id = 1');
   PanelData read() => PanelData(
+    coreSettings: (jsonDecode(metadata('coreSettings') ?? '{}') as Map).map(
+      (k, v) => MapEntry(k as String, Map<String, String>.from(v as Map)),
+    ),
     serverName: metadata('serverName')!,
     address: metadata('addressFollowsOrigin') == '1'
         ? _defaultAddress
@@ -188,6 +191,7 @@ class PanelRepository {
       ]);
     }
     _set('serverName', data.serverName);
+    _set('coreSettings', jsonEncode(data.coreSettings));
     _set('address', data.address);
     _set('addressFollowsOrigin', data.address == _defaultAddress ? '1' : '0');
     _set('revision', '${revision + 1}');

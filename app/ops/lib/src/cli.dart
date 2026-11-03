@@ -210,7 +210,7 @@ Future<void> certificates(
       ]);
     }
   if (!found)
-    stdout.writeln('Выпущенных сертификатов пока нет. Проверь журнал HTTPS.');
+    stdout.writeln('Выпущенных сертификатов пока нет. Проверь логи HTTPS.');
   stdout.writeln('Продлением управляет Caddy автоматически.');
   await interactive([
     'systemctl',

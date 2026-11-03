@@ -126,7 +126,7 @@ class JsonProxyAdapter implements CoreAdapter {
 
   static String logLevel(String message, [String? priority]) {
     final explicit = RegExp(
-      r'\b(debug|info|warning|warn|error|fatal|panic)\b',
+      r'\b(trace|debug|info|warning|warn|error|fatal|panic)\b',
       caseSensitive: false,
     ).firstMatch(message)?.group(1)?.toLowerCase();
     if (explicit != null)

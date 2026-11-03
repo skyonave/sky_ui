@@ -76,20 +76,26 @@ class PanelData {
     List<StoredConnection>? connections,
     List<StoredRecipient>? recipients,
     List<AccessGrant>? grants,
+    Map<String, Map<String, String>>? coreSettings,
   }) : connections = connections ?? [],
        recipients = recipients ?? [],
-       grants = grants ?? [];
+       grants = grants ?? [],
+       coreSettings = coreSettings ?? {};
   String serverName;
   String address;
   final List<StoredConnection> connections;
   final List<StoredRecipient> recipients;
   final List<AccessGrant> grants;
+  final Map<String, Map<String, String>> coreSettings;
   PanelData copy() => PanelData(
     serverName: serverName,
     address: address,
     connections: [...connections],
     recipients: [...recipients],
     grants: [...grants],
+    coreSettings: {
+      for (final e in coreSettings.entries) e.key: {...e.value},
+    },
   );
 
   /// A codec sees only its own instance; grants and recipients keep their identity.
@@ -104,6 +110,10 @@ class PanelData {
       connections: owned,
       recipients: [...recipients],
       grants: grants.where((g) => ids.contains(g.connectionId)).toList(),
+      coreSettings: {
+        if (coreSettings.containsKey(instanceId))
+          instanceId: {...coreSettings[instanceId]!},
+      },
     );
   }
 

@@ -15,6 +15,7 @@ class PanelSnapshot {
     this.coreAvailability = const {},
     this.instanceIds = const {},
     this.instanceReadiness = const {},
+    this.settingsInstances = const [],
   });
   final int revision;
   final List<Connection> connections;
@@ -28,6 +29,7 @@ class PanelSnapshot {
   final Map<String, bool> coreAvailability;
   final Map<String, String> instanceIds;
   final Map<String, bool> instanceReadiness;
+  final List<String> settingsInstances;
   Map<String, Object?> toJson() => {
     'revision': revision,
     'connections': connections.map((v) => v.toJson()).toList(),
@@ -40,12 +42,16 @@ class PanelSnapshot {
     'coreAvailability': coreAvailability,
     'instanceIds': instanceIds,
     'instanceReadiness': instanceReadiness,
+    'settingsInstances': settingsInstances,
     'protocols': protocols.map(
       (k, v) => MapEntry(k, v.map((p) => p.toJson()).toList()),
     ),
   };
   factory PanelSnapshot.fromJson(Map<String, dynamic> json) => PanelSnapshot(
     revision: json['revision'] as int,
+    settingsInstances: List<String>.from(
+      json['settingsInstances'] as List? ?? [],
+    ),
     connections: (json['connections'] as List)
         .map((v) => Connection.fromJson(Map<String, dynamic>.from(v as Map)))
         .toList(),

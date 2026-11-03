@@ -10,9 +10,30 @@ import '../panel/domain.dart';
 import '../panel/validation.dart';
 import 'contracts.dart';
 import 'socket_owner.dart';
+import '../panel/core_settings_form.dart';
+import 'sing_box_settings.dart';
+import 'xray_settings.dart';
 
 /// Shared protocol semantics for JSON proxy engines; native documents stay distinct.
-class ProxyConfiguration implements ConfigurationCodec {
+class ProxyConfiguration implements ConfigurationCodec, CoreSettingsCodec {
+  @override
+  List<ProtocolField> get coreSettingsFields =>
+      coreId == 'xray' ? XraySettings.fields : SingBoxSettings.fields;
+  @override
+  Map<String, String> readCoreSettings(
+    String native,
+    Map<String, String>? stored,
+  ) => coreId == 'xray'
+      ? XraySettings.read(native, stored)
+      : SingBoxSettings.read(native, stored);
+  @override
+  Map<String, String> prepareCoreSettings(
+    String native,
+    Map<String, String>? stored,
+    Map<String, String> input,
+  ) => coreId == 'xray'
+      ? XraySettings.prepare(native, stored, input)
+      : SingBoxSettings.prepare(native, stored, input);
   ProxyConfiguration(
     this.coreId, {
     required this.supervisor,
@@ -805,19 +826,45 @@ class ProxyConfiguration implements ConfigurationCodec {
       for (final l in _listeners(data, validationOnly))
         _inbound(l.connection, l.grants, l.port, l.tag),
     ];
-    return '${const JsonEncoder.withIndent('  ').convert(coreId == 'xray' ? {
+    final defaults = coreId == 'xray'
+        ? {
             'log': {'loglevel': 'warning'},
             'inbounds': inbounds,
             'outbounds': [
               {'protocol': 'freedom', 'tag': 'direct'},
             ],
-          } : {
+          }
+        : {
             'log': {'level': 'info', 'timestamp': true},
             'inbounds': inbounds,
             'outbounds': [
               {'type': 'direct', 'tag': 'direct'},
             ],
-          })}\n';
+          };
+    final base = previous.trim().isEmpty
+        ? Map<String, dynamic>.from(defaults)
+        : CoreSettingsForm.document(previous);
+    final existing = base['inbounds'];
+    if (existing != null && existing is! List)
+      throw const ApiException('configuration_invalid', status: 422);
+    base['inbounds'] = [
+      if (existing is List)
+        ...existing.where(
+          (i) =>
+              i is! Map || !(i['tag']?.toString().startsWith('sky-') ?? false),
+        ),
+      ...inbounds,
+    ];
+    base['outbounds'] ??= defaults['outbounds'];
+    if (base['outbounds'] is! List || (base['outbounds'] as List).isEmpty)
+      throw const ApiException('configuration_invalid', status: 422);
+    final tags = inbounds.map((i) => i['tag'] as String).toList();
+    if (coreId == 'xray') {
+      XraySettings.apply(base, tags, data.coreSettings[core.id]);
+    } else {
+      SingBoxSettings.apply(base, tags, data.coreSettings[core.id]);
+    }
+    return '${const JsonEncoder.withIndent('  ').convert(base)}\n';
   }
 
   @override

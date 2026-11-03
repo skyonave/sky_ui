@@ -139,6 +139,96 @@ void main() {
     },
   );
   test(
+    'JSON engines advertise distinct native settings capabilities',
+    () async {
+      expect((await panel.snapshot()).settingsInstances.toSet(), {
+        'xray',
+        'sing-box',
+      });
+      final xray = await panel.coreSettings('xray'),
+          sing = await panel.coreSettings('sing-box');
+      expect(xray.fields.firstWhere((f) => f.id == 'resolvers').kind, 'lines');
+      expect(sing.fields.firstWhere((f) => f.id == 'resolvers').kind, 'text');
+      expect(
+        xray.fields.firstWhere((f) => f.id == 'logLevel').options,
+        contains('none'),
+      );
+      expect(
+        sing.fields.firstWhere((f) => f.id == 'logLevel').options,
+        contains('trace'),
+      );
+      expect(xray.values['logLevel'], 'warning');
+      expect(sing.values['logLevel'], 'info');
+      expect(repository.read().coreSettings, isEmpty);
+    },
+  );
+  for (final id in ['xray', 'sing-box']) {
+    test(
+      '$id settings are isolated, survive connection edits and roll back on activation failure',
+      () async {
+        final other = id == 'xray' ? 'sing-box' : 'xray';
+        final c = await connection(id, 35511);
+        await panel.saveRecipient(
+          repository.revision,
+          Recipient(id: '', name: 'fixture', connectionIds: [c.id]),
+        );
+        final credentials = repository.read().grants.single.credentials;
+        final foreign = await File(
+          managers[other]!.core.configuration,
+        ).readAsString();
+        final foreignCalls = supervisors[other]!.calls.length;
+        await panel.saveCoreSettings(repository.revision, id, {
+          'blockPrivate': 'true',
+          'logLevel': 'debug',
+        });
+        expect(repository.read().coreSettings.keys, [id]);
+        expect(
+          await File(managers[other]!.core.configuration).readAsString(),
+          foreign,
+        );
+        expect(supervisors[other]!.calls.length, foreignCalls);
+        final saved = await File(
+          managers[id]!.core.configuration,
+        ).readAsString();
+        final revision = repository.revision;
+        supervisors[id]!.failOnce = true;
+        await expectLater(
+          panel.saveCoreSettings(revision, id, {'logLevel': 'error'}),
+          throwsA(isA<ApiException>()),
+        );
+        expect(
+          await File(managers[id]!.core.configuration).readAsString(),
+          saved,
+        );
+        expect(repository.read().coreSettings[id]!['logLevel'], 'debug');
+        expect(repository.revision, revision);
+        expect(repository.pending, isNull);
+        await panel.saveConnection(
+          repository.revision,
+          Connection(
+            id: c.id,
+            name: 'edited',
+            coreId: id,
+            instanceId: id,
+            protocolId: c.protocolId,
+            port: c.port,
+            settings: c.settings,
+          ),
+          id: c.id,
+        );
+        expect((await panel.coreSettings(id)).values['logLevel'], 'debug');
+        final native =
+            jsonDecode(
+                  await File(managers[id]!.core.configuration).readAsString(),
+                )
+                as Map;
+        expect(native['log'][id == 'xray' ? 'loglevel' : 'level'], 'debug');
+        expect(repository.read().grants.single.credentials, credentials);
+        expect(supervisors[other]!.calls.length, foreignCalls);
+      },
+    );
+  }
+  test(
     'explicit unsupported transport and masking values fail instead of becoming defaults',
     () {
       for (final settings in [
@@ -237,6 +327,10 @@ void main() {
     );
   });
   test('native journal levels retain exact severity', () {
+    expect(
+      JsonProxyAdapter.logLevel('TRACE[0001] error in diagnostic payload'),
+      'trace',
+    );
     expect(JsonProxyAdapter.logLevel('WARN[0001] session failed'), 'warning');
     expect(
       JsonProxyAdapter.logLevel('2026/11/02 [Debug] connection closed'),

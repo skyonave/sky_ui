@@ -494,6 +494,16 @@ button.sidebar-core:hover { background: var(--raised); }
 
 /* The builder consumes core-owned field conditions and keeps its frame stable. */
 .modal.wide { max-width: 880px; }
+.engine-name .engine-settings { width: 26px; height: 26px; }
+.core-settings-section { padding-block: 20px; border-bottom: 1px solid var(--line-soft); }
+.core-settings-section h3 { margin: 0 0 16px; }
+.core-settings-section .field:has(textarea) { grid-column: 1 / -1; }
+.core-settings-form > p { margin-top: 20px; }
+.core-settings-form .field:has(input[type=checkbox]) { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.core-settings-form .field:has(input[type=checkbox]) .field-label { margin-bottom: 0; }
+.core-settings-form .builder-row { display: grid; grid-template-columns: minmax(0,1fr) 28px; align-items: end; gap: 12px; }
+.core-settings-form .builder-row > .form-grid { grid-template-columns: 130px minmax(0,1fr) 145px; gap: 12px; }
+@media (max-width: 760px) { .core-settings-form .builder-row > .form-grid { grid-template-columns: 1fr; } }
 .builder-steps { gap: 7px; flex-wrap: wrap; }
 .step-button { background: none; border: 0; padding: 4px 7px; color: var(--muted); font: inherit; white-space: nowrap; }
 .step-button.active { background: #2b2926; color: var(--accent); border-radius: 4px; }

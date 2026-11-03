@@ -18,6 +18,60 @@ class AppStrings {
 
   static const _catalogs = {
     'ru': {
+      'coreSettings.title': 'Настройки ядра',
+      'coreSettings.forCore': 'Настройки {core}',
+      'coreSettings.group.dns': 'DNS',
+      'coreSettings.group.access': 'Доступ',
+      'coreSettings.group.logs': 'Логи',
+      'coreSettings.dnsMode': 'Разрешение имён',
+      'coreSettings.resolvers': 'DNS-серверы',
+      'coreSettings.resolver': 'DNS-сервер',
+      'coreSettings.help.sing-box.resolvers':
+          'Один основной сервер: 1.1.1.1, udp://1.1.1.1:53, https://dns.google/dns-query или tls://one.one.one.one. Имена резолверов разрешаются системным DNS. Сертификаты DoH и DoT проверяются. sing-box не переключается между списком серверов автоматически, поэтому здесь выбирается один сервер.',
+      'coreSettings.help.xray.resolvers':
+          'До 16 серверов, по одному на строку: 1.1.1.1, udp://1.1.1.1:53, tcp://1.1.1.1:53 или https://dns.google/dns-query. Для UDP и TCP указывай IP, для DoH можно имя. DoH и TCP используют прямое подключение ядра. Сертификаты DoH проверяются. Обычный DoT этой версией Xray не поддерживается.',
+      'coreSettings.help.sing-box.logLevel':
+          'Уровень логирования самого sing-box: выбранный уровень и более важные. disabled полностью отключает логи ядра. trace и debug нужны для диагностики и могут содержать адреса запросов. Фильтры во вкладке Логи работают отдельно.',
+      'coreSettings.help.xray.logLevel':
+          'Уровень логирования самого Xray: выбранный уровень и более важные. none отключает access и error логи. При включении восстанавливаются их прежние пути. debug может содержать адреса запросов. Фильтры во вкладке Логи работают отдельно.',
+      'coreSettings.blockPrivate': 'Блокировать внутренние адреса',
+      'coreSettings.accessRules': 'Правила доступа',
+      'coreSettings.ruleType': 'Тип',
+      'coreSettings.target': 'Адрес',
+      'coreSettings.ruleAction': 'Действие',
+      'coreSettings.logLevel': 'Уровень логирования ядра',
+      'coreSettings.apply': 'Применить',
+      'coreSettings.applying': 'Применяем…',
+      'coreSettings.applyHint':
+          'Работающее ядро кратко перезапустится. При ошибке вернутся предыдущие настройки.',
+      'coreSettings.help.dnsMode':
+          'Исходная конфигурация сохраняет DNS, который был до настройки через панель. Системный DNS использует резолверы Linux. Свои серверы заменяют DNS-политику ядра. DNS-порт наружу не открывается.',
+      'coreSettings.help.resolvers':
+          'По одному серверу на строку, до 16. Например: 1.1.1.1, https://dns.google/dns-query или tls://one.one.one.one. Имена DNS-серверов сначала разрешаются системным DNS. DoH и DoT проверяют сертификаты.',
+      'coreSettings.help.blockPrivate':
+          'Запрещает получателям подключения Sky UI доступ к loopback, частным сетям, link-local и cloud metadata, включая IPv6. Публичный IP сервера сюда не входит. Это правила прокси, а не firewall всей машины. Новые правила применяются к новым соединениям после перезапуска.',
+      'coreSettings.help.accessRules':
+          'До 64 правил сверху вниз. Домен включает поддомены, IP задаётся в CIDR. Первое совпадение определяет действие. Защита внутренних адресов проверяется раньше этих правил. Разрешить означает DIRECT; остальные адреса используют прежний маршрут подключения.',
+      'coreSettings.help.ruleType':
+          'Домен с поддоменами или IP-сеть в формате CIDR.',
+      'coreSettings.help.target':
+          'Без протокола и порта: example.com, 203.0.113.0/24 или 2001:db8::/32. Доменное правило работает, когда клиент передаёт имя; оно не блокирует прямое обращение к IP этого сайта.',
+      'coreSettings.help.ruleAction':
+          'Блокировать отклоняет совпавшие запросы. Разрешить отправляет их напрямую. Порядок правил важен.',
+      'coreSettings.help.logLevel':
+          'Меняет записи, которые создаёт само ядро: выбранный уровень и более важные. debug нужен для диагностики и может содержать адреса запросов. silent отключает логи ядра. Галочки во вкладке Логи фильтруют уже полученные записи отдельно.',
+      'builder.choice.dnsMode.existing': 'Исходная конфигурация',
+      'builder.choice.dnsMode.system': 'Системный DNS',
+      'builder.choice.dnsMode.custom': 'Свои DNS-серверы',
+      'builder.choice.type.domain': 'Домен',
+      'builder.choice.type.cidr': 'IP / CIDR',
+      'builder.choice.action.block': 'Блокировать',
+      'builder.choice.action.allow': 'Разрешить',
+      'runtime.error.core_settings_unavailable':
+          'Настройки этого ядра пока недоступны.',
+      'runtime.error.core_settings_routing_conflict':
+          'Настройки доступа конфликтуют со сторонней маршрутизацией ядра. Проверьте режим, IP-правила и routing script в исходной конфигурации. Изменения не применены.',
+      'common.loading': 'Загрузка…',
       'share.clashSubscription': 'Подписка · Clash Verge / mihomo',
       'share.v2raySubscription': 'Подписка · V2Box / V2Ray',
       'core.feedback.validate':
@@ -55,7 +109,7 @@ class AppStrings {
       'runtime.error.maintenance_busy':
           'Дождись завершения текущего обслуживания.',
       'runtime.error.maintenance_failed':
-          'Операция не выполнена. Проверь журнал службы обслуживания.',
+          'Операция не выполнена. Проверь логи службы обслуживания.',
       'runtime.error.maintenance_interrupted':
           'Операция была прервана. Сохранённое состояние восстановлено.',
       'runtime.error.update_rolled_back':
@@ -393,7 +447,7 @@ class AppStrings {
       'nav.connections': 'Подключения',
       'nav.users': 'Пользователи',
       'nav.core': 'Ядро',
-      'nav.logs': 'Журнал',
+      'nav.logs': 'Логи',
       'nav.settings': 'Настройки',
       'nav.workspace': 'УПРАВЛЕНИЕ',
       'nav.system': 'СИСТЕМА',
@@ -518,7 +572,7 @@ class AppStrings {
       'runtime.error.panel_update_rolled_back':
           'Обновление не удалось. Предыдущая версия восстановлена.',
       'runtime.error.panel_update_failed':
-          'Не удалось обновить Sky UI. Проверьте журнал обслуживания.',
+          'Не удалось обновить Sky UI. Проверьте логи обслуживания.',
       'runtime.error.native_binary_incompatible':
           'Бинарники обновления несовместимы с сервером. Проверьте архитектуру и системные библиотеки. Текущая версия продолжает работать.',
       'share.type': 'Подписка или подключение',
@@ -558,7 +612,7 @@ class AppStrings {
       'runtime.error.configuration_out_of_sync':
           'Конфигурация ядра изменена вне панели. Выдача доступа заблокирована до восстановления согласованной конфигурации.',
       'runtime.error.configuration_rollback_failed':
-          'Не удалось восстановить работающую конфигурацию. Изменения и выдача доступа заблокированы. Проверьте журнал и перезапустите службу Sky UI для восстановления.',
+          'Не удалось восстановить работающую конфигурацию. Изменения и выдача доступа заблокированы. Проверьте логи и перезапустите службу Sky UI для восстановления.',
       'runtime.error.configuration_applied': 'Настройки применены',
       'runtime.error.configuration_recovered':
           'Конфигурация восстановлена после прерванной операции',
@@ -614,7 +668,7 @@ class AppStrings {
       'runtime.error.binary_probe_failed': 'Не удалось определить версию ядра.',
       'runtime.error.service_missing': 'Служба ядра не установлена.',
       'runtime.error.service_failed':
-          'Служба ядра завершилась с ошибкой. Проверьте журнал systemd.',
+          'Служба ядра завершилась с ошибкой. Проверьте логи systemd.',
       'runtime.error.supervisor_unavailable':
           'Не удалось получить состояние службы systemd.',
       'runtime.error.service_operation_failed':
@@ -628,14 +682,14 @@ class AppStrings {
       'runtime.error.controller_not_ready':
           'Процесс запущен, но контроллер ядра пока не отвечает.',
       'runtime.error.engine_not_ready':
-          'Ядро пока не готово. Проверьте журнал его службы.',
+          'Ядро пока не готово. Проверьте логи его службы.',
       'runtime.error.command_timeout': 'Время ожидания операции истекло.',
       'runtime.error.command_unavailable':
           'Не найдена программа, необходимая для управления ядром.',
       'runtime.error.origin_forbidden':
           'Запрос к серверу отклонён. Проверьте адрес панели.',
       'runtime.error.internal_error':
-          'Ошибка сервера. Проверьте журнал службы Sky UI.',
+          'Ошибка сервера. Проверьте логи службы Sky UI.',
       'runtime.error.start': 'Ядро запущено',
       'runtime.error.stop': 'Ядро остановлено',
       'runtime.error.restart': 'Ядро перезапущено',
@@ -848,9 +902,9 @@ class AppStrings {
       'overview.ready': 'Всё под вашим контролем',
       'overview.readyHint':
           'Создавайте подключения и выдавайте доступ в пару шагов.',
-      'logs.title': 'Журнал',
+      'logs.title': 'Логи',
       'logs.description': 'События панели и демонстрационные сообщения ядра.',
-      'logs.empty': 'В журнале пока нет событий',
+      'logs.empty': 'В логах пока нет событий',
       'logs.started': 'Макет панели запущен',
       'logs.connectionSaved': 'Подключение сохранено: {name}',
       'logs.userSaved': 'Пользователь сохранён: {name}',
@@ -880,14 +934,14 @@ class AppStrings {
       'logs.error': 'ERROR',
       'logs.fatal': 'FATAL',
       'logs.live': 'В реальном времени',
-      'logs.reconnecting': 'Подключение к журналу…',
+      'logs.reconnecting': 'Подключение к логам…',
       'logs.latest': 'К последним записям',
       'logs.noMatches': 'Нет записей выбранного уровня',
       'logs.clear': 'Очистить',
-      'logs.clearTitle': 'Очистить журнал?',
+      'logs.clearTitle': 'Очистить логи?',
       'logs.clearHint':
-          'Будут очищены все записи, накопленные панелью, включая скрытые фильтром. Новые события продолжат поступать. Системный журнал Linux не затрагивается.',
-      'logs.cleared': 'Журнал очищен',
+          'Будут очищены все записи, накопленные панелью, включая скрытые фильтром. Новые события продолжат поступать. Системные логи Linux не затрагиваются.',
+      'logs.cleared': 'Логи очищены',
       'admin.title': 'Администратор',
       'admin.username': 'Имя администратора',
       'admin.password': 'Пароль',
@@ -898,7 +952,7 @@ class AppStrings {
       'settings.system': 'Система',
       'settings.domain': 'Адрес панели и HTTPS',
       'settings.dns': 'DNS ядра',
-      'settings.logging': 'Уровень журналирования ядра',
+      'settings.logging': 'Уровень логирования ядра',
       'settings.configure': 'Настроить',
       'system.cpu': 'CPU',
       'system.collecting': 'Сбор данных…',

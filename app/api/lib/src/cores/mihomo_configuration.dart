@@ -14,8 +14,22 @@ import '../process_runner.dart';
 import 'contracts.dart';
 import 'mihomo_schema.dart';
 import 'socket_owner.dart';
+import 'mihomo_settings.dart';
 
-class MihomoConfiguration implements ConfigurationCodec {
+class MihomoConfiguration implements ConfigurationCodec, CoreSettingsCodec {
+  @override
+  List<ProtocolField> get coreSettingsFields => MihomoSettings.fields;
+  @override
+  Map<String, String> readCoreSettings(
+    String native,
+    Map<String, String>? stored,
+  ) => MihomoSettings.read(native, stored);
+  @override
+  Map<String, String> prepareCoreSettings(
+    String native,
+    Map<String, String>? stored,
+    Map<String, String> input,
+  ) => MihomoSettings.prepare(native, stored, input);
   MihomoConfiguration({
     this.supervisor,
     this.core,
@@ -686,6 +700,7 @@ class MihomoConfiguration implements ConfigurationCodec {
       _protection(out, stored, s, grants);
       owned.add(out);
     }
+    MihomoSettings.apply(base, owned, data.coreSettings[core.id]);
     base['listeners'] = [
       if (existing is List)
         ...existing.where(

@@ -463,6 +463,32 @@ Handler createApplication(
         Response.json(body: {'data': snapshot.toJson()});
     router.get('/api/v1/panel', (_) async => data(await panel.snapshot()));
     router.get(
+      '/api/v1/cores/<id>/settings',
+      (RequestContext context, String id) async => Response.json(
+        body: {'data': (await panel.coreSettings(id)).toJson()},
+      ),
+    );
+    router.put('/api/v1/cores/<id>/settings', (
+      RequestContext context,
+      String id,
+    ) async {
+      final value = await body(context);
+      if (value.keys.any((k) => !{'revision', 'values'}.contains(k)) ||
+          value['values'] is! Map ||
+          (value['values'] as Map).length > 32 ||
+          (value['values'] as Map).entries.any(
+            (e) => e.key is! String || e.value is! String,
+          ))
+        throw const ApiException('request_invalid', status: 400);
+      return data(
+        await panel.saveCoreSettings(
+          value['revision'] as int,
+          id,
+          Map<String, String>.from(value['values'] as Map),
+        ),
+      );
+    });
+    router.get(
       '/api/v1/connection-tools/sni',
       (_) => Response.json(body: {'data': sniScanner.snapshot}),
     );

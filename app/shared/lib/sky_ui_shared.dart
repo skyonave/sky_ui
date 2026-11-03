@@ -9,3 +9,4 @@ export 'src/owner.dart';
 export 'src/maintenance.dart';
 export 'src/updates.dart';
 export 'src/product_protocols.dart';
+export 'src/core_settings.dart';

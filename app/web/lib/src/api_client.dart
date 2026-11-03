@@ -90,6 +90,25 @@ class ApiClient {
     );
   }
 
+  Future<CoreSettings> coreSettings(String id) async => CoreSettings.fromJson(
+    Map<String, dynamic>.from(
+      (await _request('/api/v1/cores/$id/settings'))['data'] as Map,
+    ),
+  );
+  Future<PanelSnapshot> saveCoreSettings(
+    CoreSettings settings,
+    Map<String, String> values,
+  ) async => PanelSnapshot.fromJson(
+    Map<String, dynamic>.from(
+      (await _request(
+            '/api/v1/cores/${settings.instanceId}/settings',
+            method: 'PUT',
+            payload: {'revision': settings.revision, 'values': values},
+          ))['data']
+          as Map,
+    ),
+  );
+
   Future<MaintenanceSnapshot> maintenance() async =>
       MaintenanceSnapshot.fromJson(
         Map<String, dynamic>.from(

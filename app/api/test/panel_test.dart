@@ -12,7 +12,10 @@ class Adapter extends FakeAdapter {
   bool invalidCandidate = false;
   @override
   Future<void> validate(ManagedCore core) async {
-    if (invalidCandidate && File(core.configuration).parent.parent.path.endsWith('${Platform.pathSeparator}staging'))
+    if (invalidCandidate &&
+        File(
+          core.configuration,
+        ).parent.parent.path.endsWith('${Platform.pathSeparator}staging'))
       throw const ApiException('configuration_invalid', status: 422);
     await super.validate(core);
   }
@@ -67,15 +70,17 @@ void main() {
     port: freePort,
     settings: settings,
   );
-  PanelService service() => PanelService(
-    config: config,
-    manager: manager,
-    repository: repository,
-    codecs: {'mihomo': codec},
-    exporter: ClashExporter(),
-    portProbe: (_) async => true,
-    additionalExporters: [V2RayExporter()],
-  );
+  PanelService service({List<CoreManager> additionalManagers = const []}) =>
+      PanelService(
+        config: config,
+        manager: manager,
+        repository: repository,
+        codecs: {'mihomo': codec},
+        exporter: ClashExporter(),
+        portProbe: (_) async => true,
+        additionalExporters: [V2RayExporter()],
+        additionalManagers: additionalManagers,
+      );
   Future<PanelSnapshot> connection() =>
       panel.saveConnection(repository.revision, input());
   Future<PanelSnapshot> recipient(
@@ -131,6 +136,214 @@ void main() {
     await panel.initialize();
   });
   test(
+    'core settings persist transactionally and preserve grants across reopen',
+    () async {
+      final id = (await connection()).connections.single.id;
+      await recipient(id);
+      final grants = repository.read().grants.single.credentials;
+      final form = await panel.coreSettings('primary');
+      expect(form.revision, repository.revision);
+      expect((await panel.snapshot()).settingsInstances, ['primary']);
+      expect(form.values.keys, isNot(contains('_baseline')));
+      final snapshot = await panel.saveCoreSettings(form.revision, 'primary', {
+        ...form.values,
+        'logLevel': 'debug',
+        'blockPrivate': 'true',
+        'dnsMode': 'custom',
+        'resolvers': 'https://dns.google/dns-query',
+      });
+      final document = jsonDecode(await native.readAsString()) as Map;
+      expect(document['log-level'], 'debug');
+      expect(document['mode'], 'rule');
+      expect(
+        (document['listeners'] as List).single['rule'],
+        startsWith('sky-ui/access/'),
+      );
+      expect(repository.read().grants.single.credentials, grants);
+      expect(snapshot.revision, form.revision + 1);
+      expect(repository.pending, isNull);
+      repository.close();
+      repository = PanelRepository(
+        '${directory.path}/panel.sqlite',
+        defaultAddress: 'panel.example.net',
+      );
+      panel = service();
+      await panel.initialize();
+      expect((await panel.coreSettings('primary')).values['logLevel'], 'debug');
+      expect(repository.read().grants.single.credentials, grants);
+      final next = await panel.coreSettings('primary');
+      await panel.saveCoreSettings(next.revision, 'primary', {
+        ...next.values,
+        'blockPrivate': 'false',
+        'dnsMode': 'existing',
+      });
+      final restored = jsonDecode(await native.readAsString()) as Map;
+      expect(restored['mode'], 'direct');
+      expect(restored.containsKey('dns'), false);
+      expect((restored['listeners'] as List).single['proxy'], 'DIRECT');
+    },
+  );
+  test('settings-only changes are isolated by managed instance', () async {
+    final otherFile = File('${directory.path}/second.yaml');
+    await otherFile.writeAsString(baseline);
+    final other = CoreManager(
+      core: ManagedCore(
+        id: 'second',
+        coreId: 'mihomo',
+        service: 'second.service',
+        binary: '/unused',
+        directory: directory.path,
+        configuration: otherFile.path,
+        controller: Uri.parse('http://127.0.0.1:19092'),
+        secret: 'other-private',
+      ),
+      adapters: {'mihomo': Adapter()},
+      supervisor: Supervisor(),
+      stateDirectory: '${directory.path}/second-state',
+    );
+    panel = service(additionalManagers: [other]);
+    await panel.initialize();
+    final first = await native.readAsString();
+    await panel.saveCoreSettings(repository.revision, 'second', {
+      'logLevel': 'debug',
+    });
+    expect(await native.readAsString(), first);
+    expect(
+      (jsonDecode(await otherFile.readAsString()) as Map)['log-level'],
+      'debug',
+    );
+    expect(repository.read().coreSettings.keys, ['second']);
+    expect(repository.instanceHash('second'), isNotNull);
+    expect((await panel.coreSettings('primary')).values['logLevel'], 'info');
+    expect((await panel.coreSettings('second')).values['logLevel'], 'debug');
+  });
+  test(
+    'invalid core settings and stale writes never modify native or stored state',
+    () async {
+      final original = await native.readAsString();
+      await expectLater(
+        panel.saveCoreSettings(repository.revision, 'primary', {
+          'dnsMode': 'custom',
+          'resolvers': 'https://dns.example/#skip-cert-verify',
+        }),
+        throwsA(isA<ApiException>()),
+      );
+      expect(await native.readAsString(), original);
+      expect(repository.read().coreSettings, isEmpty);
+      expect(repository.revision, 0);
+      await connection();
+      await expectLater(
+        panel.saveCoreSettings(0, 'primary', {'logLevel': 'error'}),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'state_changed'),
+        ),
+      );
+      adapter.available = false;
+      await expectLater(
+        panel.saveCoreSettings(repository.revision, 'primary', {
+          'logLevel': 'debug',
+        }),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'binary_missing'),
+        ),
+      );
+      expect(repository.read().coreSettings, isEmpty);
+    },
+  );
+  test(
+    'settings validation and failed activation roll back native and metadata',
+    () async {
+      supervisor.state = CoreProcessState.active;
+      final original = await native.readAsString();
+      adapter.invalidCandidate = true;
+      await expectLater(
+        panel.saveCoreSettings(0, 'primary', {'logLevel': 'debug'}),
+        throwsA(isA<ApiException>()),
+      );
+      expect(await native.readAsString(), original);
+      expect(repository.read().coreSettings, isEmpty);
+      expect(supervisor.calls, isEmpty);
+      adapter.invalidCandidate = false;
+      supervisor.failures = 1;
+      await expectLater(
+        panel.saveCoreSettings(0, 'primary', {'logLevel': 'debug'}),
+        throwsA(isA<ApiException>()),
+      );
+      expect(await native.readAsString(), original);
+      expect(repository.read().coreSettings, isEmpty);
+      expect(repository.revision, 0);
+      expect(repository.pending, isNull);
+      expect(supervisor.state, CoreProcessState.active);
+      await panel.saveCoreSettings(0, 'primary', {'logLevel': 'error'});
+      expect((await panel.coreSettings('primary')).values['logLevel'], 'error');
+    },
+  );
+  test(
+    'settings API rejects untyped payload and exposes no native secrets',
+    () async {
+      final server = await serve(
+        createApplication(config, manager, panel: panel),
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final client = HttpClient()..findProxy = (_) => 'DIRECT';
+      Future<({int status, String body})> request(
+        String method,
+        String path, [
+        Object? payload,
+      ]) async {
+        final req = await client.openUrl(
+          method,
+          Uri.parse('http://127.0.0.1:${server.port}$path'),
+        );
+        if (payload != null) {
+          req.headers.contentType = ContentType.json;
+          req.write(jsonEncode(payload));
+        }
+        final res = await req.close();
+        return (
+          status: res.statusCode,
+          body: await utf8.decoder.bind(res).join(),
+        );
+      }
+
+      try {
+        const path = '/api/v1/cores/primary/settings';
+        final form = await request('GET', path);
+        expect(form.status, 200);
+        expect(form.body, isNot(contains('controller-only-secret')));
+        expect(
+          (await request('PUT', path, {
+            'revision': 0,
+            'values': {'blockPrivate': true},
+          })).status,
+          400,
+        );
+        expect(
+          (await request('PUT', path, {
+            'revision': 0,
+            'values': {'_baseline': '{}'},
+          })).status,
+          422,
+        );
+        expect(
+          (await request('GET', '/api/v1/cores/unknown/settings')).status,
+          404,
+        );
+        expect(
+          (await request('PUT', path, {
+            'revision': 0,
+            'values': {'logLevel': 'debug'},
+          })).status,
+          200,
+        );
+      } finally {
+        client.close(force: true);
+        await server.close(force: true);
+      }
+    },
+  );
+  test(
     'missing core keeps connections and grants but blocks execution and sharing',
     () async {
       final connectionId = (await connection()).connections.single.id;
@@ -174,17 +387,35 @@ void main() {
       );
     },
   );
-  test('draft generators preserve stored records and skip registered ports', () async {
-    final c = (await connection()).connections.single;
-    final before = repository.read().connections.single;
-    final revision = repository.revision;
-    final generated = await panel.generateConnectionFields(revision, 'mihomo', 'vless', 'port', {'port': '${c.port}'});
-    expect(int.parse(generated['port']!), isNot(c.port));
-    expect(int.parse(generated['port']!), inInclusiveRange(20000, 59999));
-    expect(repository.revision, revision);
-    expect(repository.read().connections.single.secrets, before.secrets);
-    await expectLater(panel.generateConnectionFields(revision, 'mihomo', 'vless', 'tlsPrivateKey', {}), throwsA(isA<ApiException>()));
-  });
+  test(
+    'draft generators preserve stored records and skip registered ports',
+    () async {
+      final c = (await connection()).connections.single;
+      final before = repository.read().connections.single;
+      final revision = repository.revision;
+      final generated = await panel.generateConnectionFields(
+        revision,
+        'mihomo',
+        'vless',
+        'port',
+        {'port': '${c.port}'},
+      );
+      expect(int.parse(generated['port']!), isNot(c.port));
+      expect(int.parse(generated['port']!), inInclusiveRange(20000, 59999));
+      expect(repository.revision, revision);
+      expect(repository.read().connections.single.secrets, before.secrets);
+      await expectLater(
+        panel.generateConnectionFields(
+          revision,
+          'mihomo',
+          'vless',
+          'tlsPrivateKey',
+          {},
+        ),
+        throwsA(isA<ApiException>()),
+      );
+    },
+  );
   tearDown(() async {
     repository.close();
     await directory.delete(recursive: true);
@@ -203,7 +434,11 @@ void main() {
           first = before.recipients.first,
           second = before.recipients.last;
       final firstGrant = before.grants.first, secondGrant = before.grants.last;
-      expect(firstGrant.credentials['port'], '$freePort');
+      // The OS may reserve the preferred TCP port for UDP before allocation.
+      expect(
+        int.parse(firstGrant.credentials['port']!),
+        inInclusiveRange(1024, 65535),
+      );
       expect(
         firstGrant.credentials['port'],
         isNot(secondGrant.credentials['port']),
@@ -726,6 +961,7 @@ void main() {
       try {
         expect(await status('/api/v1/health'), 200);
         expect(await status('/api/v1/panel'), 401);
+        expect(await status('/api/v1/cores/primary/settings'), 401);
         expect(await status('/api/v1/panel', credential: 'wrong'), 401);
         expect(await status('/api/v1/panel', credential: secret), 200);
         expect(
@@ -785,6 +1021,7 @@ void main() {
           expect(await status('GET', target, host: 'evil.example'), 403);
         }
         expect(await status('GET', '/api/v1/panel'), 403);
+        expect(await status('GET', '/api/v1/cores/primary/settings'), 403);
         expect(await status('GET', path, host: 'evil.example'), 403);
         expect(await status('GET', '/s/not-a-token.yaml'), 403);
         expect(
