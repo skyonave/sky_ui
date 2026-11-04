@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
+import 'package:yaml/yaml.dart';
 
 import '../../platform/host.dart';
 import '../../shared/archives.dart';
@@ -284,6 +285,20 @@ Future<void> restartReady(String core, {String? version}) async {
   await awaitEngineReady(core, version: version);
 }
 
+bool hasManagedListeners(String core, Map config) => switch (core) {
+  'mihomo' => (config['listeners'] as List? ?? []).any(
+    (listener) =>
+        listener is Map &&
+        (listener['name'] as String? ?? '').startsWith('sky-ui/c_'),
+  ),
+  'amneziawg' => (config['interfaces'] as List? ?? []).isNotEmpty,
+  _ => (config['inbounds'] as List? ?? []).any(
+    (inbound) =>
+        inbound is Map &&
+        (inbound['tag'] as String? ?? '').startsWith('sky-c_'),
+  ),
+};
+
 const goToolchains = {
   'linux-amd64': (
     'go1.27.3.linux-amd64.tar.gz',
@@ -464,8 +479,7 @@ Future<Map<String, dynamic>> changeEngine(
   require(engineIds.contains(core), 'core_unsupported');
   final root = '$cores/$core';
   host.trusted(root, directory: true);
-  final owner = await account('sky-ui'),
-      unit = 'sky-ui-$core.service',
+  final unit = 'sky-ui-$core.service',
       instance =
           '$dataRoot/instances/${core == 'mihomo' ? 'primary' : core}.json';
   if (action == 'remove') {
@@ -493,20 +507,6 @@ Future<Map<String, dynamic>> changeEngine(
     );
     await run(['systemctl', 'stop', unit]);
     require(!await active(unit), 'service_stop_timeout');
-    final value = exists(instance)
-        ? readJson(instance, 65536)
-        : <String, dynamic>{
-            'instanceId': core == 'mihomo' ? 'primary' : core,
-            'coreId': core,
-          };
-    require(
-      value['instanceId'] == (core == 'mihomo' ? 'primary' : core) &&
-          value['coreId'] == core,
-      'unsafe_file',
-    );
-    value['desiredState'] = 'stopped';
-    // Persist API-owned instance state without following user-controlled paths.
-    atomicJson(instance, value, mode: 0x180, uid: owner.uid, gid: gid);
     unlink('$root/current');
     for (final slot in slots) host.deleteTree(slot.path);
     atomicJson('$root/removed.json', {
@@ -605,6 +605,23 @@ Future<Map<String, dynamic>> changeEngine(
   });
   await beforeActivation?.call();
   await validateEngine(core, '$slot/$core');
+  final autoStart =
+      action == 'install' &&
+      (!exists(instance) ||
+          readJson(instance, 65536)['desiredState'] != 'stopped') &&
+      hasManagedListeners(
+        core,
+        core == 'mihomo'
+            ? loadYaml(
+                utf8.decode(
+                  host.read(
+                    '$dataRoot/cores/mihomo/config.yaml',
+                    limit: 4 * 1024 * 1024,
+                  ),
+                ),
+              ) as Map
+            : readJson('$dataRoot/cores/$core/config.json', 4 * 1024 * 1024),
+      );
   final running = await active(unit),
       intent = core == 'mihomo'
           ? '$state/update-intent.json'
@@ -612,22 +629,24 @@ Future<Map<String, dynamic>> changeEngine(
   atomicJson(
     intent,
     core == 'mihomo'
-        ? {'path': previous, 'running': running}
+        ? {'path': previous, 'running': running, 'autoStart': autoStart}
         : {
             'action': action,
             'core': core,
             'previous': previous,
             'running': running,
+            'autoStart': autoStart,
           },
     mode: 0x180,
   );
   try {
     reporter?.stage('activate');
     switchLink('$root/current', slot);
-    if (running) await restartReady(core, version: tag);
+    if (running || autoStart) await restartReady(core, version: tag);
     unlink('$root/removed.json');
     unlink(intent);
   } on Object {
+    if (autoStart && !running) await run(['systemctl', 'stop', unit]);
     if (previous != null)
       switchLink('$root/current', previous);
     else

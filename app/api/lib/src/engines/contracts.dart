@@ -1,5 +1,6 @@
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
+import '../application/access/records.dart';
 import 'managed_core.dart';
 
 class BinaryProbe {
@@ -18,6 +19,14 @@ abstract interface class CoreAdapter {
   List<CoreLogEntry> get logs;
   void clearLogs();
   Future<void> close();
+}
+
+abstract interface class CorePresenceSource {
+  /// Return observations keyed by grant ID. Missing observations are unknown.
+  Future<Map<String, RecipientPresence>> presence(
+    ManagedCore core,
+    PanelData data,
+  );
 }
 
 class ServiceObservation {

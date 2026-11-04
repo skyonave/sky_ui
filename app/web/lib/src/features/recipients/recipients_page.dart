@@ -12,6 +12,7 @@ import '../../shared/state/panel_store.dart';
 class RecipientsPage extends StatelessComponent {
   const RecipientsPage({
     required this.store,
+    required this.presence,
     required this.canInspect,
     required this.canEdit,
     required this.editRecipient,
@@ -21,6 +22,7 @@ class RecipientsPage extends StatelessComponent {
     super.key,
   });
   final PanelStore store;
+  final Map<String, RecipientPresence> presence;
   final bool canInspect;
   final bool canEdit;
   final void Function([Recipient?]) editRecipient;
@@ -48,12 +50,18 @@ class RecipientsPage extends StatelessComponent {
           'table',
           [
             el('colgroup', [
-              for (final width in [28, 40, 12, 20])
+              for (final width in [24, 30, 15, 11, 20])
                 el('col', [], attributes: {'style': 'width: $width%'}),
             ]),
             el('thead', [
               el('tr', [
-                for (final key in ['recipient', 'access', 'enabled', 'actions'])
+                for (final key in [
+                  'recipient',
+                  'access',
+                  'status',
+                  'enabled',
+                  'actions',
+                ])
                   el('th', [Component.text(t('table.$key'))]),
               ]),
             ]),
@@ -102,6 +110,7 @@ class RecipientsPage extends StatelessComponent {
                         txt('—', classes: 'muted'),
                     ], classes: 'access-list'),
                   ]),
+                  el('td', [_presence(user)]),
                   el('td', [
                     enabledCheckbox(
                       user.enabled,
@@ -140,4 +149,15 @@ class RecipientsPage extends StatelessComponent {
         ),
       ], classes: 'table-scroll users-table'),
   ]);
+
+  Component _presence(Recipient user) {
+    final value = user.enabled
+        ? presence[user.id] ?? RecipientPresence.unavailable
+        : RecipientPresence.offline;
+    return span(
+      [Component.text(t('users.presence.${value.name}'))],
+      classes: 'recipient-presence ${value.name}',
+      attributes: {'title': t('users.presence.help.${value.name}')},
+    );
+  }
 }

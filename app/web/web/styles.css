@@ -345,7 +345,10 @@ label { display: flex; flex-direction: column; gap: 8px; color: #bfbfbf; }
 .users-table table, .connections-table table { table-layout: fixed; width: 100%; }
 .connections-table table { min-width: 900px; }
 .users-table table { min-width: 960px; }
-.users-table th:nth-child(3), .users-table td:nth-child(3), .connections-table th:nth-child(5), .connections-table td:nth-child(5) { text-align: center; }
+.users-table th:nth-child(4), .users-table td:nth-child(4), .connections-table th:nth-child(5), .connections-table td:nth-child(5) { text-align: center; }
+.recipient-presence { white-space: nowrap; color: var(--muted); }
+.recipient-presence.online { color: var(--success); }
+.recipient-presence.recent { color: var(--accent); }
 .users-table th:last-child, .connections-table th:last-child { width: auto; }
 .users-table td { height: 66px; }
 .users-table .access-list { flex-wrap: nowrap; height: 24px; }

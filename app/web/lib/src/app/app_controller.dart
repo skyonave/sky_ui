@@ -137,6 +137,7 @@ class AppController {
   bool clearingLogs = false;
 
   Timer? runtimeTimer;
+  Timer? presenceTimer;
 
   Future<void> clearLogHistory() async {
     if (observations.runtimeBusy || dataBusy) return;
@@ -314,9 +315,13 @@ class AppController {
     });
     final route = web.window.location.hash.replaceFirst('#', '');
     if (pages.contains(route)) page = route;
+    presenceTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+      if (page == 'users') unawaited(observations.refreshPresence());
+    });
     hashListener = ((web.Event event) {
       final route = web.window.location.hash.replaceFirst('#', '');
       if (pages.contains(route)) mutate(() => page = route);
+      if (page == 'users') unawaited(observations.refreshPresence());
     }).toJS;
     web.window.addEventListener('hashchange', hashListener);
     keyListener = ((web.KeyboardEvent event) {
@@ -348,6 +353,7 @@ class AppController {
     observations.dispose();
     toastTimer?.cancel();
     runtimeTimer?.cancel();
+    presenceTimer?.cancel();
     maintenanceTimer?.cancel();
     web.window.removeEventListener('hashchange', hashListener);
     web.document.removeEventListener('keydown', keyListener);

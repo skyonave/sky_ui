@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../../platform/host.dart';
+import 'amnezia_presence.dart';
 
 const awgTable = 'sky_ui_awg';
 
@@ -342,8 +343,24 @@ Future<void> runAwg(String configuration, String binary) async {
     var failed = false;
     for (final child in children)
       unawaited(child.exitCode.then((_) => failed = true));
+    final tracked = {
+      for (final i in config['interfaces'] as List)
+        i['name'] as String: {
+          for (final p in i['peers'] as List) awgKey(p['publicKey']),
+        },
+    };
+    final observed = {for (final name in tracked.keys) name: <String, int>{}};
+    var nextObservation = Duration.zero;
+    final clock = Stopwatch()..start();
     while (!stopping) {
       require(!failed, 'amnezia_process_failed');
+      if (clock.elapsed >= nextObservation && tracked.isNotEmpty) {
+        nextObservation = clock.elapsed + const Duration(seconds: 5);
+        await Future.wait([
+          for (final entry in tracked.entries)
+            observeAwgHandshakes(entry.key, entry.value, observed[entry.key]!),
+        ]);
+      }
       await sleep(200);
     }
   } finally {

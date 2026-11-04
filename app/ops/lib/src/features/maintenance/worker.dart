@@ -117,6 +117,8 @@ Future<void> recoverMaintenance(int gid) async {
       await changeEngine('remove', core as String, null, gid);
     else {
       final previous = v['previous'] as String?;
+      if (v['autoStart'] == true && v['running'] != true)
+        await run(['systemctl', 'stop', 'sky-ui-$core.service']);
       if (previous != null) {
         require(parent(previous) == '$cores/$core', 'unsafe_file');
         host.trusted(previous, directory: true);
@@ -145,6 +147,8 @@ Future<void> recoverMaintenance(int gid) async {
   if (exists('$state/update-intent.json')) {
     final value = readJson('$state/update-intent.json', 4096),
         previous = value['path'] as String?;
+    if (value['autoStart'] == true && value['running'] != true)
+      await run(['systemctl', 'stop', 'sky-ui-mihomo.service']);
     if (previous != null) {
       final path = resolved(previous);
       require(

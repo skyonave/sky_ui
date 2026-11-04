@@ -858,6 +858,17 @@ class AppStrings {
       'users.total': 'Всего пользователей',
       'users.active': 'Доступ включён',
       'users.disabled': 'Доступ отключён',
+      'users.presence.online': 'В сети',
+      'users.presence.recent': 'Был недавно',
+      'users.presence.offline': 'Не в сети',
+      'users.presence.unavailable': '—',
+      'users.presence.help.online':
+          'Ядро видит активное соединение пользователя.',
+      'users.presence.help.recent':
+          'Ядро недавно приняло запрос или рукопожатие пользователя.',
+      'users.presence.help.offline': 'Активных соединений не видно.',
+      'users.presence.help.unavailable':
+          'Ядро пока не предоставило данные о подключении.',
       'users.subscription': 'QR-код',
       'users.none': 'Пока нет пользователей',
       'users.nameHelp':

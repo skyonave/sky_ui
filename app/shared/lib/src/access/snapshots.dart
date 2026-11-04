@@ -1,6 +1,8 @@
 import '../protocols/schema.dart';
 import 'models.dart';
 
+enum RecipientPresence { online, recent, offline, unavailable }
+
 class PanelSnapshot {
   const PanelSnapshot({
     required this.revision,

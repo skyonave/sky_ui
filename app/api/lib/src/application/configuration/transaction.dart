@@ -44,18 +44,7 @@ class ConfigurationTransaction {
       for (final entry in _recovery(pending).entries) {
         final owner = managers[entry.key];
         if (owner == null) throw const ApiException('core_unavailable');
-        await files.publish(entry.value['previous'] as String, owner.core);
-        final observation = await owner.supervisor.inspect(owner.core);
-        if (observation.state == CoreProcessState.active ||
-            (entry.value['wasRunning'] == true &&
-                owner.desired != CoreDesiredState.stopped)) {
-          await controls[entry.key]!.execute(
-            observation.state == CoreProcessState.active
-                ? CoreOperation.restart
-                : CoreOperation.start,
-            remember: false,
-          );
-        }
+        await _restore(owner, controls[entry.key]!, entry.value as Map);
       }
       repository.clearPending();
       manager.event('configuration_recovered');
@@ -66,6 +55,31 @@ class ConfigurationTransaction {
       busy = false;
     }
   });
+
+  Future<void> _restore(
+    CoreManager owner,
+    CoreControl control,
+    Map change,
+  ) async {
+    if (change['autoStart'] == true) {
+      // Stop an engine that could have started with an uncommitted grant.
+      await control.execute(CoreOperation.stop, remember: false);
+    }
+    await files.publish(change['previous'] as String, owner.core);
+    if (change['autoStart'] == true) return;
+    final observed = await owner.supervisor.inspect(owner.core);
+    if (observed.state == CoreProcessState.active ||
+        change['wasRunning'] == true &&
+            owner.desired != CoreDesiredState.stopped) {
+      await control.execute(
+        observed.state == CoreProcessState.active
+            ? CoreOperation.restart
+            : CoreOperation.start,
+        remember: false,
+      );
+    }
+  }
+
   Future<bool> isSynchronized() async {
     if (repository.pending != null) return false;
     for (final owner in managers.values) {
@@ -209,7 +223,11 @@ class ConfigurationTransaction {
             'draft.${owner.core.coreId == 'mihomo' ? 'yaml' : 'json'}',
             (path) => controls[owner.core.id]!.validateCandidate(path),
           );
-        if (candidate != previous) {
+        final autoStart =
+            !wasRunning &&
+            owner.desired != CoreDesiredState.stopped &&
+            newData.listeningConnections.isNotEmpty;
+        if (candidate != previous || autoStart) {
           if (validation != candidate)
             await files.stage(
               candidate,
@@ -221,6 +239,7 @@ class ConfigurationTransaction {
             'previous': previous,
             'candidate': candidate,
             'wasRunning': wasRunning,
+            if (autoStart) 'autoStart': true,
           };
         }
       }
@@ -238,9 +257,12 @@ class ConfigurationTransaction {
         for (final entry in changes.entries) {
           final owner = managers[entry.key]!;
           await files.publish(entry.value['candidate'] as String, owner.core);
-          if (entry.value['wasRunning'] == true) {
+          if (entry.value['wasRunning'] == true ||
+              entry.value['autoStart'] == true) {
             await controls[entry.key]!.execute(
-              CoreOperation.restart,
+              entry.value['autoStart'] == true
+                  ? CoreOperation.start
+                  : CoreOperation.restart,
               remember: false,
             );
             await registry
@@ -263,12 +285,7 @@ class ConfigurationTransaction {
         try {
           for (final entry in changes.entries.toList().reversed) {
             final owner = managers[entry.key]!;
-            await files.publish(entry.value['previous'] as String, owner.core);
-            if (entry.value['wasRunning'] == true)
-              await controls[entry.key]!.execute(
-                CoreOperation.restart,
-                remember: false,
-              );
+            await _restore(owner, controls[entry.key]!, entry.value);
           }
           repository.clearPending();
           manager.event('configuration_rolled_back', level: 'error');

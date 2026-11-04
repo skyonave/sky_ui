@@ -16,6 +16,7 @@ class FleetAdapter extends FakeAdapter {
 
 class FleetSupervisor extends FakeSupervisor {
   bool failOnce = false;
+  bool failStartAfterActivation = false;
   @override
   Future<void> execute(ManagedCore core, CoreOperation operation) async {
     if (failOnce && operation == CoreOperation.restart) {
@@ -23,6 +24,10 @@ class FleetSupervisor extends FakeSupervisor {
       throw const ApiException('service_failed');
     }
     await super.execute(core, operation);
+    if (failStartAfterActivation && operation == CoreOperation.start) {
+      failStartAfterActivation = false;
+      throw const ApiException('service_failed');
+    }
   }
 }
 
@@ -121,6 +126,67 @@ void main() {
           settings: const {'serverName': 'www.kernel.org'},
         ),
       )).connections.last;
+
+  test(
+    'first enabled grant starts only its engine and respects manual stop',
+    () async {
+      final owner = managers['xray']!, supervisor = supervisors['xray']!;
+      supervisor.state = CoreProcessState.inactive;
+      final c = await connection('xray', 35517);
+      expect(supervisor.calls, isEmpty);
+
+      final result = await panel.saveRecipient(
+        repository.revision,
+        Recipient(id: '', name: 'fixture', connectionIds: [c.id]),
+      );
+      expect(supervisor.calls, ['start']);
+      expect(owner.desired, CoreDesiredState.unknown);
+      expect(supervisors['sing-box']!.calls, isEmpty);
+
+      supervisor.state = CoreProcessState.inactive;
+      await panel.restoreCore();
+      expect(supervisor.calls, ['start', 'start']);
+
+      await panel.executeCore(CoreOperation.stop, instanceId: 'xray');
+      await panel.saveConnection(
+        repository.revision,
+        Connection.fromJson({...c.toJson(), 'name': 'renamed'}),
+        id: c.id,
+      );
+      await panel.restoreCore();
+      expect(supervisor.calls, ['start', 'start', 'stop']);
+      expect(result.recipients, hasLength(1));
+    },
+  );
+
+  test(
+    'failed automatic activation restores configuration and stops the process',
+    () async {
+      final supervisor = supervisors['xray']!
+        ..state = CoreProcessState.inactive
+        ..failStartAfterActivation = true;
+      final c = await connection('xray', 35517);
+      final file = File(managers['xray']!.core.configuration);
+      final previous = await file.readAsString();
+      final revision = repository.revision;
+
+      await expectLater(
+        panel.saveRecipient(
+          revision,
+          Recipient(id: '', name: 'fixture', connectionIds: [c.id]),
+        ),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'service_failed'),
+        ),
+      );
+      expect(supervisor.calls, ['start', 'stop']);
+      expect(supervisor.state, CoreProcessState.inactive);
+      expect(await file.readAsString(), previous);
+      expect(repository.revision, revision);
+      expect(repository.pending, isNull);
+      expect(repository.read().grants, isEmpty);
+    },
+  );
   test(
     'an absent unrelated engine does not normalize or block a connection save',
     () async {

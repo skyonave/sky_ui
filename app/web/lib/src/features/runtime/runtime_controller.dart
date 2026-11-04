@@ -27,6 +27,45 @@ class RuntimeController {
   final bool Function() isDataBusy, isAlive, isLogsPage;
   final void Function() onSignedOut, onChanged;
   final t = const AppStrings();
+  Map<String, RecipientPresence> _presence = const {};
+  int? _presenceRevision;
+  DateTime? _presenceExpires;
+  bool _presenceRefreshing = false;
+  Map<String, RecipientPresence> get presence =>
+      !dataBusy &&
+          _presenceRevision == panelData?.revision &&
+          (_presenceExpires?.isAfter(DateTime.now()) ?? false)
+      ? _presence
+      : const {};
+
+  Future<void> refreshPresence() async {
+    if (_presenceRefreshing || dataBusy || panelData == null) return;
+    _presenceRefreshing = true;
+    final revision = panelData!.revision;
+    final generation = runtimeGeneration;
+    try {
+      final value = await api.recipientPresence();
+      if (!mounted ||
+          generation != runtimeGeneration ||
+          value.revision != revision ||
+          panelData?.revision != revision)
+        return;
+      final current = presence;
+      final changed =
+          value.recipients.length != current.length ||
+          value.recipients.entries.any((e) => current[e.key] != e.value);
+      _presence = value.recipients;
+      _presenceRevision = revision;
+      _presenceExpires = DateTime.now().add(const Duration(seconds: 6));
+      if (changed) onChanged();
+    } on ApiClientException {
+      if (generation == runtimeGeneration && _presence.isNotEmpty)
+        _change(() => _presence = const {});
+    } finally {
+      _presenceRefreshing = false;
+    }
+  }
+
   bool get mounted => isAlive();
   bool get dataBusy => isDataBusy();
   PanelSnapshot? get panelData => readPanel();

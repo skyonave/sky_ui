@@ -14,6 +14,7 @@ import '../subscriptions/client_exporter.dart';
 import '../subscriptions/subscription_service.dart';
 import 'connection_commands.dart';
 import 'recipient_commands.dart';
+import 'recipient_presence.dart';
 import 'records.dart';
 import 'repository.dart';
 import 'validation.dart';
@@ -65,6 +66,11 @@ class PanelService {
     files: configurationStore,
   );
   bool get busy => deployment.busy;
+  late final presence = RecipientPresenceService(
+    repository,
+    managers,
+    () async => !busy && await isSynchronized(),
+  );
   late final subscriptions = SubscriptionService(
     config: config,
     registry: registry,
@@ -343,14 +349,35 @@ class PanelService {
 
   Future<void> restoreCore() async {
     for (final owner in managers.values) {
-      if (owner.desired == CoreDesiredState.unknown) continue;
       try {
-        await executeCore(
-          owner.desired == CoreDesiredState.running
-              ? CoreOperation.start
-              : CoreOperation.stop,
-          instanceId: owner.core.id,
-        );
+        await owner.exclusive((control) async {
+          final service = await owner.supervisor.inspect(owner.core);
+          if (!service.loaded || !owner.supervisor.supported) return;
+          if (owner.desired == CoreDesiredState.stopped) {
+            if (service.state == CoreProcessState.active)
+              await control.execute(CoreOperation.stop, remember: false);
+            return;
+          }
+          if (service.state != CoreProcessState.inactive &&
+              service.state != CoreProcessState.failed)
+            return;
+          final data = repository.read().forInstance(owner.core.id);
+          if (owner.desired != CoreDesiredState.running &&
+              data.listeningConnections.isEmpty)
+            return;
+          if (!(await owner.adapter.probe(owner.core)).available ||
+              !await isSynchronized())
+            return;
+          final codec = _codec(owner.core.coreId);
+          await codec.preflight(data, data, false);
+          try {
+            await control.execute(CoreOperation.start, remember: false);
+            await codec.verifyRunning(data, owner.core);
+          } on Object {
+            await control.execute(CoreOperation.stop, remember: false);
+            rethrow;
+          }
+        });
       } on Object {
         owner.event('core_state_restore_failed', level: 'error');
       }

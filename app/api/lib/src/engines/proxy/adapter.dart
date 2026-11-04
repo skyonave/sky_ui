@@ -3,13 +3,14 @@ import 'dart:io';
 
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
+import '../../application/access/records.dart';
 import '../../infrastructure/process/command_runner.dart';
 import '../../shared/api_exception.dart';
 import '../contracts.dart';
 import '../managed_core.dart';
 
 /// Only the required lifecycle/validation interface; no fictitious controller API.
-class JsonProxyAdapter implements CoreAdapter {
+class JsonProxyAdapter implements CoreAdapter, CorePresenceSource {
   JsonProxyAdapter(this.id, this.runner, this.supervisor);
   @override
   final String id;
@@ -20,6 +21,76 @@ class JsonProxyAdapter implements CoreAdapter {
   DateTime? _clearedAt;
   final _seen = <String>{};
   bool _observing = false;
+  static final _xrayAccepted = RegExp(
+    r'^(?:\d{4}/\d\d/\d\d \d\d:\d\d:\d\d(?:\.\d+)? )?from \S+ accepted \S+ \[(sky-[\w-]+) (?:->|>>) [^\]\r\n]+\](?: email: ([\w-]+))?$',
+  );
+  static final _singAccepted = RegExp(
+    r'^(?:(?:[-+]\d{4} \d{4}-\d\d-\d\d \d\d:\d\d:\d\d )?INFO(?:\[\d+\])?\s+(?:\[[^\]\r\n]+\] )?)?inbound/[\w-]+\[(sky-[\w-]+)\]: (?:\[([\w-]+)\] )?inbound (?:(?:packet )?connection to \S+|packet addr connection)$',
+  );
+
+  @override
+  Future<Map<String, RecipientPresence>> presence(
+    ManagedCore core,
+    PanelData data,
+  ) async {
+    final expected = <(String, String?), String>{};
+    for (final stored in data.listeningConnections) {
+      final c = stored.value;
+      for (final g in data.activeGrants(c.id)) {
+        if (c.protocolId == 'shadowsocks' &&
+            g.credentials.containsKey('port')) {
+          expected[('sky-${c.id}-${g.id}', null)] = g.id;
+          continue;
+        }
+        final user = c.protocolId == 'naive' ? g.credentials['username'] : g.id;
+        if (user != null) expected[('sky-${c.id}', user)] = g.id;
+      }
+    }
+    if (expected.isEmpty) return {};
+    final accepted = id == 'xray' ? _xrayAccepted : _singAccepted;
+    final result = <String, RecipientPresence>{};
+    for (final line in await recentPresenceLogs(core, 60)) {
+      final match = accepted.firstMatch(line);
+      if (match == null) continue;
+      final grant = expected[(match[1]!, match[2])];
+      if (grant != null) result[grant] = RecipientPresence.recent;
+    }
+    return result;
+  }
+
+  Future<Iterable<String>> recentPresenceLogs(
+    ManagedCore core,
+    int seconds,
+  ) async {
+    if (!Platform.isLinux) return const [];
+    final result = await runner.run('/usr/bin/journalctl', [
+      '--namespace=+sky-ui',
+      '--unit',
+      core.service,
+      '--no-pager',
+      '--output=json',
+      '--output-fields=MESSAGE',
+      '--reverse',
+      '--lines=100',
+      '--since=-${seconds}s',
+    ], timeout: const Duration(seconds: 2));
+    if (result.exitCode != 0) return const [];
+    final lines = <String>[];
+    for (final line in const LineSplitter().convert(result.output)) {
+      try {
+        final message = (jsonDecode(line) as Map)['MESSAGE'];
+        if (message is String && !message.contains(RegExp(r'[\r\n]'))) {
+          lines.add(
+            message.replaceAll(RegExp(r'\x1b\[[0-?]*[ -/]*[@-~]'), '').trim(),
+          );
+        }
+      } on FormatException {
+        // The bounded command output may end in a partial record.
+      }
+    }
+    return lines;
+  }
+
   @override
   String get name => id == 'xray' ? 'Xray' : 'sing-box';
   @override
@@ -97,11 +168,12 @@ class JsonProxyAdapter implements CoreAdapter {
               value['__CURSOR'] as String? ??
               '${time.microsecondsSinceEpoch}:${value['MESSAGE']}';
           if (!_seen.add(cursor)) continue;
+          if (_since == null || time.isAfter(_since!)) _since = time;
+          final raw = value['MESSAGE'] as String? ?? '';
+          if (id == 'amneziawg' && raw.startsWith('sky-ui-peer-handshake '))
+            continue;
           final message = redact(
-            (value['MESSAGE'] as String? ?? '').replaceAll(
-              RegExp(r'\x1b\[[0-?]*[ -/]*[@-~]'),
-              '',
-            ),
+            raw.replaceAll(RegExp(r'\x1b\[[0-?]*[ -/]*[@-~]'), ''),
             [core.secret],
           );
           _logs.add(
@@ -112,7 +184,6 @@ class JsonProxyAdapter implements CoreAdapter {
               source: id,
             ),
           );
-          if (_since == null || time.isAfter(_since!)) _since = time;
         } on Object {
           continue;
         }

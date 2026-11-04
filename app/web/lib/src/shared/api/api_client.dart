@@ -12,6 +12,26 @@ class ApiClientException implements Exception {
 }
 
 class ApiClient {
+  Future<({int revision, Map<String, RecipientPresence> recipients})>
+  recipientPresence() async {
+    final data =
+        (await _request(
+              '/api/v1/recipients/presence',
+              timeout: const Duration(seconds: 4),
+            ))['data']
+            as Map;
+    return (
+      revision: data['revision'] as int,
+      recipients: {
+        for (final entry in (data['recipients'] as Map).entries)
+          entry.key as String: RecipientPresence.values.firstWhere(
+            (value) => value.name == entry.value,
+            orElse: () => RecipientPresence.unavailable,
+          ),
+      },
+    );
+  }
+
   Future<ConnectionDiagnostics> startDiagnostics(
     String connection,
     int revision,

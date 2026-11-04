@@ -4,12 +4,13 @@ import 'dart:io';
 
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
+import '../../application/access/records.dart';
 import '../../infrastructure/process/command_runner.dart';
 import '../../shared/api_exception.dart';
 import '../contracts.dart';
 import '../managed_core.dart';
 
-class MihomoAdapter implements CoreAdapter {
+class MihomoAdapter implements CoreAdapter, CorePresenceSource {
   MihomoAdapter(this.runner);
   final CommandRunner runner;
   String? _version;
@@ -29,6 +30,100 @@ class MihomoAdapter implements CoreAdapter {
 
   @override
   void clearLogs() => _entries.clear();
+
+  @override
+  Future<Map<String, RecipientPresence>> presence(
+    ManagedCore core,
+    PanelData data,
+  ) async {
+    if (core.secret.isEmpty) return {};
+    final client = HttpClient()..findProxy = (_) => 'DIRECT';
+    try {
+      final entries = await (() async {
+        final request = await client.getUrl(
+          core.controller.resolve('/connections'),
+        );
+        request.followRedirects = false;
+        request.headers.set(
+          HttpHeaders.authorizationHeader,
+          'Bearer ${core.secret}',
+        );
+        final response = await request.close();
+        if (response.statusCode != HttpStatus.ok) throw const FormatException();
+        final body = <int>[];
+        await for (final chunk in response) {
+          if (body.length + chunk.length > 1024 * 1024)
+            throw const FormatException();
+          body.addAll(chunk);
+        }
+        final snapshot = jsonDecode(utf8.decode(body));
+        if (snapshot is! Map || !snapshot.containsKey('connections'))
+          throw const FormatException();
+        final entries = snapshot['connections'];
+        if (entries == null) return <dynamic>[];
+        if (entries is! List) throw const FormatException();
+        return entries;
+      })().timeout(const Duration(seconds: 2));
+      return _matchConnections(data, entries);
+    } on Exception {
+      return {};
+    } finally {
+      client.close(force: true);
+    }
+  }
+
+  static Map<String, RecipientPresence> _matchConnections(
+    PanelData data,
+    List entries,
+  ) {
+    final users = <String, Map<String, String>>{};
+    final isolated = <String, String>{};
+    final result = <String, RecipientPresence>{};
+    for (final stored in data.listeningConnections) {
+      final c = stored.value, name = 'sky-ui/${c.id}';
+      for (final grant in data.activeGrants(c.id)) {
+        if (grant.credentials.containsKey('port')) {
+          isolated['$name/${grant.id}'] = grant.id;
+        } else {
+          final user = switch (c.protocolId) {
+            'vless' ||
+            'vmess' ||
+            'trojan' ||
+            'anytls' ||
+            'hysteria2' ||
+            'shadowquic' => grant.id,
+            'mieru' ||
+            'trusttunnel' ||
+            'http' ||
+            'socks' ||
+            'mixed' => grant.credentials['username'],
+            'tuic' => grant.credentials['uuid'],
+            _ => null,
+          };
+          if (user == null || user.isEmpty) continue;
+          (users[name] ??= {})[user] = grant.id;
+        }
+        result[grant.id] = RecipientPresence.offline;
+      }
+    }
+    for (final entry in entries) {
+      if (entry is! Map || entry['metadata'] is! Map) return {};
+      final metadata = entry['metadata'] as Map;
+      final name = metadata['inboundName'];
+      if (name is! String) return {};
+      final inboundUsers = users[name];
+      final grant = isolated[name] ?? inboundUsers?[metadata['inboundUser']];
+      if (grant != null) {
+        result[grant] = RecipientPresence.online;
+      } else if (inboundUsers != null) {
+        for (final id in inboundUsers.values) {
+          if (result[id] == RecipientPresence.offline)
+            result[id] = RecipientPresence.unavailable;
+        }
+      }
+    }
+    return result;
+  }
 
   @override
   Future<BinaryProbe> probe(ManagedCore core) async {

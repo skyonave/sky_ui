@@ -36,7 +36,7 @@ class AppView extends StatelessComponent {
   final t = const AppStrings();
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.8.0-dev.7',
+    defaultValue: '0.8.0-dev.8',
   );
   @override
   Component build(BuildContext context) => div([
@@ -162,6 +162,7 @@ class AppView extends StatelessComponent {
 
   Component usersPage() => RecipientsPage(
     store: controller.store,
+    presence: controller.observations.presence,
     canInspect: controller.canInspect,
     canEdit: controller.canEdit,
     editRecipient: controller.editRecipient,
