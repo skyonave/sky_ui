@@ -19,7 +19,9 @@ class RecipientCommands {
   final _portRandom = Random.secure();
   Map<String, CoreManager> get managers => registry.managers;
   Future<void> save(PanelData data, Recipient input, {String? id}) async {
-    final old = data.recipients.where((u) => u.id == id).firstOrNull;
+    final old = data.recipients
+        .where((u) => u.id == id && u.parentId == null)
+        .firstOrNull;
     if (id != null && old == null)
       throw const ApiException('not_found', status: 404);
     final selected = input.connectionIds.toSet();
@@ -42,6 +44,43 @@ class RecipientCommands {
     } else {
       data.recipients[data.recipients.indexOf(old)] = user;
     }
+    await _syncGrants(data, user, selected);
+    final deviceConnections = selected
+        .where((id) => _requiresDeviceGrant(data, id))
+        .toSet();
+    for (final device in data.recipients.where((u) => u.parentId == user.id)) {
+      await _syncGrants(data, device, deviceConnections);
+    }
+  }
+
+  bool _requiresDeviceGrant(PanelData data, String connectionId) {
+    final connection = data.connections.firstWhere(
+      (c) => c.value.id == connectionId,
+    );
+    final codec = registry.codec(connection.value.coreId);
+    return codec is DeviceGrantPolicy &&
+        (codec as DeviceGrantPolicy).requiresDeviceGrant(connection);
+  }
+
+  Future<void> enroll(
+    PanelData data,
+    StoredRecipient parent,
+    StoredRecipient device,
+  ) async {
+    data.recipients.add(device);
+    await _syncGrants(data, device, {
+      for (final grant in data.grants)
+        if (grant.recipientId == parent.id &&
+            _requiresDeviceGrant(data, grant.connectionId))
+          grant.connectionId,
+    });
+  }
+
+  Future<void> _syncGrants(
+    PanelData data,
+    StoredRecipient user,
+    Set<String> selected,
+  ) async {
     data.grants.removeWhere(
       (g) => g.recipientId == user.id && !selected.contains(g.connectionId),
     );

@@ -3,6 +3,7 @@ import 'package:dart_frog/dart_frog.dart';
 import '../application/access/panel_service.dart';
 import '../application/connections/diagnostics_service.dart';
 import '../application/engines/core_manager.dart';
+import '../application/logs/panel_log.dart';
 import '../bootstrap/server_config.dart';
 import '../features/auth/owner_auth.dart';
 import '../features/connections/sni_scanner.dart';
@@ -47,6 +48,8 @@ Handler createApplication(
   final sniScanner = SniScanner();
   final updates = coreUpdates ?? CoreUpdates();
   final instances = panel?.managers ?? {manager.core.id: manager};
+  final panelLog = panel?.log ?? PanelLog();
+  panelLog.event('Sky UI API ready');
   final applicationUpdates =
       panelUpdates ?? PanelUpdates(const NativeCommandRunner());
   registerPanelUpdateRoutes(router, applicationUpdates);
@@ -59,11 +62,12 @@ Handler createApplication(
       updates,
       applicationUpdates,
       panel,
+      panelLog,
     );
   if (auth != null) registerAuthRoutes(router, config, auth);
   registerTelemetryRoutes(router, config, system);
   registerCoreUpdateRoutes(router, instances, updates);
-  registerEngineRoutes(router, instances, panel, auth);
+  registerEngineRoutes(router, instances, panel, auth, panelLog);
   if (panel != null) {
     registerAccessRoutes(router, panel, sniScanner);
     if (maintenance != null)
@@ -98,5 +102,6 @@ Handler createApplication(
     router,
     auth: auth,
     maintenance: maintenance,
+    panelLog: panelLog,
   );
 }

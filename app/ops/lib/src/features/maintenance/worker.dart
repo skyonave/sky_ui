@@ -37,8 +37,9 @@ Future<Map<String, dynamic>> restoreBackup(String id, int gid) async {
           db.select('PRAGMA integrity_check').first.values.first == 'ok',
           'database_invalid',
         );
+        final version = db.select('PRAGMA user_version').first.values.first;
         require(
-          db.select('PRAGMA user_version').first.values.first == 1,
+          version == 1 || name == 'panel' && version == 2,
           'database_version_invalid',
         );
         if (name == 'owner') db.execute('DELETE FROM sessions');

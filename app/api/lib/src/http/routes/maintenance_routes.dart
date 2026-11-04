@@ -4,6 +4,7 @@ import 'package:dart_frog/dart_frog.dart';
 
 import '../../application/access/panel_service.dart';
 import '../../application/engines/core_manager.dart';
+import '../../application/logs/panel_log.dart';
 import '../../features/maintenance/service.dart';
 import '../../features/updates/core_updates.dart';
 import '../../features/updates/panel_updates.dart';
@@ -17,12 +18,32 @@ void registerMaintenanceRoutes(
   CoreUpdates updates,
   PanelUpdates applicationUpdates,
   PanelService? panel,
+  PanelLog log,
 ) {
-  router.get(
-    '/api/v1/maintenance',
-    (_) async =>
-        Response.json(body: {'data': (await maintenance.snapshot()).toJson()}),
-  );
+  ({String id, String status, String? stage})? observed;
+  router.get('/api/v1/maintenance', (_) async {
+    final snapshot = await maintenance.snapshot();
+    final job = snapshot.job;
+    if (job != null) {
+      final stage = job.progress?.stage;
+      final current = (id: job.id, status: job.status, stage: stage);
+      if (current != observed) {
+        observed = current;
+        final code = RegExp(r'^[a-z][a-z0-9_-]{0,47}$');
+        if (MaintenanceService.idPattern.hasMatch(job.id) &&
+            code.hasMatch(job.action) &&
+            code.hasMatch(job.status) &&
+            (stage == null || code.hasMatch(stage))) {
+          log.event(
+            'Maintenance ${job.id.substring(0, 8)} ${job.action} ${job.status}'
+            '${stage == null ? '' : ' $stage'}',
+            level: job.status == 'failed' ? 'error' : 'info',
+          );
+        }
+      }
+    }
+    return Response.json(body: {'data': snapshot.toJson()});
+  });
   router.post('/api/v1/maintenance', (context) async {
     if ((context.request.headers['content-type'] ?? '')
             .split(';')

@@ -81,7 +81,7 @@ class RuntimeController {
     runtimeGeneration++;
   }
 
-  String selectedLogInstance = 'primary';
+  String selectedLogInstance = 'sky-ui';
   CoreSnapshot? runtime;
   List<CoreSnapshot> runtimes = [];
   List<CoreLogEntry> runtimeLogs = [];

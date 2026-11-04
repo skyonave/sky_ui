@@ -476,8 +476,6 @@ class AppController {
           sharing?.id == user.id)
         mutate(() {
           shareData = value;
-          if (value.links.length == 1 && value.links.single.content != null)
-            shareSelection = '0';
         });
     } on ApiClientException catch (e) {
       if (mounted &&

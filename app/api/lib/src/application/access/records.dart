@@ -50,11 +50,13 @@ class StoredRecipient {
     required this.name,
     required this.enabled,
     required this.token,
+    this.parentId,
   });
   final String id;
   final String name;
   final bool enabled;
   final String token;
+  final String? parentId;
 }
 
 class AccessGrant {
@@ -122,6 +124,10 @@ class PanelData {
     id: value.id,
     name: value.name,
     enabled: value.enabled,
+    devices: [
+      for (final device in recipients.where((u) => u.parentId == value.id))
+        RecipientDevice(id: device.id, name: device.name),
+    ],
     connectionPorts: {
       for (final grant in grants.where(
         (g) => g.recipientId == value.id && g.credentials['port'] != null,
@@ -133,11 +139,16 @@ class PanelData {
         .map((g) => g.connectionId)
         .toList(),
   );
+  bool recipientEnabled(StoredRecipient value) =>
+      value.enabled &&
+      (value.parentId == null ||
+          recipients.any((u) => u.id == value.parentId && u.enabled));
+
   List<AccessGrant> activeGrants(String connectionId) => grants
       .where(
         (g) =>
             g.connectionId == connectionId &&
-            recipients.any((u) => u.id == g.recipientId && u.enabled),
+            recipients.any((u) => u.id == g.recipientId && recipientEnabled(u)),
       )
       .toList();
   List<StoredConnection> get listeningConnections => connections

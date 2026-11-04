@@ -1,5 +1,6 @@
 import 'package:jaspr/client.dart';
 import 'package:jaspr/dom.dart';
+import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../shared/components/primitives.dart';
 import '../../shared/localization/strings.dart';
@@ -12,6 +13,7 @@ class RecipientForm extends StatelessComponent {
     required this.grants,
     required this.busy,
     required this.onGrant,
+    required this.devices,
     super.key,
   });
   final PanelStore store;
@@ -19,6 +21,7 @@ class RecipientForm extends StatelessComponent {
   final Set<String> grants;
   final bool busy;
   final void Function(String, bool) onGrant;
+  final List<RecipientDevice> devices;
   final t = const AppStrings();
   @override
   Component build(BuildContext context) => div([
@@ -57,5 +60,12 @@ class RecipientForm extends StatelessComponent {
           if (!c.enabled) txt(t('status.disabled'), classes: 'muted small'),
         ], classes: 'grant-option'),
     ], classes: 'grant-list'),
+    if (devices.isNotEmpty) ...[
+      h3([Component.text(t('users.devices'))], classes: 'form-section-title'),
+      div([
+        for (final device in devices)
+          div([txt(device.name)], classes: 'grant-option'),
+      ], classes: 'grant-list'),
+    ],
   ]);
 }

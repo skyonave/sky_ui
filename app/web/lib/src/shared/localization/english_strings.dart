@@ -653,6 +653,7 @@ const englishStrings = <String, String>{
   "logs.reconnecting": "Connecting to logs…",
   "logs.started": "Panel preview started",
   "logs.title": "Logs",
+  "users.devices": "Devices",
   "logs.toggled": "Status changed: {name}",
   "logs.userSaved": "User saved: {name}",
   "maintenance.backupHint":

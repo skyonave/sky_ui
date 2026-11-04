@@ -126,6 +126,11 @@ class SocksProbe {
 
   Future<bool> tcp(int port, {String host = '127.0.0.1'}) async {
     final socket = await Socket.connect('127.0.0.1', port);
+    // A blocked connection can reset both the stream and the socket's write
+    // sink. The probe observes the stream outcome below.
+    unawaited(
+      socket.done.then<void>((_) {}, onError: (Object _, StackTrace _) {}),
+    );
     final reader = _Reader(socket);
     try {
       socket.add([5, 1, 0]);

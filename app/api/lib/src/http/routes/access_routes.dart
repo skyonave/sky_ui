@@ -15,7 +15,11 @@ void registerAccessRoutes(
   PanelService panel,
   SniScanner sniScanner,
 ) {
-  Future<Map<String, dynamic>> body(RequestContext context) async {
+  Future<Map<String, dynamic>> body(
+    RequestContext context, {
+    int limit = 65536,
+    bool requireRevision = true,
+  }) async {
     if ((context.request.headers['content-type'] ?? '')
             .split(';')
             .first
@@ -26,15 +30,15 @@ void registerAccessRoutes(
     }
     final bytes = <int>[];
     await for (final chunk in context.request.bytes()) {
-      if (bytes.length + chunk.length > 65536)
+      if (bytes.length + chunk.length > limit)
         throw const ApiException('request_too_large', status: 413);
       bytes.addAll(chunk);
     }
     try {
       final value = jsonDecode(utf8.decode(bytes));
       if (value is! Map<String, dynamic> ||
-          value['revision'] is! int ||
-          (value['revision'] as int) < 0) {
+          requireRevision &&
+              (value['revision'] is! int || (value['revision'] as int) < 0)) {
         throw const FormatException();
       }
       return value;
@@ -190,13 +194,38 @@ void registerAccessRoutes(
     (RequestContext context, String id) async =>
         Response.json(body: {'data': (await panel.share(id)).toJson()}),
   );
+  router.post('/s/<token>', (RequestContext context, String token) async {
+    const mediaType = 'application/vnd.sky-ui.relink-v1+json';
+    if (!RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(token))
+      return failure('not_found', 404);
+    if (context.request.headers['accept'] != mediaType)
+      return failure('export_unavailable', 406);
+    final value = await body(context, limit: 1024, requireRevision: false);
+    final installation = value['installation'];
+    final name = value['name'];
+    if (installation is! String ||
+        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(installation) ||
+        name is! String)
+      return failure('request_invalid', 400);
+    final device = await panel.enrollSubscription(token, installation, name);
+    return Response(
+      body: await panel.subscription(device, format: 'relink'),
+      headers: {
+        'content-type': '$mediaType; charset=utf-8',
+        'x-robots-tag': 'noindex, nofollow, noarchive',
+      },
+    );
+  });
   router.get('/s/<filename>', (RequestContext context, String filename) async {
     if (!RegExp(r'^[A-Za-z0-9_-]{43}(?:\.(yaml|txt))?$').hasMatch(filename))
       return failure('not_found', 404);
+    const relinkType = 'application/vnd.sky-ui.relink-v1+json';
     final format = filename.endsWith('.yaml')
         ? 'clash'
         : filename.endsWith('.txt')
         ? 'v2ray'
+        : context.request.headers['accept'] == relinkType
+        ? 'relink'
         : subscriptionFormatFor(context.request.headers['user-agent'] ?? '');
     return Response(
       body: await panel.subscription(
@@ -207,14 +236,18 @@ void registerAccessRoutes(
         ),
       ),
       headers: {
-        'content-type': format == 'v2ray'
-            ? 'text/plain; charset=utf-8'
-            : 'application/yaml; charset=utf-8',
-        'content-disposition': format == 'v2ray'
-            ? 'inline; filename=Sky-UI.txt'
-            : 'inline; filename=Sky-UI.yaml',
+        'content-type': switch (format) {
+          'relink' => '$relinkType; charset=utf-8',
+          'v2ray' => 'text/plain; charset=utf-8',
+          _ => 'application/yaml; charset=utf-8',
+        },
+        'content-disposition': switch (format) {
+          'relink' => 'inline; filename=Sky-UI.json',
+          'v2ray' => 'inline; filename=Sky-UI.txt',
+          _ => 'inline; filename=Sky-UI.yaml',
+        },
         'profile-update-interval': '6',
-        'vary': 'User-Agent',
+        'vary': 'Accept, User-Agent',
         'x-robots-tag': 'noindex, nofollow, noarchive',
       },
     );

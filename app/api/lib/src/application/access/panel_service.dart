@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
+
+import 'package:crypto/crypto.dart';
 
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
@@ -10,6 +13,7 @@ import '../contracts/configuration_codec.dart';
 import '../contracts/configuration_store.dart';
 import '../engines/core_manager.dart';
 import '../engines/registry.dart';
+import '../logs/panel_log.dart';
 import '../subscriptions/client_exporter.dart';
 import '../subscriptions/subscription_service.dart';
 import 'connection_commands.dart';
@@ -44,6 +48,7 @@ class PanelService {
   final CoreManager manager;
   final AccessRepository repository;
   final ConfigurationStore configurationStore;
+  final log = PanelLog();
   final Map<String, ConfigurationCodec> codecs;
   final Map<String, CoreManager> managers;
   ConfigurationCodec get codec => codecs[manager.core.coreId]!;
@@ -64,6 +69,7 @@ class PanelService {
     registry: registry,
     repository: repository,
     files: configurationStore,
+    log: log,
   );
   bool get busy => deployment.busy;
   late final presence = RecipientPresenceService(
@@ -239,7 +245,10 @@ class PanelService {
             ),
           )
           .toList(),
-      recipients: data.recipients.map(data.publicRecipient).toList(),
+      recipients: data.recipients
+          .where((u) => u.parentId == null)
+          .map(data.publicRecipient)
+          .toList(),
       serverName: data.serverName,
       address: data.address,
       synchronized: synchronized,
@@ -297,10 +306,15 @@ class PanelService {
 
   Future<PanelSnapshot> deleteRecipient(int revision, String id) =>
       _change(revision, (data) async {
-        if (!data.recipients.any((u) => u.id == id))
+        if (!data.recipients.any((u) => u.id == id && u.parentId == null))
           throw const ApiException('not_found', status: 404);
-        data.grants.removeWhere((g) => g.recipientId == id);
-        data.recipients.removeWhere((u) => u.id == id);
+        final removed = {
+          id,
+          for (final user in data.recipients)
+            if (user.parentId == id) user.id,
+        };
+        data.grants.removeWhere((g) => removed.contains(g.recipientId));
+        data.recipients.removeWhere((u) => removed.contains(u.id));
       });
   Future<PanelSnapshot> saveSettings(
     int revision,
@@ -314,6 +328,59 @@ class PanelService {
   });
 
   Future<RecipientShare> share(String id) => subscriptions.share(id);
+
+  Future<String> enrollSubscription(
+    String token,
+    String installation,
+    String name,
+  ) async {
+    final parentId = repository.recipientForToken(token);
+    if (parentId == null) throw const ApiException('not_found', status: 404);
+    final deviceToken = base64Url
+        .encode(
+          Hmac(
+            sha256,
+            utf8.encode(token),
+          ).convert(utf8.encode('sky-ui-device-v1:$installation')).bytes,
+        )
+        .replaceAll('=', '');
+    StoredRecipient parentIn(PanelData data) {
+      final parent = data.recipients
+          .where((u) => u.id == parentId && u.parentId == null && u.enabled)
+          .firstOrNull;
+      if (parent == null) throw const ApiException('not_found', status: 404);
+      return parent;
+    }
+
+    for (var attempt = 0; attempt < 5; attempt++) {
+      final revision = repository.revision;
+      final data = repository.read();
+      parentIn(data);
+      if (repository.recipientForToken(deviceToken) != null) return deviceToken;
+      try {
+        await deployment.apply(revision, (draft) async {
+          final parent = parentIn(draft);
+          await recipientCommands.enroll(
+            draft,
+            parent,
+            StoredRecipient(
+              id: newId('d'),
+              name: validatedName(name),
+              enabled: true,
+              token: deviceToken,
+              parentId: parent.id,
+            ),
+          );
+        }, () async {});
+        log.event('Subscription device registered');
+        return deviceToken;
+      } on ApiException catch (e) {
+        if (e.code != 'state_changed') rethrow;
+      }
+    }
+    throw const ApiException('state_changed', status: 409);
+  }
+
   Future<String> subscription(
     String token, {
     String format = 'clash',
@@ -327,6 +394,7 @@ class PanelService {
     if (owner == null)
       throw const ApiException('instance_not_found', status: 404);
     return owner.exclusive((control) async {
+      log.event('${owner.core.coreId} ${operation.name}');
       if ([CoreOperation.start, CoreOperation.restart].contains(operation) &&
           !await isSynchronized()) {
         throw const ApiException('configuration_out_of_sync', status: 409);
@@ -343,6 +411,7 @@ class PanelService {
           rethrow;
         }
       }
+      log.event('${owner.core.coreId} ${operation.name} completed');
       return result;
     });
   }

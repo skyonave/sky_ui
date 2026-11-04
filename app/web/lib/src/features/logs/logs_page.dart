@@ -56,6 +56,11 @@ class LogsPage extends StatelessComponent {
           ),
           select(
             [
+              option(
+                [Component.text('Sky UI')],
+                value: 'sky-ui',
+                selected: selectedLogInstance == 'sky-ui',
+              ),
               for (final core in runtimes)
                 option(
                   [Component.text(core.name)],

@@ -1,5 +1,6 @@
 import 'package:dart_frog/dart_frog.dart';
 
+import '../application/logs/panel_log.dart';
 import '../bootstrap/server_config.dart';
 import '../features/auth/owner_auth.dart';
 import '../features/maintenance/service.dart';
@@ -12,6 +13,7 @@ Handler secureApplication(
   Router router, {
   OwnerAuth? auth,
   MaintenanceService? maintenance,
+  required PanelLog panelLog,
 }) {
   return (context) async {
     final request = context.request;
@@ -22,12 +24,17 @@ Handler secureApplication(
         (request.method == HttpMethod.get ||
             request.method == HttpMethod.head) &&
         assets.containsKey('/${request.url.path}');
+    final subscriptionPath = RegExp(
+      r'^s/[A-Za-z0-9_-]{43}(?:\.(yaml|txt))?$',
+    ).hasMatch(request.url.path);
     final publicRead =
         (request.method == HttpMethod.get ||
             request.method == HttpMethod.head) &&
-        RegExp(
-          r'^s/[A-Za-z0-9_-]{43}(?:\.(yaml|txt))?$',
-        ).hasMatch(request.url.path);
+        subscriptionPath;
+    final deviceEnrollment =
+        request.method == HttpMethod.post &&
+        subscriptionPath &&
+        request.url.path.length == 45;
     Response response;
     try {
       final healthRead =
@@ -56,6 +63,7 @@ Handler secureApplication(
               path == 'api/v1/auth/login' && request.method == HttpMethod.post;
           final anonymous =
               publicRead ||
+              deviceEnrollment ||
               healthRead ||
               (reading &&
                   (assets.containsKey('/$path') ||
@@ -72,13 +80,38 @@ Handler secureApplication(
               auth.csrf(identity, request.headers['x-sky-ui-csrf'] ?? '');
           }
         }
-        if (maintenance?.busy == true &&
-            request.method != HttpMethod.get &&
-            request.method != HttpMethod.head &&
-            !request.url.path.startsWith('api/v1/auth/')) {
-          throw const ApiException('maintenance_busy', status: 409);
+        Future<Response> dispatch() async {
+          if (maintenance?.busy == true &&
+              request.method != HttpMethod.get &&
+              request.method != HttpMethod.head &&
+              !request.url.path.startsWith('api/v1/auth/')) {
+            throw const ApiException('maintenance_busy', status: 409);
+          }
+          return router(context);
         }
-        response = await router(context);
+
+        final operation = _loggedOperation(request);
+        response = operation == null
+            ? await dispatch()
+            : await panelLog.operation(operation, () async {
+                try {
+                  final result = await dispatch();
+                  panelLog.event(
+                    '$operation HTTP ${result.statusCode}',
+                    level: _logLevel(result.statusCode),
+                  );
+                  return result;
+                } on ApiException catch (e) {
+                  panelLog.event(
+                    '$operation HTTP ${e.status} ${e.code}',
+                    level: _logLevel(e.status),
+                  );
+                  rethrow;
+                } on Object {
+                  panelLog.event('$operation internal_error', level: 'error');
+                  rethrow;
+                }
+              });
       }
     } on ApiException catch (e) {
       response = failure(e.code, e.status, fields: e.fields);
@@ -96,6 +129,33 @@ Handler secureApplication(
       },
     );
   };
+}
+
+String _logLevel(int status) => switch (status) {
+  >= 500 => 'error',
+  >= 400 => 'warning',
+  _ => 'info',
+};
+
+String? _loggedOperation(Request request) {
+  final method = request.method;
+  if (method == HttpMethod.get || method == HttpMethod.head) return null;
+  final operation = switch (request.url.pathSegments) {
+    ['api', 'v1', 'connections'] ||
+    ['api', 'v1', 'connections', _] => 'connection',
+    ['api', 'v1', 'recipients'] ||
+    ['api', 'v1', 'recipients', _] => 'recipient',
+    ['api', 'v1', 'cores', _, 'settings'] => 'core-settings',
+    ['api', 'v1', 'cores', _, 'actions', final String action]
+        when const {'start', 'stop', 'restart', 'validate'}.contains(action) =>
+      'core-$action',
+    ['api', 'v1', 'settings'] => 'settings',
+    ['api', 'v1', 'maintenance'] => 'maintenance',
+    ['api', 'v1', 'panel', 'https'] => 'panel-https',
+    ['api', 'v1', 'auth', 'owner'] => 'owner-settings',
+    _ => null,
+  };
+  return operation == null ? null : '${method.name.toUpperCase()} $operation';
 }
 
 bool gatewayCredentialMatches(String value, String expected) {

@@ -6,6 +6,7 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../application/access/panel_service.dart';
 import '../../application/engines/core_manager.dart';
+import '../../application/logs/panel_log.dart';
 import '../../features/auth/owner_auth.dart';
 import '../responses.dart';
 
@@ -14,13 +15,25 @@ void registerEngineRoutes(
   Map<String, CoreManager> instances,
   PanelService? panel,
   OwnerAuth? auth,
+  PanelLog panelLog,
 ) {
+  ({List<CoreLogEntry> Function() read, Future<void> Function() clear})? logs(
+    String id,
+  ) {
+    if (id == 'sky-ui')
+      return (read: panelLog.entries, clear: () async => panelLog.clear());
+    final manager = instances[id];
+    return manager == null
+        ? null
+        : (read: manager.logs, clear: manager.clearLogs);
+  }
+
   router.get('/api/v1/cores/<id>/logs/events', (
     RequestContext context,
     String id,
   ) {
-    final manager = instances[id];
-    if (manager == null) return failure('instance_not_found', 404);
+    final source = logs(id);
+    if (source == null) return failure('instance_not_found', 404);
     Timer? timer;
     String? previous;
     var ticks = 0;
@@ -33,7 +46,7 @@ void registerEngineRoutes(
         unawaited(stream.close());
         return;
       }
-      final json = jsonEncode(manager.logs().map((v) => v.toJson()).toList());
+      final json = jsonEncode(source.read().map((v) => v.toJson()).toList());
       if (json != previous) {
         previous = json;
         stream.add(utf8.encode('data: $json\n\n'));
@@ -69,8 +82,8 @@ void registerEngineRoutes(
     RequestContext context,
     String id,
   ) async {
-    final manager = instances[id];
-    if (manager == null) return failure('instance_not_found', 404);
+    final source = logs(id);
+    if (source == null) return failure('instance_not_found', 404);
     if ((context.request.headers['content-type'] ?? '')
             .split(';')
             .first
@@ -91,9 +104,9 @@ void registerEngineRoutes(
     } on Object {
       return failure('request_invalid', 400);
     }
-    await manager.clearLogs();
+    await source.clear();
     return Response.json(
-      body: {'data': manager.logs().map((v) => v.toJson()).toList()},
+      body: {'data': source.read().map((v) => v.toJson()).toList()},
     );
   });
   router.get(
@@ -113,10 +126,10 @@ void registerEngineRoutes(
     return Response.json(body: {'data': (await manager.snapshot()).toJson()});
   });
   router.get('/api/v1/cores/<id>/logs', (RequestContext context, String id) {
-    final manager = instances[id];
-    if (manager == null) return failure('instance_not_found', 404);
+    final source = logs(id);
+    if (source == null) return failure('instance_not_found', 404);
     return Response.json(
-      body: {'data': manager.logs().map((v) => v.toJson()).toList()},
+      body: {'data': source.read().map((v) => v.toJson()).toList()},
     );
   });
   router.post('/api/v1/cores/<id>/actions/<action>', (

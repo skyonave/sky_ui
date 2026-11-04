@@ -931,6 +931,7 @@ class AppStrings {
       'overview.readyHint':
           'Создавайте подключения и выдавайте доступ в пару шагов.',
       'logs.title': 'Логи',
+      'users.devices': 'Устройства',
       'logs.description': 'События панели и демонстрационные сообщения ядра.',
       'logs.empty': 'В логах пока нет событий',
       'logs.started': 'Макет панели запущен',

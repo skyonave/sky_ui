@@ -18,6 +18,10 @@ abstract interface class CoreSettingsCodec {
 }
 
 /// Protocols with per-recipient address/resource allocation opt in explicitly.
+abstract interface class DeviceGrantPolicy {
+  bool requiresDeviceGrant(StoredConnection connection);
+}
+
 abstract interface class GrantAllocator {
   Map<String, String> allocateGrant(
     PanelData data,

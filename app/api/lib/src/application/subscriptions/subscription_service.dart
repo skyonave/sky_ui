@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../shared/api_exception.dart';
@@ -30,16 +32,37 @@ class SubscriptionService {
   Future<T> _exclusive<T>(
     Future<T> Function(Map<String, CoreControl>) action,
   ) => registry.exclusive(action);
-  List<ClientEndpoint> _clientEndpoints(PanelData data, String recipientId) {
-    if (!data.recipients.any((u) => u.id == recipientId && u.enabled))
+  Iterable<AccessGrant> _grants(PanelData data, String recipientId) sync* {
+    final recipient = data.recipients
+        .where((u) => u.id == recipientId)
+        .firstOrNull;
+    if (recipient == null || !data.recipientEnabled(recipient))
       throw const ApiException('not_found', status: 404);
+    for (final connection in data.connections.where((c) => c.value.enabled)) {
+      final codec = _codec(connection.value.coreId);
+      final useDevice =
+          codec is DeviceGrantPolicy &&
+          (codec as DeviceGrantPolicy).requiresDeviceGrant(connection);
+      final owner = useDevice ? recipientId : recipient.parentId ?? recipientId;
+      yield* data.grants.where(
+        (g) => g.recipientId == owner && g.connectionId == connection.value.id,
+      );
+    }
+  }
+
+  List<ClientEndpoint> _clientEndpoints(PanelData data, String recipientId) {
     return [
-      for (final c in data.connections.where((c) => c.value.enabled))
-        for (final grant in data.grants.where(
-          (g) => g.recipientId == recipientId && g.connectionId == c.value.id,
-        ))
-          _codec(c.value.coreId).clientEndpoint(c, grant, data.address),
+      for (final grant in _grants(data, recipientId)) _endpoint(data, grant),
     ];
+  }
+
+  ClientEndpoint _endpoint(PanelData data, AccessGrant grant) {
+    final connection = data.connections.firstWhere(
+      (c) => c.value.id == grant.connectionId,
+    );
+    return _codec(
+      connection.value.coreId,
+    ).clientEndpoint(connection, grant, data.address);
   }
 
   Future<void> _canExport(
@@ -50,16 +73,16 @@ class SubscriptionService {
     if (!await isSynchronized())
       throw const ApiException('configuration_out_of_sync', status: 503);
     final data = repository.read();
+    final granted = _grants(
+      data,
+      recipientId,
+    ).map((g) => g.connectionId).toSet();
     final owned = data.connections
         .where(
           (c) =>
               c.value.enabled &&
               (connectionIds == null || connectionIds.contains(c.value.id)) &&
-              data.grants.any(
-                (g) =>
-                    g.connectionId == c.value.id &&
-                    g.recipientId == recipientId,
-              ),
+              granted.contains(c.value.id),
         )
         .map((c) => c.value.instanceId)
         .toSet();
@@ -79,11 +102,13 @@ class SubscriptionService {
   }
 
   Future<RecipientShare> share(String id) => _exclusive((_) async {
-    await _canExport(id);
     final data = repository.read();
-    final user = data.recipients.where((u) => u.id == id).firstOrNull;
+    final user = data.recipients
+        .where((u) => u.id == id && u.parentId == null)
+        .firstOrNull;
     if (user == null || !user.enabled)
       throw const ApiException('not_found', status: 404);
+    await _canExport(id);
     final endpoints = _clientEndpoints(data, id);
     final links = ShareUriCodec().links(endpoints);
     return RecipientShare(
@@ -106,18 +131,30 @@ class SubscriptionService {
     final id = repository.recipientForToken(token);
     if (id == null) throw const ApiException('not_found', status: 404);
     final data = repository.read();
-    if (!data.recipients.any((u) => u.id == id && u.enabled))
-      throw const ApiException('not_found', status: 404);
-    if (!data.grants.any(
-      (g) =>
-          g.recipientId == id &&
-          data.connections.any(
-            (c) => c.value.id == g.connectionId && c.value.enabled,
-          ),
-    )) {
-      throw const ApiException('not_found', status: 404);
-    }
     final endpoints = _clientEndpoints(data, id);
+    if (endpoints.isEmpty) throw const ApiException('not_found', status: 404);
+    if (format == 'relink') {
+      await _canExport(id);
+      return jsonEncode({
+        'version': 1,
+        'profiles': [
+          for (final endpoint in endpoints)
+            {
+              'id': _relinkProfileId(data, endpoint.id),
+              'name': endpoint.name,
+              'protocol': endpoint.protocolId,
+              'server': endpoint.server,
+              'port': endpoint.port,
+              if (endpoint.protocolId == 'amneziawg')
+                'configuration': amneziaProfile(endpoint)
+              else ...{
+                'settings': endpoint.settings,
+                'credentials': endpoint.credentials,
+              },
+            },
+        ],
+      });
+    }
     final client = format == 'clash'
         ? exporter
         : format == 'v2ray'
@@ -129,8 +166,11 @@ class SubscriptionService {
     if (selected.isEmpty)
       throw const ApiException('export_unavailable', status: 422);
     final selectedIds = {
-      for (final grant in data.grants)
-        if (selected.any((endpoint) => endpoint.id == grant.id))
+      for (final grant in _grants(data, id))
+        if (selected.any(
+          (endpoint) =>
+              endpoint.id == grant.id || endpoint.id == grant.connectionId,
+        ))
           grant.connectionId,
     };
     await _canExport(id, connectionIds: selectedIds);
@@ -140,4 +180,20 @@ class SubscriptionService {
       _ => throw const ApiException('export_unavailable', status: 422),
     };
   });
+
+  String _relinkProfileId(PanelData data, String grantId) {
+    final grant = data.grants.where((g) => g.id == grantId).firstOrNull;
+    if (grant == null) return grantId;
+    final recipient = data.recipients.firstWhere(
+      (u) => u.id == grant.recipientId,
+    );
+    if (recipient.parentId == null) return grantId;
+    return data.grants
+        .firstWhere(
+          (g) =>
+              g.recipientId == recipient.parentId &&
+              g.connectionId == grant.connectionId,
+        )
+        .id;
+  }
 }

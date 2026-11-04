@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:dart_frog/dart_frog.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
+import 'package:sky_ui_api/src/engines/amnezia/configuration.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
+import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor;
 
@@ -46,6 +48,11 @@ class Codec extends MihomoConfiguration {
   }
 }
 
+class AwgCodec extends AmneziaConfiguration {
+  @override
+  Future<void> verifyRunning(PanelData data, ManagedCore core) async {}
+}
+
 void main() {
   late Directory directory;
   late PanelRepository repository;
@@ -76,7 +83,7 @@ void main() {
         config: config,
         manager: manager,
         repository: repository,
-        codecs: {'mihomo': codec},
+        codecs: {'mihomo': codec, 'amneziawg': AwgCodec()},
         exporter: ClashExporter(),
         portProbe: (_) async => true,
         additionalExporters: [V2RayExporter()],
@@ -870,7 +877,7 @@ void main() {
           final result = await fetch('', agent);
           expect(result.status, 200);
           expect(result.type, startsWith('text/plain'));
-          expect(result.vary, 'User-Agent');
+          expect(result.vary, 'Accept, User-Agent');
           expect(
             utf8.decode(base64Decode(result.body)).trim(),
             share.links.single.uri,
@@ -978,7 +985,7 @@ void main() {
     },
   );
   test(
-    'public subscription is GET-only; owner API retains origin and host guards',
+    'subscription reads and device enrollment retain origin and host guards',
     () async {
       final c = (await connection()).connections.single;
       final user = (await recipient(c.id)).recipients.single;
@@ -1021,6 +1028,41 @@ void main() {
           expect(await status('POST', target), 403);
           expect(await status('GET', target, host: 'evil.example'), 403);
         }
+        const relinkType = 'application/vnd.sky-ui.relink-v1+json';
+        final relink = await client.getUrl(
+          Uri.parse('http://127.0.0.1:${server.port}$path'),
+        );
+        relink.headers.set(HttpHeaders.acceptHeader, relinkType);
+        final profile = await relink.close();
+        expect(profile.statusCode, 200);
+        expect(profile.headers.contentType?.mimeType, relinkType);
+        expect(profile.headers.value('cache-control'), 'no-store');
+        final bundle =
+            jsonDecode(await utf8.decoder.bind(profile).join()) as Map;
+        expect(bundle['version'], 1);
+        final entry = (bundle['profiles'] as List).single as Map;
+        expect(entry['protocol'], c.protocolId);
+        expect(entry['port'], c.port);
+        expect(entry['credentials'], contains('uuid'));
+        expect(entry['credentials'], isNot(contains('privateKey')));
+        final install = secureToken();
+        Future<Map> enroll() async {
+          final request = await client.postUrl(
+            Uri.parse('http://127.0.0.1:${server.port}$path'),
+          );
+          request.headers.set(HttpHeaders.acceptHeader, relinkType);
+          request.headers.contentType = ContentType.json;
+          request.write(jsonEncode({'installation': install, 'name': 'PC'}));
+          final response = await request.close();
+          expect(response.statusCode, 200);
+          return jsonDecode(await utf8.decoder.bind(response).join()) as Map;
+        }
+
+        final enrolled = await Future.wait([enroll(), enroll()]);
+        expect(enrolled, [bundle, bundle]);
+        final snapshot = await panel.snapshot();
+        expect(snapshot.recipients.single.devices.single.name, 'PC');
+        expect(snapshot.revision, 3);
         expect(await status('GET', '/api/v1/panel'), 403);
         expect(await status('GET', '/api/v1/cores/primary/settings'), 403);
         expect(await status('GET', path, host: 'evil.example'), 403);
@@ -1034,10 +1076,130 @@ void main() {
           ),
           400,
         );
+        final logs = await client.getUrl(
+          Uri.parse('http://127.0.0.1:${server.port}/api/v1/cores/sky-ui/logs'),
+        );
+        final logResponse = await logs.close();
+        expect(logResponse.statusCode, 200);
+        final logText = await utf8.decoder.bind(logResponse).join();
+        expect(logText, contains('POST recipient HTTP 400 request_invalid'));
+        expect(logText, contains('Subscription device registered'));
+        expect(logText, isNot(contains(install)));
+        expect(logText, isNot(contains(path)));
       } finally {
         client.close(force: true);
         await server.close(force: true);
       }
+    },
+  );
+
+  test('AWG devices on the same grant get independent stable peers', () async {
+    final awgFile = File('${directory.path}/awg.json')..writeAsStringSync('{}');
+    final awg = CoreManager(
+      core: ManagedCore(
+        id: 'amneziawg',
+        coreId: 'amneziawg',
+        service: 'sky-ui-amneziawg.service',
+        binary: '/unused',
+        directory: directory.path,
+        configuration: awgFile.path,
+        controller: Uri.parse('http://127.0.0.1:19093'),
+        secret: '',
+      ),
+      adapters: {'amneziawg': Adapter()},
+      supervisor: Supervisor()..state = CoreProcessState.active,
+      stateDirectory: '${directory.path}/awg-state',
+    );
+    panel = service(additionalManagers: [awg]);
+    final state = await panel.saveConnection(
+      repository.revision,
+      Connection(
+        id: '',
+        name: 'AWG',
+        coreId: 'amneziawg',
+        instanceId: 'amneziawg',
+        protocolId: 'amneziawg',
+        port: freePort,
+      ),
+    );
+    final user = (await recipient(
+      state.connections.single.id,
+    )).recipients.single;
+    final parentToken = await token(user.id);
+    expect(await panel.subscription(parentToken), contains('wireguard'));
+    final firstInstall = secureToken();
+    final tokens = await Future.wait([
+      panel.enrollSubscription(parentToken, firstInstall, 'Desktop'),
+      panel.enrollSubscription(parentToken, secureToken(), 'Phone'),
+    ]);
+    final first = await panel.subscription(tokens[0], format: 'relink');
+    final second = await panel.subscription(tokens[1], format: 'relink');
+    expect(first, isNot(second));
+    final grants = repository.read().grants;
+    expect(grants, hasLength(3));
+    expect(grants.map((g) => g.credentials['address']).toSet(), hasLength(3));
+    expect(grants.map((g) => g.credentials['publicKey']).toSet(), hasLength(3));
+    final revision = repository.revision;
+    repository.close();
+    repository = PanelRepository(
+      '${directory.path}/panel.sqlite',
+      defaultAddress: 'panel.example.net',
+    );
+    panel = service(additionalManagers: [awg]);
+    expect(
+      await panel.enrollSubscription(parentToken, firstInstall, 'PC'),
+      tokens[0],
+    );
+    expect(repository.revision, revision);
+    expect(await panel.subscription(tokens[0], format: 'relink'), first);
+    final enrolled = (await panel.snapshot()).recipients.single;
+    expect(
+      enrolled.devices.map((d) => d.name),
+      unorderedEquals(['Desktop', 'Phone']),
+    );
+    await panel.saveRecipient(
+      revision,
+      enrolled.copyWith(enabled: false),
+      id: user.id,
+    );
+    expect(
+      repository.read().activeGrants(state.connections.single.id),
+      isEmpty,
+    );
+    for (final token in tokens) {
+      await expectLater(
+        panel.subscription(token, format: 'relink'),
+        throwsA(isA<ApiException>().having((e) => e.status, 'status', 404)),
+      );
+    }
+  });
+
+  test(
+    'schema 1 upgrade preserves recipient tokens and native grants',
+    () async {
+      final connectionId = (await connection()).connections.single.id;
+      final user = (await recipient(connectionId)).recipients.single;
+      final previousToken = await token(user.id);
+      final previousGrant = repository.read().grants.single.credentials;
+      final path = '${directory.path}/panel.sqlite';
+      repository.close();
+      final old = sqlite3.open(path);
+      try {
+        old.execute('DROP TABLE recipient_devices');
+        old.execute('PRAGMA user_version = 1');
+      } finally {
+        old.close();
+      }
+      repository = PanelRepository(path, defaultAddress: 'panel.example.net');
+      panel = service();
+      expect(await token(user.id), previousToken);
+      expect(repository.read().grants.single.credentials, previousGrant);
+      expect((await panel.snapshot()).recipients.single.devices, isEmpty);
+      await panel.enrollSubscription(previousToken, secureToken(), 'PC');
+      expect(
+        (await panel.snapshot()).recipients.single.devices.single.name,
+        'PC',
+      );
     },
   );
 }

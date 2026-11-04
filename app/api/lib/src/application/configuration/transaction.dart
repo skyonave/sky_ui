@@ -8,6 +8,7 @@ import '../access/repository.dart';
 import '../contracts/configuration_store.dart';
 import '../engines/core_manager.dart';
 import '../engines/registry.dart';
+import '../logs/panel_log.dart';
 
 /// Owns the durable validate/publish/activate/commit/rollback boundary.
 class ConfigurationTransaction {
@@ -15,10 +16,12 @@ class ConfigurationTransaction {
     required this.registry,
     required this.repository,
     required this.files,
+    required this.log,
   });
   final EngineRegistry registry;
   final AccessRepository repository;
   final ConfigurationStore files;
+  final PanelLog log;
   CoreManager get manager => registry.primary;
   Map<String, CoreManager> get managers => registry.managers;
   bool busy = false;
@@ -47,8 +50,10 @@ class ConfigurationTransaction {
         await _restore(owner, controls[entry.key]!, entry.value as Map);
       }
       repository.clearPending();
+      log.event('Configuration recovery completed');
       manager.event('configuration_recovered');
     } on Object {
+      log.event('Configuration recovery failed', level: 'error');
       manager.event('configuration_rollback_failed', level: 'error');
       // Keep the durable intent: exports and changes remain blocked until recovery.
     } finally {
@@ -107,6 +112,7 @@ class ConfigurationTransaction {
     await checkRevision(revision);
     busy = true;
     var prepared = false;
+    var stage = 'update access records';
     final changes = <String, Map<String, dynamic>>{};
     final configurations = <String, String>{};
     try {
@@ -114,6 +120,7 @@ class ConfigurationTransaction {
       final after = before.copy();
       await update(after);
       for (final owner in managers.values) {
+        stage = 'validate ${owner.core.coreId} configuration';
         final native = registry.codec(owner.core.coreId);
         final oldData = before.forInstance(owner.core.id);
         final newData = after.forInstance(owner.core.id);
@@ -133,7 +140,7 @@ class ConfigurationTransaction {
               .toList(),
           'recipients': data.recipients
               .where((u) => data.grants.any((g) => g.recipientId == u.id))
-              .map((u) => [u.id, u.enabled])
+              .map((u) => [u.id, data.recipientEnabled(u)])
               .toList(),
         });
         if (signature(oldData) == signature(newData)) {
@@ -244,6 +251,7 @@ class ConfigurationTransaction {
         }
       }
       if (changes.isNotEmpty) {
+        stage = 'prepare configuration deployment';
         final intent = jsonEncode({'skyUiDeployment': 2, 'instances': changes});
         // The existing durable row remains the single recovery/maintenance barrier.
         repository.prepare(
@@ -256,21 +264,26 @@ class ConfigurationTransaction {
         prepared = true;
         for (final entry in changes.entries) {
           final owner = managers[entry.key]!;
+          stage = 'publish ${owner.core.coreId} configuration';
           await files.publish(entry.value['candidate'] as String, owner.core);
           if (entry.value['wasRunning'] == true ||
               entry.value['autoStart'] == true) {
+            stage = 'activate ${owner.core.coreId} configuration';
+            log.event(stage);
             await controls[entry.key]!.execute(
               entry.value['autoStart'] == true
                   ? CoreOperation.start
                   : CoreOperation.restart,
               remember: false,
             );
+            stage = 'verify ${owner.core.coreId} listeners';
             await registry
                 .codec(owner.core.coreId)
                 .verifyRunning(after.forInstance(entry.key), owner.core);
           }
         }
       }
+      stage = 'commit configuration';
       repository.commit(
         after,
         configurations[manager.core.id] ??
@@ -279,8 +292,13 @@ class ConfigurationTransaction {
         configurations: configurations,
       );
       prepared = false;
+      log.event('Configuration applied');
       manager.event('configuration_applied');
     } on Object catch (e) {
+      log.event(
+        'Failed to $stage',
+        level: e is ApiException && e.status < 500 ? 'warning' : 'error',
+      );
       if (prepared) {
         try {
           for (final entry in changes.entries.toList().reversed) {
@@ -288,8 +306,10 @@ class ConfigurationTransaction {
             await _restore(owner, controls[entry.key]!, entry.value);
           }
           repository.clearPending();
+          log.event('Configuration rolled back', level: 'warning');
           manager.event('configuration_rolled_back', level: 'error');
         } on Object {
+          log.event('Configuration rollback failed', level: 'error');
           throw const ApiException(
             'configuration_rollback_failed',
             status: 503,
