@@ -44,11 +44,17 @@ Future<void> main(List<String> args) async {
   );
   exitCode = await process.exitCode;
   if (exitCode != 0) return;
-  final constructor = await Process.start(
-    Platform.resolvedExecutable,
-    ['run', 'tool/connection_draft_check.dart'],
-    workingDirectory: '$root/app/web',
-    mode: ProcessStartMode.inheritStdio,
-  );
-  exitCode = await constructor.exitCode;
+  for (final check in [
+    'connection_draft_check.dart',
+    'localization_check.dart',
+  ]) {
+    final process = await Process.start(
+      Platform.resolvedExecutable,
+      ['run', 'tool/$check'],
+      workingDirectory: '$root/app/web',
+      mode: ProcessStartMode.inheritStdio,
+    );
+    exitCode = await process.exitCode;
+    if (exitCode != 0) return;
+  }
 }

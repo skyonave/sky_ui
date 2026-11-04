@@ -1,3 +1,5 @@
+import 'english_strings.dart';
+
 const engineStrings = <String, String>{
   'coreProgress.state.running': 'Установка',
   'coreProgress.stage.discovery': 'Проверка версии',
@@ -110,11 +112,12 @@ const engineStrings = <String, String>{
       'Число попыток установить handshake до отказа от текущего обмена. Стартовое значение 18. Это не ограничение числа клиентов.',
 };
 
-String? engineText(String key) {
+String? engineText(String key, {bool english = false}) {
   if (engineStrings.containsKey(key)) return engineStrings[key];
   final match = RegExp(r'^awg\.([SHI])([1-5])(\.help)?$').firstMatch(key);
   if (match == null) return null;
   if (match[3] == null) return '${match[1]}${match[2]}';
+  if (english) return englishStrings['awg.${match[1]}.help'];
   if (match[1] == 'I') return engineStrings['awg.I.help'];
   if (match[1] == 'S')
     return 'Дополнительное заполнение пакетов AmneziaWG в bytes. S1 относится к первому сообщению handshake, S2 — к ответу, S3 — к cookie, S4 — к пакетам данных. Параметры должны совпадать с клиентом; для начала оставь значения панели.';

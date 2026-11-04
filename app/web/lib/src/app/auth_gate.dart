@@ -3,10 +3,12 @@ import 'dart:async';
 import 'package:jaspr/client.dart';
 import 'package:jaspr/dom.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
+import 'package:web/web.dart' as web;
 
 import '../shared/api/api_client.dart';
 import '../shared/components/primitives.dart';
 import '../shared/localization/strings.dart';
+import '../shared/localization/language_select.dart';
 import 'sky_app.dart';
 
 class OwnerGate extends StatefulComponent {
@@ -16,6 +18,7 @@ class OwnerGate extends StatefulComponent {
 }
 
 class _OwnerGateState extends State<OwnerGate> {
+  static const _languageKey = 'sky-ui.language';
   final api = ApiClient(), locale = const AppStrings();
   OwnerState? owner;
   String username = '', password = '';
@@ -28,10 +31,31 @@ class _OwnerGateState extends State<OwnerGate> {
   @override
   void initState() {
     super.initState();
+    try {
+      final saved = web.window.localStorage.getItem(_languageKey);
+      if (AppStrings.supportedLocales.contains(saved))
+        AppStrings.defaultLocale = saved!;
+    } on Object {
+      // The interface still works when storage is blocked.
+    }
+    web.document.documentElement?.setAttribute('lang', locale.locale);
     unawaited(check());
     sessionTimer = Timer.periodic(const Duration(seconds: 5), (_) {
       if (!busy) unawaited(check());
     });
+  }
+
+  void changeLanguage(String language) {
+    if (!AppStrings.supportedLocales.contains(language) ||
+        language == locale.locale)
+      return;
+    setState(() => AppStrings.defaultLocale = language);
+    web.document.documentElement?.setAttribute('lang', language);
+    try {
+      web.window.localStorage.setItem(_languageKey, language);
+    } on Object {
+      // Keep the current language for the open tab.
+    }
   }
 
   @override
@@ -58,8 +82,7 @@ class _OwnerGateState extends State<OwnerGate> {
               owner!.configured != value.configured))
         setState(() => owner = value);
     } on ApiClientException catch (e) {
-      if (mounted && owner == null)
-        setState(() => error = t('runtime.error.${e.code}'));
+      if (mounted && owner == null) setState(() => error = e.code);
     } finally {
       checking = false;
       if (mounted) setState(() => loading = false);
@@ -92,7 +115,7 @@ class _OwnerGateState extends State<OwnerGate> {
           password = '';
         });
     } on ApiClientException catch (e) {
-      if (mounted) setState(() => error = t('runtime.error.${e.code}'));
+      if (mounted) setState(() => error = e.code);
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -107,13 +130,15 @@ class _OwnerGateState extends State<OwnerGate> {
         owner: owner!,
         onSignedOut: signedOut,
         onOwnerChanged: authenticated,
-        key: ValueKey(owner!.sessionId),
+        onLocaleChanged: changeLanguage,
+        key: ValueKey((owner!.sessionId, locale.locale)),
       );
     return div([
       el(
         'form',
         [
           h1([Component.text('Sky UI')]),
+          LanguageSelect(onChanged: changeLanguage),
           label([
             txt(t('admin.username')),
             input<String>(
@@ -139,7 +164,7 @@ class _OwnerGateState extends State<OwnerGate> {
             ),
           ]),
           div(
-            [if (error != null) Component.text(error!)],
+            [if (error != null) Component.text(t('runtime.error.$error'))],
             classes: 'login-error',
             attributes: {'role': 'alert'},
           ),

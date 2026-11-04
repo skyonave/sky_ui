@@ -20,7 +20,7 @@ Linux amd64 and arm64, glibc 2.31+, systemd 245+. Verified versions are listed i
 
 A self-hosted panel for proxy cores on your Linux server. Create connections and share access through links, QR codes and subscriptions. Built for one owner and a few friends.
 
-Jaspr frontend, Dart Frog backend, SQLite storage, systemd services. Active development.
+The panel is available in English and Russian. Switch languages at sign-in or in Settings.
 
 ### Installation
 
@@ -31,7 +31,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/mai
 
 The installer downloads the panel. Choose a protocol when creating a connection; the panel installs its engine if needed. Engines run together and are preserved when reinstalling the panel. The setup wizard creates the administrator and configures IP access or an optional domain. Let's Encrypt certificates renew automatically. Domain access requires DNS pointing to your server and open TCP ports 80 and 443.
 
-Run `sudo skyui setup` to change the address or recover administrator access. Run `sudo skyui --help` for local management, backups and HTTPS settings. `sudo skyui uninstall` removes the installation and its data after confirmation.
+Change the domain in Settings. Use `sudo skyui setup` to change the IP address or recover administrator access. Run `sudo skyui --help` for local management, backups and HTTPS settings. `sudo skyui uninstall` removes the installation and its data after confirmation.
 
 The installer downloads ready-to-run binaries. Dart SDK and compilers are not required. Releases target glibc 2.31 or newer and systemd 245 or newer. Engines are downloaded separately.
 
@@ -47,7 +47,7 @@ New panel releases appear in the sidebar. Confirm the update there or run `sudo 
 
 Панель для управления прокси-ядрами на своём Linux-сервере. Создавай подключения и делись доступом через ссылки, QR-коды и подписки. Для одного владельца и нескольких близких.
 
-Jaspr, Dart Frog, SQLite и службы systemd. Проект в активной разработке.
+Панель доступна на русском и английском. Язык можно сменить при входе или в настройках.
 
 ### Установка
 
@@ -58,7 +58,7 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/mai
 
 Установщик скачает панель. При создании подключения выбери протокол, а панель установит нужное ядро, если его нет. Разные ядра работают одновременно и сохраняются при повторной установке панели. Мастер создаст администратора и предложит доступ по IP или домену. Сертификаты Let's Encrypt продлеваются автоматически. Для домена направь DNS на сервер и открой TCP-порты 80 и 443.
 
-`sudo skyui setup` меняет адрес и восстанавливает доступ администратора. Все команды управления, резервного копирования и HTTPS доступны в `sudo skyui --help`. `sudo skyui uninstall` удаляет установку и её данные.
+Домен можно сменить в настройках панели. Команда `sudo skyui setup` меняет IP-адрес панели и восстанавливает доступ администратора. Команды управления, резервного копирования и HTTPS доступны в `sudo skyui --help`. `sudo skyui uninstall` удаляет установку и её данные после подтверждения.
 
 Установщик скачивает готовые бинарники. Dart SDK и компиляторы не нужны. Требуются glibc от 2.31 и systemd от 245. Ядра скачиваются отдельно.
 

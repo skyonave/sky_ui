@@ -9,11 +9,13 @@ class SkyApp extends StatefulComponent {
     required this.owner,
     required this.onSignedOut,
     required this.onOwnerChanged,
+    required this.onLocaleChanged,
     super.key,
   });
   final OwnerState owner;
   final void Function() onSignedOut;
   final void Function(OwnerState) onOwnerChanged;
+  final void Function(String) onLocaleChanged;
   @override
   State<SkyApp> createState() => _SkyAppState();
 }
@@ -35,7 +37,10 @@ class _SkyAppState extends State<SkyApp> {
   }
 
   @override
-  Component build(BuildContext context) => AppView(controller: controller);
+  Component build(BuildContext context) => AppView(
+    controller: controller,
+    onLocaleChanged: component.onLocaleChanged,
+  );
   @override
   void dispose() {
     controller.dispose();

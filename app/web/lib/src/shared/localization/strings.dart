@@ -1,15 +1,29 @@
 import 'engine_strings.dart';
 import 'diagnostic_strings.dart';
 import 'mihomo_strings.dart';
+import 'english_strings.dart';
 
 class AppStrings {
-  const AppStrings({this.locale = 'ru'});
-  final String locale;
+  const AppStrings({String? locale}) : _locale = locale;
+  final String? _locale;
+  static const supportedLocales = ['ru', 'en'];
+  static String defaultLocale = 'ru';
+  String get locale => _locale ?? defaultLocale;
+  static Iterable<String> get translationKeys => {
+    ..._catalogs['ru']!.keys,
+    ...diagnosticStrings.keys,
+    ...engineStrings.keys,
+    ...mihomoNativeHelpKeys,
+    for (final family in ['S', 'H', 'I'])
+      for (var index = 1; index <= 4; index++) 'awg.$family$index.help',
+    'awg.I5.help',
+  };
   String call(String key, [Map<String, Object> values = const {}]) {
     var message =
-        (_catalogs[locale] ?? _catalogs['ru']!)[key] ??
-        mihomoNativeText(key) ??
-        engineText(key) ??
+        (locale == 'en' ? englishStrings[key] : null) ??
+        _catalogs['ru']![key] ??
+        mihomoNativeText(key, english: locale == 'en') ??
+        engineText(key, english: locale == 'en') ??
         diagnosticText(key) ??
         key;
     for (final entry in values.entries) {
@@ -74,6 +88,7 @@ class AppStrings {
       'runtime.error.core_settings_routing_conflict':
           'Настройки доступа конфликтуют со сторонней маршрутизацией ядра. Проверьте режим, IP-правила и routing script в исходной конфигурации. Изменения не применены.',
       'common.loading': 'Загрузка…',
+      'common.refresh': 'Обновить',
       'share.clashSubscription': 'Подписка · Clash Verge / mihomo',
       'share.v2raySubscription': 'Подписка · V2Box / V2Ray',
       'core.feedback.validate':
@@ -1041,8 +1056,6 @@ class AppStrings {
       'settings.address': 'Публичный адрес сервера',
       'settings.language': 'Язык интерфейса',
       'settings.russian': 'Русский',
-      'settings.localeHint':
-          'Переводы подключаются отдельно. Сейчас доступен русский язык.',
       'settings.appearance': 'Оформление',
       'settings.dark': 'Тёмное',
       'settings.reset': 'Сбросить макет',

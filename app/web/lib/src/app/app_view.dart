@@ -32,12 +32,17 @@ import 'app_controller.dart';
 import 'sidebar.dart';
 
 class AppView extends StatelessComponent {
-  const AppView({required this.controller, super.key});
+  const AppView({
+    required this.controller,
+    required this.onLocaleChanged,
+    super.key,
+  });
   final AppController controller;
+  final void Function(String) onLocaleChanged;
   final t = const AppStrings();
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.8.0-dev.9',
+    defaultValue: '1.0.0',
   );
   @override
   Component build(BuildContext context) => div([
@@ -288,6 +293,7 @@ class AppView extends StatelessComponent {
 
   Component settingsPage() => SettingsPage(
     store: controller.store,
+    onLocaleChanged: onLocaleChanged,
     panelData: controller.panelData,
     editedServerName: controller.editedServerName,
     editedAddress: controller.editedAddress,

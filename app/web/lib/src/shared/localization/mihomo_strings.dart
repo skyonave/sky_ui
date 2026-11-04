@@ -1,6 +1,8 @@
-/// Russian contextual help for mihomo-specific advanced fields.
+import 'english_strings.dart';
+
+/// Contextual help for mihomo-specific advanced fields.
 /// Native IDs are namespaced localization keys; no rendering policy depends on them.
-String? mihomoNativeText(String key) {
+String? mihomoNativeText(String key, {bool english = false}) {
   const prefix = 'mihomo.native.';
   if (!key.startsWith(prefix)) return null;
   final isHelp = key.endsWith('.help');
@@ -26,8 +28,14 @@ String? mihomoNativeText(String key) {
               .join(' '),
         )
         .join(' · ');
-  return _specific[path] ?? _help[path.split('.').last];
+  final field = path.split('.').last;
+  if (english)
+    return englishStrings[key] ?? englishStrings['$prefix$field.help'];
+  return _specific[path] ?? _help[field];
 }
+
+Iterable<String> get mihomoNativeHelpKeys =>
+    [..._specific.keys, ..._help.keys].map((key) => 'mihomo.native.$key.help');
 
 const _acronyms = {
   'tls': 'TLS',

@@ -7,12 +7,14 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../../shared/components/page_helpers.dart';
 import '../../shared/components/primitives.dart';
 import '../../shared/localization/strings.dart';
+import '../../shared/localization/language_select.dart';
 import '../../shared/protocols/catalog.dart';
 import '../../shared/state/panel_store.dart';
 
 class SettingsPage extends StatelessComponent {
   const SettingsPage({
     required this.store,
+    required this.onLocaleChanged,
     required this.panelData,
     required this.editedServerName,
     required this.editedAddress,
@@ -33,6 +35,7 @@ class SettingsPage extends StatelessComponent {
     super.key,
   });
   final PanelStore store;
+  final void Function(String) onLocaleChanged;
   final PanelSnapshot? panelData;
   final String? editedServerName;
   final String? editedAddress;
@@ -82,7 +85,7 @@ class SettingsPage extends StatelessComponent {
       p([Component.text(t('settings.addressHelp'))], classes: 'muted small'),
       div([
         div([txt(t('settings.language'))]),
-        txt(t('settings.russian'), classes: 'setting-value'),
+        LanguageSelect(onChanged: onLocaleChanged),
       ], classes: 'setting-row'),
       div([
         div([txt(t('settings.appearance'))]),
