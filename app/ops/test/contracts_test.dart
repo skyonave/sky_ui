@@ -7,6 +7,8 @@ import 'package:sky_ui_ops/src/platform/host.dart';
 import 'package:sky_ui_ops/src/shared/archives.dart';
 import 'package:sky_ui_ops/src/shared/artifacts.dart';
 import 'package:sky_ui_ops/src/features/engines/amnezia.dart';
+import 'package:sky_ui_ops/src/features/maintenance/panel_https.dart';
+import 'package:sky_ui_ops/src/features/maintenance/request.dart';
 import 'package:sky_ui_ops/src/features/updates/release_catalog.dart';
 import 'package:sky_ui_ops/src/features/storage/retention.dart';
 
@@ -77,6 +79,34 @@ Map<String, dynamic> release(
 }
 
 void main() {
+  test('HTTPS domain changes preserve other API settings and the fallback IP', () {
+    const old =
+        'SKY_UI_PORT=39242\nSKY_UI_WEB_ORIGIN=https://old.example\n'
+        'SKY_UI_EXTRA_ORIGIN=https://192.0.2.10\nSKY_UI_GATEWAY_SECRET_FILE=/etc/sky-ui/gateway.secret\n';
+    final updated = httpsEnvironment(old, '192.0.2.10', 'new.example');
+    expect(
+      updated,
+      'SKY_UI_PORT=39242\nSKY_UI_GATEWAY_SECRET_FILE=/etc/sky-ui/gateway.secret\n'
+      'SKY_UI_WEB_ORIGIN=https://new.example\nSKY_UI_EXTRA_ORIGIN=https://192.0.2.10\n',
+    );
+    expect(
+      httpsEnvironment(updated, '192.0.2.10', ''),
+      endsWith('SKY_UI_WEB_ORIGIN=https://192.0.2.10\nSKY_UI_EXTRA_ORIGIN=\n'),
+    );
+    for (final rejected in [
+      null,
+      '*.example.com',
+      'https://x.example',
+      'x.example:443',
+      'x.example\nimport a',
+      '-x.example',
+      '192.0.2.10',
+    ]) {
+      expect(validPanelDomain(rejected), isFalse, reason: '$rejected');
+    }
+    expect(validPanelDomain(''), isTrue);
+    expect(validPanelDomain('new-panel.example'), isTrue);
+  });
   test('managed temporary names cover Bash and Dart workspaces only', () {
     for (final name in [
       'sky-ui-install.Abc12345',

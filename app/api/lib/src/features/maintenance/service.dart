@@ -24,6 +24,7 @@ class MaintenanceService {
     if (!available) return false;
     if (_submitting) return true;
     if (File('$directory/cleanup-intent.json').existsSync()) return true;
+    if (File('$directory/https-intent.json').existsSync()) return true;
     if (File('$directory/restore-intent.json').existsSync() ||
         File('$directory/update-intent.json').existsSync() ||
         File('$directory/core-remove-intent.json').existsSync() ||
@@ -69,6 +70,7 @@ class MaintenanceService {
         status: 'queued',
         core: request['core'] as String?,
         tag: request['tag'] as String?,
+        domain: request['domain'] as String?,
       );
     }
     return MaintenanceSnapshot(
@@ -83,11 +85,20 @@ class MaintenanceService {
     String? backupId,
     String? core,
     String? tag,
+    String? domain,
+    String? expectedDomain,
   }) async {
     if (busy) throw const ApiException('maintenance_busy', status: 409);
     _submitting = true;
     try {
-      return await _submit(action, backupId: backupId, core: core, tag: tag);
+      return await _submit(
+        action,
+        backupId: backupId,
+        core: core,
+        tag: tag,
+        domain: domain,
+        expectedDomain: expectedDomain,
+      );
     } finally {
       _submitting = false;
     }
@@ -98,6 +109,8 @@ class MaintenanceService {
     String? backupId,
     String? core,
     String? tag,
+    String? domain,
+    String? expectedDomain,
   }) async {
     if (!available)
       throw const ApiException('maintenance_unavailable', status: 501);
@@ -109,8 +122,13 @@ class MaintenanceService {
           'remove',
           'panel-update',
           'install-sni-scanner',
+          'panel-https',
         ].contains(action) ||
         (action == 'restore' && !idPattern.hasMatch(backupId ?? '')) ||
+        (action == 'panel-https' &&
+            (domain == null ||
+                expectedDomain == null ||
+                domain == expectedDomain)) ||
         (action == 'remove' && !coreRepositories.containsKey(core)) ||
         (action == 'panel-update' &&
             !RegExp(
@@ -146,6 +164,10 @@ class MaintenanceService {
       if (action == 'restore') 'backupId': backupId,
       if (['update', 'install', 'remove'].contains(action)) 'core': core,
       if (['update', 'install', 'panel-update'].contains(action)) 'tag': tag,
+      if (action == 'panel-https') ...{
+        'domain': domain,
+        'expectedDomain': expectedDomain,
+      },
     };
     final temporary = File('$directory/inbox/$id.tmp');
     await temporary.writeAsString(jsonEncode(payload), flush: true);
@@ -172,6 +194,7 @@ class MaintenanceService {
       status: 'queued',
       core: core,
       tag: tag,
+      domain: domain,
     );
   }
 

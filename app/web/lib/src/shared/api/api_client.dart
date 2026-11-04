@@ -12,6 +12,30 @@ class ApiClientException implements Exception {
 }
 
 class ApiClient {
+  Future<PanelHttpsStatus> panelHttps() async => PanelHttpsStatus.fromJson(
+    Map<String, dynamic>.from(
+      (await _request('/api/v1/panel/https'))['data'] as Map,
+    ),
+  );
+
+  Future<MaintenanceJob> changePanelHttps(
+    String domain,
+    String expectedDomain,
+  ) async => MaintenanceJob.fromJson(
+    Map<String, dynamic>.from(
+      (await _request(
+            '/api/v1/panel/https',
+            method: 'POST',
+            payload: {
+              'confirmed': true,
+              'domain': domain,
+              'expectedDomain': expectedDomain,
+            },
+          ))['data']
+          as Map,
+    ),
+  );
+
   Future<({int revision, Map<String, RecipientPresence> recipients})>
   recipientPresence() async {
     final data =

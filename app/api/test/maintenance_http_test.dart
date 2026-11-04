@@ -65,6 +65,7 @@ void main() {
   late MaintenanceRunner runner;
   late RejectingPanelUpdates panelUpdates;
   late FakeAdapter adapter;
+  late PanelRepository repository;
   const password = 'fixture-maintenance-owner';
   const gateway = 'fixture-private-gateway';
   setUp(() async {
@@ -101,26 +102,33 @@ void main() {
       supervisor: FakeSupervisor(),
       stateDirectory: directory.path,
     );
+    final config = ServerConfig(
+      port: 0,
+      webOrigin: Uri.parse('https://owner.example'),
+      additionalOrigins: [Uri.parse('https://203.0.113.10')],
+      publicDirectory: directory.path,
+      dataDirectory: directory.path,
+      certificatesDirectory: directory.path,
+      core: manager.core,
+      gatewaySecret: gateway,
+    );
+    repository = PanelRepository(
+      '${directory.path}/panel.sqlite',
+      defaultAddress: config.webOrigin.host,
+    );
+    final panel = PanelService(
+      config: config,
+      manager: manager,
+      repository: repository,
+      configurationStore: ConfigurationFiles(directory.path),
+      codecs: {'mihomo': MihomoConfiguration()},
+      exporter: ClashExporter(),
+    );
     server = await serve(
       createApplication(
-        ServerConfig(
-          port: 0,
-          webOrigin: Uri.parse('https://owner.example'),
-          publicDirectory: directory.path,
-          dataDirectory: directory.path,
-          core: ManagedCore(
-            id: 'primary',
-            coreId: 'mihomo',
-            service: 'sky-ui-mihomo.service',
-            binary: '/unused',
-            directory: '/unused',
-            configuration: '/unused',
-            controller: Uri.parse('http://127.0.0.1:19090'),
-            secret: 'fixture',
-          ),
-          gatewaySecret: gateway,
-        ),
+        config,
         manager,
+        panel: panel,
         auth: auth,
         maintenance: maintenance,
         coreUpdates: RejectingUpdates(),
@@ -136,6 +144,7 @@ void main() {
     await server.close(force: true);
     client.close(force: true);
     auth.close();
+    repository.close();
     await directory.delete(recursive: true);
   });
   Future<({int status, Map<String, dynamic> json, String? cookie})> call(
@@ -176,6 +185,83 @@ void main() {
       csrf: (response.json['data'] as Map)['csrf'] as String,
     );
   }
+
+  test(
+    'HTTPS settings expose limited metadata and queue only an authorized current change',
+    () async {
+      const path = '/api/v1/panel/https';
+      final index = File('${directory.path}/index.json');
+      index.writeAsStringSync(
+        jsonEncode({
+          'owner.example': {
+            'host': 'owner.example',
+            'expiresAt': '2026-12-01T00:00:00Z',
+            'fingerprint': 'fixture-private',
+          },
+          'unrelated.example': {
+            'host': 'unrelated.example',
+            'expiresAt': '2026-12-01T00:00:00Z',
+          },
+        }),
+      );
+      expect((await call(path)).status, 401);
+      final who = await login();
+      expect(
+        (await call(path, cookie: who.cookie, includeGateway: false)).status,
+        401,
+      );
+      final read = await call(path, cookie: who.cookie);
+      expect(read.status, 200);
+      expect(read.json['data'], {
+        'available': true,
+        'ip': '203.0.113.10',
+        'domain': 'owner.example',
+        'expiresAt': {'owner.example': '2026-12-01T00:00:00.000Z'},
+      });
+      const request = {
+        'confirmed': true,
+        'domain': 'New.Example',
+        'expectedDomain': 'owner.example',
+      };
+      expect(
+        (await call(
+          path,
+          method: 'POST',
+          cookie: who.cookie,
+          payload: request,
+        )).status,
+        403,
+      );
+      Future<int> submit(Map<String, Object?> payload) async => (await call(
+        path,
+        method: 'POST',
+        cookie: who.cookie,
+        csrf: who.csrf,
+        payload: payload,
+      )).status;
+      expect(await submit({...request, 'expectedDomain': 'old.example'}), 409);
+      expect(
+        await submit({
+          ...request,
+          'domain': 'example.com:443\nimport /etc/passwd',
+        }),
+        422,
+      );
+      expect(await submit({...request, 'ip': '192.0.2.10'}), 400);
+      expect(runner.calls, isEmpty);
+      expect(await submit(request), 202);
+      final queued = jsonDecode(
+        File('${directory.path}/inbox/request.json').readAsStringSync(),
+      );
+      expect(queued, {
+        'id': matches(MaintenanceService.idPattern),
+        'action': 'panel-https',
+        'domain': 'new.example',
+        'expectedDomain': 'owner.example',
+      });
+      expect((await maintenance.snapshot()).job?.domain, 'new.example');
+    },
+  );
 
   test(
     'storage cleanup gates writes while retaining the last job and reads',

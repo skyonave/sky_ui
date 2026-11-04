@@ -7,6 +7,7 @@ import '../bootstrap/server_config.dart';
 import '../features/auth/owner_auth.dart';
 import '../features/connections/sni_scanner.dart';
 import '../features/maintenance/service.dart';
+import '../features/maintenance/panel_https.dart';
 import '../features/telemetry/system_monitor.dart';
 import '../features/updates/core_updates.dart';
 import '../features/updates/panel_updates.dart';
@@ -18,6 +19,7 @@ import 'routes/asset_routes.dart';
 import 'routes/diagnostic_routes.dart';
 import 'routes/auth_routes.dart';
 import 'routes/engine_routes.dart';
+import 'routes/https_routes.dart';
 import 'routes/maintenance_routes.dart';
 import 'routes/telemetry_routes.dart';
 import 'routes/update_routes.dart';
@@ -64,6 +66,21 @@ Handler createApplication(
   registerEngineRoutes(router, instances, panel, auth);
   if (panel != null) {
     registerAccessRoutes(router, panel, sniScanner);
+    if (maintenance != null)
+      registerHttpsRoutes(
+        router,
+        PanelHttps(
+          origin: config.webOrigin,
+          additionalOrigins: config.additionalOrigins,
+          certificatesDirectory: config.certificatesDirectory,
+          enabled:
+              maintenance.available &&
+              auth != null &&
+              config.gatewaySecret.isNotEmpty,
+        ),
+        maintenance,
+        panel,
+      );
     registerDiagnosticRoutes(
       router,
       diagnostics ??

@@ -14,6 +14,7 @@ import '../engines/installer.dart';
 import '../tools/sni_tool.dart';
 import '../updates/panel_updater.dart';
 import 'request.dart';
+import 'panel_https.dart';
 
 export 'request.dart';
 
@@ -109,6 +110,7 @@ Future<Map<String, dynamic>> restoreBackup(String id, int gid) async {
 }
 
 Future<void> recoverMaintenance(int gid) async {
+  await recoverPanelHttps(gid);
   const engineIntent = '$state/engine-intent.json';
   if (exists(engineIntent)) {
     final v = readJson(engineIntent, 4096), core = v['core'];
@@ -222,6 +224,7 @@ Future<void> maintenanceMain(
       'status': 'running',
       if (job.containsKey('core')) 'core': job['core'],
       if (job.containsKey('tag')) 'tag': job['tag'],
+      if (job.containsKey('domain')) 'domain': job['domain'],
     };
     atomicJson('$state/result.json', result, gid: owner.gid);
     unlink('$state/inbox/request.json');
@@ -247,7 +250,7 @@ Future<void> maintenanceMain(
     }
 
     try {
-      if (reporter == null) {
+      if (reporter == null && job['action'] != 'panel-https') {
         if (api) await beforeActivation();
         assertConfigurationSettled();
       }
@@ -255,6 +258,15 @@ Future<void> maintenanceMain(
         'backup' => await createBackup(owner.gid),
         'restore' => await restoreBackup(job['backupId'] as String, owner.gid),
         'install-sni-scanner' => await installSniTool(reporter!, fetch: fetch),
+        'panel-https' => await changePanelHttps(
+          job['domain'] as String,
+          job['expectedDomain'] as String,
+          owner.gid,
+          (stage) {
+            result['progress'] = {'stage': stage};
+            atomicJson('$state/result.json', result, gid: owner.gid);
+          },
+        ),
         _ => await changeEngine(
           job['action'] as String,
           job['core'] as String,

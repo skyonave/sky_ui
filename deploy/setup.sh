@@ -5,6 +5,13 @@ fail() { printf 'Sky UI: %s\n' "$*" >&2; exit 1; }
 (( EUID == 0 )) || fail 'Запустите sudo skyui setup.'
 [[ -f /etc/sky-ui/managed-by-sky-ui ]] || fail 'Сначала установите Sky UI.'
 case "${1:-setup}" in setup|status) mode="${1:-setup}" ;; *) fail 'Использование: skyui setup или skyui status' ;; esac
+if [[ "$mode" == setup ]]; then
+  exec 9>/run/lock/sky-ui-install.lock
+  flock -n 9 || fail 'Установка или настройка уже выполняется.'
+  exec 8>>/var/lib/sky-ui-maintenance/worker.lock
+  flock -n 8 || fail 'В панели выполняется операция обслуживания.'
+  [[ ! -e /var/lib/sky-ui-maintenance/https-intent.json ]] || fail 'Требуется восстановление настроек HTTPS.'
+fi
 caddy=/opt/sky-ui/current/bin/caddy
 port="$(sed -n 's/^SKY_UI_PORT=//p' /etc/sky-ui/server.env)"
 [[ "$port" =~ ^[0-9]+$ ]] || fail 'Некорректный порт API.'
@@ -20,8 +27,6 @@ if [[ "$mode" == status ]]; then
   [[ -z "$domain" ]] || printf 'Домен: https://%s\n' "$domain"
   exit 0
 fi
-exec 9>/run/lock/sky-ui-install.lock
-flock -n 9 || fail 'Установка или настройка уже выполняется.'
 exec 3<>/dev/tty
 temp="$(mktemp -d /etc/sky-ui/.setup.XXXXXXXX)"
 trap 'rm -rf -- "$temp"' EXIT

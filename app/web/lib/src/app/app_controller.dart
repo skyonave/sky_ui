@@ -296,6 +296,8 @@ class AppController {
     unawaited(refreshPanel());
     observations.connectLogs();
     maintenanceTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (maintenanceJob?.action == 'panel-https' && maintenanceBusy)
+        unawaited(refreshMaintenance());
       if (maintenanceJob?.action == 'panel-update' && maintenanceBusy) {
         unawaited(refreshMaintenance());
         if (mounted) mutate(() {});
@@ -702,6 +704,17 @@ class AppController {
       if (mounted) mutate(() => maintenanceSubmitting = false);
     }
     if (mounted) closeModal();
+  }
+
+  Future<void> submitPanelHttps(String domain, String expected) async {
+    if (maintenanceBusy) throw const ApiClientException('maintenance_busy');
+    mutate(() => maintenanceSubmitting = true);
+    try {
+      final job = await api.changePanelHttps(domain, expected);
+      mutate(() => maintenanceJob = job);
+    } finally {
+      mutate(() => maintenanceSubmitting = false);
+    }
   }
 
   void editOwner(bool password) {

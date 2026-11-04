@@ -20,6 +20,7 @@ import '../features/recipients/share_content.dart';
 import '../features/settings/owner_form.dart';
 import '../features/settings/session_list.dart';
 import '../features/settings/settings_page.dart';
+import '../features/settings/https_panel.dart';
 import '../features/updates/update_card.dart';
 import '../shared/api/api_client.dart';
 import '../shared/components/page_helpers.dart';
@@ -36,7 +37,7 @@ class AppView extends StatelessComponent {
   final t = const AppStrings();
   static const appVersion = String.fromEnvironment(
     'SKY_UI_VERSION',
-    defaultValue: '0.8.0-dev.8',
+    defaultValue: '0.8.0-dev.9',
   );
   @override
   Component build(BuildContext context) => div([
@@ -312,6 +313,17 @@ class AppView extends StatelessComponent {
     openEngineSettings: controller.openEngineSettings,
     backupPanel: backupPanel,
     sessionList: sessionList,
+    httpsPanel: HttpsPanel(
+      api: controller.api,
+      job: controller.maintenanceJob?.action == 'panel-https'
+          ? controller.maintenanceJob
+          : null,
+      blocked:
+          controller.maintenanceBusy ||
+          controller.dataBusy ||
+          controller.observations.runtimeBusy,
+      submit: controller.submitPanelHttps,
+    ),
   );
 
   Component panelUpdateCard() {

@@ -964,6 +964,53 @@ class AppStrings {
       'admin.logoutUnavailable': 'Выход — пока недоступно',
       'settings.system': 'Система',
       'settings.domain': 'Адрес панели и HTTPS',
+      'settings.https.ip': 'Вход по IP',
+      'settings.https.domain': 'Текущий домен',
+      'settings.https.newDomain': 'Домен панели',
+      'settings.https.unavailable':
+          'Первичную настройку HTTPS выполните командой sudo skyui setup.',
+      'settings.https.renewal':
+          'Caddy автоматически продлевает сертификаты Let’s Encrypt.',
+      'settings.https.certificateUnknown': 'Нет данных о сертификате',
+      'settings.https.certificateExpired': 'Сертификат истёк',
+      'settings.https.certificateUntil': 'Действует до {date}',
+      'settings.https.dnsHelp':
+          'Укажите домен с A-записью на IP сервера. Оставьте поле пустым для входа только по IP.',
+      'settings.https.review': 'Изменить адрес',
+      'settings.https.apply': 'Подтвердить смену',
+      'settings.https.confirm':
+          'Панель проверит HTTPS перед сменой адреса. На новом адресе войдите снова. Пользователям понадобится новый URL подписки.',
+      'settings.https.reconnect':
+          'Если эта вкладка перестанет отвечать, откройте панель по IP.',
+      'settings.https.done': 'Адрес панели обновлён.',
+      'settings.https.restored': 'Прежний адрес восстановлен.',
+      'settings.https.stage.queued': 'Ожидает запуска…',
+      'settings.https.stage.validate': 'Проверяем DNS и настройки…',
+      'settings.https.stage.certificate': 'Ожидаем сертификат Let’s Encrypt…',
+      'settings.https.stage.apply': 'Применяем адрес и проверяем HTTPS…',
+      'settings.https.stage.rollback': 'Восстанавливаем прежний адрес…',
+      'settings.https.error.load': 'Не удалось загрузить состояние HTTPS.',
+      'settings.https.error.generic': 'Не удалось изменить адрес панели.',
+      'settings.https.error.domain_invalid':
+          'Введите домен без протокола, порта и пути.',
+      'settings.https.error.domain_setup_required':
+          'Сначала настройте рабочий HTTPS по IP через sudo skyui setup.',
+      'settings.https.error.domain_unchanged': 'Этот адрес уже используется.',
+      'settings.https.error.domain_state_changed':
+          'Адрес уже изменился. Проверьте текущие настройки и повторите.',
+      'settings.https.error.domain_dns_missing': 'Домен не разрешается в DNS.',
+      'settings.https.error.domain_dns_mismatch':
+          'Записи A и AAAA должны вести на этот сервер.',
+      'settings.https.error.domain_certificate_in_use':
+          'Сохранённое VPN-подключение использует сертификат, который изменится. Сначала выберите для него другой сертификат.',
+      'settings.https.error.domain_https_not_ready':
+          'HTTPS не прошёл проверку. Проверьте DNS и доступность портов 80 и 443.',
+      'settings.https.error.domain_rollback_failed':
+          'Автоматическое восстановление не завершилось. Проверьте службу sky-ui-maintenance-recovery через SSH.',
+      'settings.https.error.maintenance_busy':
+          'Дождитесь завершения текущей операции обслуживания.',
+      'settings.https.error.maintenance_interrupted':
+          'Операция была прервана. Проверьте текущий адрес панели.',
       'settings.dns': 'DNS ядра',
       'settings.logging': 'Уровень логирования ядра',
       'settings.configure': 'Настроить',

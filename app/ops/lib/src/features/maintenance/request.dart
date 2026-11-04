@@ -9,7 +9,14 @@ const intentNames = [
   'core-remove-intent.json',
   'engine-intent.json',
   'panel-update-intent.json',
+  'https-intent.json',
 ];
+bool validPanelDomain(Object? value) =>
+    value is String &&
+    (value.isEmpty ||
+        value.length <= 253 &&
+            RegExp(r'^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$')
+                .hasMatch(value));
 Map<String, dynamic> consumeRequest(int uid, {bool remove = true}) {
   const path = '$state/inbox/request.json';
   final value = object(
@@ -23,6 +30,7 @@ Map<String, dynamic> consumeRequest(int uid, {bool remove = true}) {
     'remove': {'id', 'action', 'core'},
     'panel-update': {'id', 'action', 'tag'},
     'install-sni-scanner': {'id', 'action'},
+    'panel-https': {'id', 'action', 'domain', 'expectedDomain'},
   };
   final action = value['action'];
   require(
@@ -55,6 +63,13 @@ Map<String, dynamic> consumeRequest(int uid, {bool remove = true}) {
           (value['tag'] as String).startsWith('v') &&
           parseVersion(value['tag']) != null,
       'request_invalid',
+    );
+  if (action == 'panel-https')
+    require(
+      validPanelDomain(value['domain']) &&
+          validPanelDomain(value['expectedDomain']) &&
+          value['domain'] != value['expectedDomain'],
+      'domain_invalid',
     );
   if (remove) unlink(path);
   return value;

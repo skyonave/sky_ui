@@ -18,8 +18,14 @@ Future<void> certificates(
   if (action == 'logs')
     return logs('certificates', follow: follow, lines: lines);
   if (action == 'check') {
-    await run(['systemctl', 'reload', 'sky-ui-edge.service']);
-    await run(['systemctl', 'start', 'sky-ui-certificates.service']);
+    await locked(() async {
+      require(
+        !exists('$state/https-intent.json'),
+        'maintenance_recovery_required',
+      );
+      await run(['systemctl', 'reload', 'sky-ui-edge.service']);
+      await run(['systemctl', 'start', 'sky-ui-certificates.service']);
+    });
     stdout.writeln(
       'Настройки HTTPS применены, сертификаты синхронизированы с ядрами.',
     );

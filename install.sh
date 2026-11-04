@@ -49,6 +49,7 @@ if (( ! verify_only )); then
   getconf GNU_LIBC_VERSION >/dev/null 2>&1 || fail 'A glibc-based Linux distribution is required.'
   [[ ! -e /var/lib/sky-ui-maintenance/core-remove-intent.json ]] || fail 'Core removal recovery is required. Start sky-ui-maintenance-recovery.service first.'
   [[ ! -e /var/lib/sky-ui-maintenance/engine-intent.json ]] || fail 'Engine recovery is required. Start sky-ui-maintenance-recovery.service first.'
+  [[ ! -e /var/lib/sky-ui-maintenance/https-intent.json ]] || fail 'HTTPS recovery is required. Start sky-ui-maintenance-recovery.service first.'
   # Always pair the online entry point with the installer's published release.
   # Pushing a new source format to main must not break the previous live release.
   if [[ -z "$bundle" && "${SKY_UI_RELEASE_INSTALLER:-0}" != 1 ]]; then
@@ -391,6 +392,10 @@ fi
 if [[ -L /opt/sky-ui/current ]]; then previous="$(readlink -f /opt/sky-ui/current)"; fi
 if systemctl is-active --quiet sky-ui.service; then api_was_running=1; fi
 if systemctl is-active --quiet sky-ui-edge.service; then edge_was_running=1; fi
+exec 8>>/var/lib/sky-ui-maintenance/worker.lock
+flock -n 8 || fail 'Core maintenance is in progress. Retry installation when it finishes.'
+worker_locked=1
+[[ ! -e /var/lib/sky-ui-maintenance/https-intent.json ]] || fail 'HTTPS recovery is required.'
 if [[ -f /etc/sky-ui/access.conf ]]; then
   [[ -f /etc/sky-ui/admin.hash && -f /etc/sky-ui/Caddyfile ]] || fail 'Incomplete gateway configuration.'
   cp /etc/sky-ui/Caddyfile "$temp/old-Caddyfile"
@@ -400,9 +405,6 @@ if [[ -f /etc/sky-ui/access.conf ]]; then
   "$release/bin/caddy" fmt --overwrite "$temp/new-Caddyfile"
   "$release/bin/caddy" validate --config "$temp/new-Caddyfile" --adapter caddyfile
 fi
-exec 8>>/var/lib/sky-ui-maintenance/worker.lock
-flock -n 8 || fail 'Core maintenance is in progress. Retry installation when it finishes.'
-worker_locked=1
 changed=1
 cp /etc/sky-ui/server.env "$temp/old-server.env"
 if [[ -L /opt/sky-ui/cores/mihomo/current ]]; then core_previous="$(readlink -f /opt/sky-ui/cores/mihomo/current)"; fi

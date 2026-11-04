@@ -29,6 +29,7 @@ class SettingsPage extends StatelessComponent {
     required this.openEngineSettings,
     required this.backupPanel,
     required this.sessionList,
+    required this.httpsPanel,
     super.key,
   });
   final PanelStore store;
@@ -48,6 +49,7 @@ class SettingsPage extends StatelessComponent {
   final Future<void> Function(String) openEngineSettings;
   final Component Function() backupPanel;
   final Component Function() sessionList;
+  final Component httpsPanel;
   final t = const AppStrings();
   @override
   Component build(BuildContext context) => div([
@@ -123,9 +125,9 @@ class SettingsPage extends StatelessComponent {
       ], classes: 'setting-row'),
       sessionList(),
     ], classes: 'panel settings-panel'),
+    httpsPanel,
     div([
       h2([Component.text(t('settings.system'))]),
-      plannedSetting('settings.domain', 'common.edit'),
       for (final descriptor in coreCatalog.where(
         (c) =>
             panelData?.settingsInstances.contains(store.instanceIds[c.id]) ==
