@@ -1094,6 +1094,15 @@ void main() {
   );
 
   test('AWG devices on the same grant get independent stable peers', () async {
+    // A TCP-assigned ephemeral port can be reserved for UDP on Windows.
+    final udp = await RawDatagramSocket.bind(
+      '0.0.0.0',
+      0,
+      reuseAddress: false,
+      reusePort: false,
+    );
+    freePort = udp.port;
+    udp.close();
     final awgFile = File('${directory.path}/awg.json')..writeAsStringSync('{}');
     final awg = CoreManager(
       core: ManagedCore(

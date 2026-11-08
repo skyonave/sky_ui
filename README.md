@@ -22,6 +22,10 @@ A self-hosted panel for proxy cores on your Linux server. Create connections and
 
 The panel is available in English and Russian. Switch languages at sign-in or in Settings.
 
+### Windows client
+
+For Windows x64, use [Sky Relink](https://github.com/skyonave/sky_relink). Copy the subscription link from Sky UI and import it under Profiles in Relink. Each device gets its own AmneziaWG peer.
+
 ### Installation
 
 Linux:
@@ -45,9 +49,13 @@ New panel releases appear in the sidebar. Confirm the update there or run `sudo 
 
 ## Русский
 
-Панель для управления прокси-ядрами на своём Linux-сервере. Создавай подключения и делись доступом через ссылки, QR-коды и подписки. Для одного владельца и нескольких близких.
+Панель для управления прокси-ядрами на своём Linux-сервере. Создавайте подключения и делитесь доступом через ссылки, QR-коды и подписки. Подходит для личного сервера, которым пользуются несколько человек.
 
 Панель доступна на русском и английском. Язык можно сменить при входе или в настройках.
+
+### Клиент для Windows
+
+Для Windows x64 используйте [Sky Relink](https://github.com/skyonave/sky_relink). Скопируйте ссылку на подписку из Sky UI и импортируйте её в разделе «Профили» в Relink. Каждое устройство получит отдельный пир AmneziaWG.
 
 ### Установка
 
@@ -56,7 +64,7 @@ Linux:
 sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/main/install.sh)"
 ```
 
-Установщик скачает панель. При создании подключения выбери протокол, а панель установит нужное ядро, если его нет. Разные ядра работают одновременно и сохраняются при повторной установке панели. Мастер создаст администратора и предложит доступ по IP или домену. Сертификаты Let's Encrypt продлеваются автоматически. Для домена направь DNS на сервер и открой TCP-порты 80 и 443.
+Установщик скачает панель. При создании подключения выберите протокол, а панель установит нужное ядро, если его нет. Разные ядра работают одновременно и сохраняются при повторной установке панели. Мастер создаст администратора и предложит доступ по IP или домену. Сертификаты Let's Encrypt продлеваются автоматически. Для домена направьте DNS на сервер и откройте TCP-порты 80 и 443.
 
 Домен можно сменить в настройках панели. Команда `sudo skyui setup` меняет IP-адрес панели и восстанавливает доступ администратора. Команды управления, резервного копирования и HTTPS доступны в `sudo skyui --help`. `sudo skyui uninstall` удаляет установку и её данные после подтверждения.
 
@@ -68,4 +76,4 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/mai
 
 [app/web](app/web) содержит интерфейс Jaspr, [app/api](app/api) сервер Dart Frog, [app/shared](app/shared) общие контракты, [app/ops](app/ops) CLI и обслуживание сервера. Внутри приложений код сгруппирован по функциям. Команда `dart tool/check.dart` проверяет зависимости, анализирует код и запускает тесты.
 
-Новая версия панели появится в боковой панели. Обновись оттуда или через `sudo skyui update`. При ошибке вернутся предыдущая версия и её данные.
+Новая версия появится в боковой панели. Обновите Sky UI оттуда или командой `sudo skyui update`. При ошибке восстановятся предыдущая версия и её данные.

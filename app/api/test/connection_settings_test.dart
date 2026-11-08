@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sky_ui_api/src/engines/proxy/configuration.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
@@ -207,6 +208,7 @@ void main() {
         'naiveCongestionControl': 'cubic',
       });
       expect(naive.native['inbounds'][0]['quic_congestion_control'], 'cubic');
+      expect(naive.endpoint.settings['naiveCongestionControl'], 'cubic');
       final hysteria = await compile('sing-box', 'hysteria2', {
         ...tls,
         'hysteriaMasquerade': 'https://www.example.com/',
@@ -225,4 +227,44 @@ void main() {
       expect(ss.native['inbounds'][0]['udp_timeout'], '120s');
     },
   );
+  test('Relink receives public custom TLS trust without server secrets', () {
+    const certificate =
+        '-----BEGIN CERTIFICATE-----\nAQIDBA==\n-----END CERTIFICATE-----';
+    const privateKey =
+        '-----BEGIN PRIVATE KEY-----\nBQYHCA==\n-----END PRIVATE KEY-----';
+    for (final protocol in ['vless', 'naive', 'hysteria2', 'tuic']) {
+      // This unit fixture tests export isolation, not X.509 validation.
+      final endpoint = codec('sing-box').clientEndpoint(
+        StoredConnection(
+          input('sing-box', protocol, {
+            'security': 'TLS',
+            'certificateSource': 'custom',
+            'tlsCertificate': certificate,
+          }),
+          {'field:tlsPrivateKey': privateKey},
+        ),
+        const AccessGrant(
+          id: 'g',
+          recipientId: 'u',
+          connectionId: 'c',
+          credentials: {'password': 'fixture'},
+        ),
+        'vpn.example.com',
+      );
+      expect(
+        endpoint.credentials['fingerprint'],
+        sha256.convert([1, 2, 3, 4]).toString(),
+      );
+      expect(
+        endpoint.settings['tlsCertificate'],
+        protocol == 'naive' ? certificate : isNull,
+      );
+      final exported = jsonEncode({
+        'settings': endpoint.settings,
+        'credentials': endpoint.credentials,
+      });
+      expect(exported, isNot(contains('PRIVATE KEY')));
+      expect(endpoint.settings.containsKey('tlsPrivateKey'), isFalse);
+    }
+  });
 }

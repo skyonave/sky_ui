@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:crypto/crypto.dart';
 import 'package:cryptography/cryptography.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
@@ -465,6 +466,15 @@ class ProxyConfiguration
     String address,
   ) {
     final s = _settings(connection);
+    final certificate =
+        s['security'] == 'TLS' && s['certificateSource'] == 'custom'
+        ? s['tlsCertificate']
+        : null;
+    final certificateBody = certificate == null
+        ? null
+        : RegExp(
+            r'-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----',
+          ).firstMatch(certificate)?.group(1);
     return ClientEndpoint(
       id: grant.id,
       name: connection.value.name,
@@ -488,8 +498,11 @@ class ProxyConfiguration
           'congestionController',
           'obfs',
           'obfsPassword',
+          'naiveCongestionControl',
         ])
           if (s[key] != null) key: s[key]!,
+        if (connection.value.protocolId == 'naive' && certificate != null)
+          'tlsCertificate': certificate,
         if (s['transport'] == 'XHTTP')
           'xhttpOptions': jsonEncode({
             'path': s['xhttpPath'],
@@ -515,6 +528,12 @@ class ProxyConfiguration
       credentials: {
         for (final key in ['uuid', 'username', 'password'])
           if (grant.credentials[key] != null) key: grant.credentials[key]!,
+        if (certificateBody != null)
+          'fingerprint': sha256
+              .convert(
+                base64.decode(certificateBody.replaceAll(RegExp(r'\s'), '')),
+              )
+              .toString(),
         if (s['security'] == 'REALITY') ...{
           'publicKey': connection.secrets['publicKey']!,
           'shortId': connection.secrets['shortId']!,
