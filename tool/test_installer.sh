@@ -11,6 +11,7 @@ payload="$test_dir/payload"
 mkdir -p "$payload/bin" "$payload/lib" "$payload/web/fonts" "$payload/deploy/systemd" "$payload/deploy/polkit" "$payload/deploy/mihomo" "$payload/licenses" "$payload/compatibility/cores"
 for file in bin/sky-ui bin/sky-ops bin/caddy licenses/dart-sdk.LICENSE lib/libsqlite3.so lib/libsky_posix.so web/index.html web/main.dart.js web/styles.css web/fonts/PxPlus_IBM_VGA8.ttf \
   web/fonts/LICENSE-IBM-VGA.txt web/fonts/ATTRIBUTION.txt deploy/systemd/sky-ui.service \
+  deploy/systemd/sky-ui-systemd-control.socket deploy/systemd/sky-ui-systemd-control@.service \
   deploy/systemd/sky-ui-sing-box.service deploy/systemd/sky-ui-xray.service deploy/systemd/sky-ui-amneziawg.service \
   deploy/journald-sky-ui.conf deploy/systemd/sky-ui-cleanup.service deploy/systemd/sky-ui-cleanup.timer deploy/prepare_host.sh deploy/host_packages.sh deploy/download_cache.sh deploy/sky-ui-install-tmpfiles.conf compatibility/cores/amneziawg.json \
   deploy/systemd/sky-ui-mihomo.service deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service deploy/setup.sh deploy/render_access.sh deploy/sky-ui deploy/skyui compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/polkit/49-sky-ui.rules deploy/mihomo/config.example.yaml LICENSE licenses/caddy.LICENSE; do
@@ -35,6 +36,10 @@ reject() {
 tar -czf "$bundle" -C "$payload" .
 checksum
 bash "$root/install.sh" --bundle "$bundle" --verify-only
+printf 'Requires=sky-ui-systemd-control.socket\n' >>"$payload/deploy/systemd/sky-ui.service"
+tar -czf "$bundle" --exclude='./deploy/systemd/sky-ui-systemd-control@.service' -C "$payload" .
+checksum
+reject 'Incomplete release: sky-ui-systemd-control@.service'
 printf 'source-v1\n' >"$payload/BUILD_MODE"
 tar -czf "$bundle" -C "$payload" .
 checksum

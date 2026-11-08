@@ -1,0 +1,12 @@
+[Unit]
+Description=Sky UI managed systemd operations socket
+PartOf=sky-ui.service
+
+[Socket]
+ListenStream=/run/sky-ui-systemd-control.sock
+SocketUser=sky-ui
+SocketGroup=root
+SocketMode=0600
+Accept=yes
+MaxConnections=16
+RemoveOnStop=yes

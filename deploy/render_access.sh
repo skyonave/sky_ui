@@ -20,6 +20,7 @@ cat >"$output" <<CADDY
             wrap json
             fields {
                 request>uri delete
+                request>headers delete
             }
         }
     }

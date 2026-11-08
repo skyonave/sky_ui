@@ -726,6 +726,35 @@ void main() {
     expect(repository.pending, isNull);
   });
   test(
+    'startup recovers an interrupted auto-start with a stopped unit',
+    () async {
+      final previous = await native.readAsString();
+      const candidate = '{"listeners":[]}';
+      final intent = jsonEncode({
+        'skyUiDeployment': 2,
+        'instances': {
+          manager.core.id: {
+            'previous': previous,
+            'candidate': candidate,
+            'wasRunning': false,
+            'autoStart': true,
+          },
+        },
+      });
+      repository.prepare(DeploymentIntent(intent, intent, false));
+      await native.writeAsString(candidate);
+      supervisor.state = CoreProcessState.inactive;
+      supervisor.calls.clear();
+
+      await panel.initialize();
+
+      expect(supervisor.calls, ['stop']);
+      expect(repository.pending, isNull);
+      expect(await native.readAsString(), previous);
+      expect((await panel.snapshot()).synchronized, true);
+    },
+  );
+  test(
     'native drift blocks export and auto-start; emergency stop remains usable',
     () async {
       final c = (await connection()).connections.single;

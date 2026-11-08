@@ -82,8 +82,12 @@ Future<void> lifecycle(String action, String target) async {
 
 Future<void> logs(String target, {bool follow = false, int lines = 100}) async {
   final selected = switch (target) {
-    'panel' => ['sky-ui.service', 'sky-ui-edge.service'],
-    'all' => allUnits,
+    'panel' => [
+      'sky-ui.service',
+      'sky-ui-edge.service',
+      'sky-ui-systemd-control@*.service',
+    ],
+    'all' => [...allUnits, 'sky-ui-systemd-control@*.service'],
     'core' => ['sky-ui-mihomo.service'],
     'certificates' => ['sky-ui-edge.service', 'sky-ui-certificates.service'],
     _ =>

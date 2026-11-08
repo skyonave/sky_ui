@@ -5,15 +5,18 @@ import 'dart:math';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../infrastructure/process/command_runner.dart';
+import '../../infrastructure/process/systemd_control.dart';
 import '../../shared/api_exception.dart';
 
 class MaintenanceService {
   MaintenanceService(
     this.runner, {
+    this.control,
     this.directory = '/var/lib/sky-ui-maintenance',
     bool? supported,
   }) : supported = supported ?? Platform.isLinux;
   final CommandRunner runner;
+  final SystemdControl? control;
   final String directory;
   final bool supported;
   bool _submitting = false;
@@ -177,11 +180,9 @@ class MaintenanceService {
       throw const ApiException('maintenance_busy', status: 409);
     }
     try {
-      final result = await runner.run('systemctl', [
-        'start',
-        '--no-block',
-        service,
-      ]);
+      final result =
+          await (control?.run('start', service) ??
+              runner.run('systemctl', ['start', '--no-block', service]));
       if (result.exitCode != 0)
         throw const ApiException('maintenance_unavailable', status: 503);
     } on Object {

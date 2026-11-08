@@ -63,25 +63,27 @@ Future<void> rollbackPanel(
   ]);
   switchLink(current, previous);
   await applyFiles(files, gid);
-  for (final unit in allUnits) {
+  for (final unit in managedUnitFiles) {
     final source = '$previous/deploy/systemd/$unit',
         target = '/etc/systemd/system/$unit';
     if (exists(source)) {
       host.trusted(source);
       host.atomic(target, host.read(source), mode: 0x1a4);
     } else {
-      if (unit.startsWith('sky-ui-cleanup.'))
+      if (unit.startsWith('sky-ui-cleanup.') || unit.endsWith('.socket'))
         await command(['systemctl', 'disable', '--now', unit], check: false);
       unlink(target);
     }
   }
   const polkit = 'deploy/polkit/49-sky-ui.rules';
-  host.trusted('$previous/$polkit');
-  host.atomic(
-    '/etc/polkit-1/rules.d/49-sky-ui.rules',
-    host.read('$previous/$polkit'),
-    mode: 0x1a4,
-  );
+  const policyPath = '/etc/polkit-1/rules.d/49-sky-ui.rules';
+  if (exists('$previous/deploy/systemd/sky-ui-systemd-control.socket')) {
+    unlink(policyPath);
+  } else {
+    host.trusted('$previous/$polkit');
+    await run(['install', '-d', '-m', '0755', parent(policyPath)]);
+    host.atomic(policyPath, host.read('$previous/$polkit'), mode: 0x1a4);
+  }
   for (final name in ['skyui', 'sky-ui']) {
     host.trusted('$previous/deploy/$name');
     host.atomic(

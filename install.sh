@@ -98,6 +98,22 @@ cleanup() { rm -rf -- "$temp"; }
 unlock_worker() {
   if (( worker_locked )); then flock -u 8; worker_locked=0; fi
 }
+apply_systemd_control() {
+  local tree="$1" unit
+  for unit in sky-ui-systemd-control.socket sky-ui-systemd-control@.service; do
+    if [[ -f "$tree/deploy/systemd/$unit" ]]; then
+      install -m 0644 "$tree/deploy/systemd/$unit" "/etc/systemd/system/$unit"
+    elif [[ -f "/etc/systemd/system/$unit" ]]; then
+      if [[ "$unit" == *.socket ]]; then systemctl stop "$unit"; fi
+      rm -f -- "/etc/systemd/system/$unit"
+    fi
+  done
+  if [[ -f "$tree/deploy/systemd/sky-ui-systemd-control.socket" ]]; then
+    rm -f -- /etc/polkit-1/rules.d/49-sky-ui.rules
+  else
+    install -D -m 0644 "$tree/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
+  fi
+}
 rollback() {
   local status=$?
   trap - ERR
@@ -144,7 +160,7 @@ rollback() {
         systemctl stop sky-ui-certificates.service || true
         rm -f -- /etc/systemd/system/sky-ui-certificates.service /etc/systemd/system/sky-ui-certificates.timer
       fi
-      install -m 0644 "$previous/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
+      apply_systemd_control "$previous"
       for command in skyui sky-ui; do
         if [[ -f "$previous/deploy/$command" ]]; then install -m 0755 "$previous/deploy/$command" "/usr/local/bin/$command"; fi
       done
@@ -210,7 +226,8 @@ if grep -vE '^[-d]' "$temp/types" >/dev/null; then fail 'Archive links and speci
 while IFS= read -r entry; do
   entry="$(printf '%s' "$entry" | sed 's#^\./##;s#/$##')"
   [[ -z "$entry" ]] && continue
-  [[ "$entry" =~ ^[A-Za-z0-9_./+-]+$ && "$entry" != /* ]] || fail 'Invalid archive path.'
+  [[ "$entry" =~ ^[A-Za-z0-9_./+-]+$ && "$entry" != /* ||
+     "${entry#./}" == deploy/systemd/sky-ui-systemd-control@.service ]] || fail 'Invalid archive path.'
   case "/$entry/" in *'/../'*|*'/./'*) fail 'Archive traversal is forbidden.' ;; esac
 done <"$temp/entries"
 mkdir "$temp/payload"
@@ -228,6 +245,12 @@ for file in VERSION ARCH BUILD_MODE MIN_GLIBC BUILD_MANIFEST.json licenses/dart-
   deploy/mihomo/config.example.yaml deploy/setup.sh deploy/render_access.sh deploy/sky-ui deploy/skyui compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service LICENSE licenses/caddy.LICENSE; do
   [[ -f "$payload/$file" ]] || fail "Incomplete release: $file"
 done
+if grep -Fqx 'Requires=sky-ui-systemd-control.socket' "$payload/deploy/systemd/sky-ui.service" ||
+   [[ -e "$payload/deploy/systemd/sky-ui-systemd-control.socket" || -e "$payload/deploy/systemd/sky-ui-systemd-control@.service" ]]; then
+  for unit in sky-ui-systemd-control.socket sky-ui-systemd-control@.service; do
+    [[ -f "$payload/deploy/systemd/$unit" ]] || fail "Incomplete release: $unit"
+  done
+fi
 for file in bin/sky-ui bin/sky-ops lib/libsqlite3.so lib/libsky_posix.so; do [[ -f "$payload/$file" ]] || fail "Incomplete native release: $file"; done
 [[ ! -d "$payload/source" ]] || fail 'Native releases must not contain build sources.'
 release_version="$(tr -d '\r\n' <"$payload/VERSION")"
@@ -414,6 +437,7 @@ sed -i 's#^SKY_UI_CORE_BINARY=.*#SKY_UI_CORE_BINARY=/opt/sky-ui/cores/mihomo/cur
 if (( edge_was_running )); then systemctl stop sky-ui-edge.service; fi
 if (( api_was_running )); then systemctl stop sky-ui.service; fi
 install -m 0644 "$release/deploy/systemd/sky-ui.service" /etc/systemd/system/sky-ui.service
+apply_systemd_control "$release"
 install -m 0644 "$release/deploy/systemd/sky-ui-mihomo.service" /etc/systemd/system/sky-ui-mihomo.service
 for engine in sing-box xray amneziawg; do
   install -m 0644 "$release/deploy/systemd/sky-ui-$engine.service" "/etc/systemd/system/sky-ui-$engine.service"
@@ -430,8 +454,6 @@ install -m 0644 "$release/deploy/systemd/sky-ui-cleanup.timer" /etc/systemd/syst
 install -d -m 0755 /usr/local/bin
 install -m 0755 "$release/deploy/sky-ui" /usr/local/bin/sky-ui
 install -m 0755 "$release/deploy/skyui" /usr/local/bin/skyui
-install -d -m 0755 /etc/polkit-1/rules.d
-install -m 0644 "$release/deploy/polkit/49-sky-ui.rules" /etc/polkit-1/rules.d/49-sky-ui.rules
 ln -s "$release" /opt/sky-ui/.next-link
 mv -Tf /opt/sky-ui/.next-link /opt/sky-ui/current
 unlock_worker

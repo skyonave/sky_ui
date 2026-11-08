@@ -986,7 +986,7 @@ const englishStrings = <String, String>{
   "runtime.error.configuration_missing":
       "The core configuration file is missing.",
   "runtime.error.configuration_out_of_sync":
-      "The core configuration changed outside the panel. Access sharing is blocked until it is synchronized.",
+      "The core configuration does not match the saved panel configuration. Access sharing is blocked until it is synchronized.",
   "runtime.error.configuration_recovered":
       "Configuration recovered after an interrupted operation",
   "runtime.error.configuration_rollback_failed":
@@ -1046,7 +1046,7 @@ const englishStrings = <String, String>{
   "runtime.error.maintenance_interrupted":
       "The operation was interrupted. Saved state was restored.",
   "runtime.error.maintenance_unavailable":
-      "Maintenance is unavailable. An installed Linux service is required.",
+      "Sky UI could not start maintenance. Check the service status and panel logs.",
   "runtime.error.name_invalid":
       "Enter a name from 1 to 80 characters with no line breaks.",
   "runtime.error.native_binary_incompatible":

@@ -7,6 +7,7 @@ import 'package:sky_ui_ops/src/features/certificates/certificates.dart';
 import 'package:sky_ui_ops/src/features/engines/amnezia.dart';
 import 'package:sky_ui_ops/src/features/engines/installer.dart';
 import 'package:sky_ui_ops/src/features/maintenance/worker.dart';
+import 'package:sky_ui_ops/src/features/maintenance/systemd_control.dart';
 import 'package:sky_ui_ops/src/features/storage/retention.dart';
 import 'package:sky_ui_ops/src/features/updates/panel_updater.dart';
 import 'package:sky_ui_ops/src/features/updates/release_catalog.dart';
@@ -57,6 +58,9 @@ Future<void> runOperations(List<String> args) async {
     require(host.uid() == 0, 'root_required');
     host.umask(0x3f);
     switch (args.first) {
+      case 'systemd-control':
+        require(args.length == 1, 'request_invalid');
+        await handleSystemdControl();
       case 'maintenance':
         await maintenanceMain(args.sublist(1));
       case 'panel-update':

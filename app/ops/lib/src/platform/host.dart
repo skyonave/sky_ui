@@ -32,11 +32,13 @@ const allUnits = [
   'sky-ui-certificates.timer',
   'sky-ui-maintenance.service',
   'sky-ui-maintenance-recovery.service',
+  'sky-ui-systemd-control.socket',
   'sky-ui-update.service',
   'sky-ui-update-recovery.service',
   'sky-ui-cleanup.service',
   'sky-ui-cleanup.timer',
 ];
+const managedUnitFiles = [...allUnits, 'sky-ui-systemd-control@.service'];
 final identityPattern = RegExp(r'^[a-f0-9]{32}$');
 final coreTagPattern = RegExp(r'^v[0-9]+\.[0-9]+\.[0-9]+$');
 

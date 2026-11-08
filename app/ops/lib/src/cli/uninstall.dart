@@ -55,7 +55,7 @@ Future<List<String>> removalPlan() async {
       'unmanaged_journal',
     );
   final files = [
-    for (final unit in allUnits) '/etc/systemd/system/$unit',
+    for (final unit in managedUnitFiles) '/etc/systemd/system/$unit',
     '/etc/polkit-1/rules.d/49-sky-ui.rules',
     '/run/lock/sky-ui-install.lock',
     '/run/lock/sky-ui-setup.lock',
@@ -85,7 +85,7 @@ Future<List<String>> removalPlan() async {
     }
     files.add(path);
   }
-  for (final unit in allUnits) {
+  for (final unit in managedUnitFiles) {
     final path = '/etc/systemd/system/$unit';
     if (exists(path)) {
       host.trusted(path);
@@ -186,7 +186,7 @@ Future<void> uninstall() async {
     }
     for (final path in files) if (!path.startsWith('/run/lock/')) unlink(path);
     unlink('/etc/systemd/journald@sky-ui.conf');
-    for (final unit in allUnits) {
+    for (final unit in managedUnitFiles) {
       final dropin = '/etc/systemd/system/$unit.d';
       if (exists(dropin)) host.deleteTree(dropin);
     }

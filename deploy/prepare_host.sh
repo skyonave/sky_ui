@@ -4,7 +4,7 @@ set -Eeuo pipefail
 umask 077
 [[ $EUID == 0 ]] || exit 1
 source "$(dirname -- "$0")/host_packages.sh"
-if ! command -v pkaction >/dev/null || ! command -v openssl >/dev/null || ! command -v nft >/dev/null || ! command -v ip >/dev/null || ! command -v setfacl >/dev/null; then
+if ! command -v openssl >/dev/null || ! command -v nft >/dev/null || ! command -v ip >/dev/null || ! command -v setfacl >/dev/null; then
   sky_packages runtime
 fi
 getent group sky-ui >/dev/null || groupadd --system sky-ui

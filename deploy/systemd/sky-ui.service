@@ -1,7 +1,7 @@
 [Unit]
 Description=Sky UI server panel
-After=network.target polkit.service
-Wants=polkit.service
+After=network.target sky-ui-systemd-control.socket
+Requires=sky-ui-systemd-control.socket
 StartLimitIntervalSec=60
 StartLimitBurst=5
 
@@ -12,6 +12,7 @@ User=sky-ui
 Group=sky-ui
 WorkingDirectory=/var/lib/sky-ui
 EnvironmentFile=/etc/sky-ui/server.env
+Environment=SKY_UI_SYSTEMD_CONTROL_SOCKET=/run/sky-ui-systemd-control.sock
 ExecStart=/opt/sky-ui/current/bin/sky-ui
 Restart=on-failure
 RestartSec=3

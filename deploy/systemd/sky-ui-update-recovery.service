@@ -13,5 +13,5 @@ PrivateTmp=yes
 ProtectHome=yes
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/opt/sky-ui /etc/sky-ui /etc/systemd/system /etc/polkit-1/rules.d /usr/local/bin /var/lib/sky-ui /var/lib/sky-ui-maintenance /var/lib/sky-ui-edge /var/lib/sky-ui-certificates /run/lock
+ReadWritePaths=/opt/sky-ui /etc/sky-ui /etc/systemd/system -/etc/polkit-1/rules.d /usr/local/bin /var/lib/sky-ui /var/lib/sky-ui-maintenance /var/lib/sky-ui-edge /var/lib/sky-ui-certificates /run/lock
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK

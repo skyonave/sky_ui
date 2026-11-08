@@ -8,6 +8,7 @@ import 'package:sky_ui_api/src/engines/proxy/adapter.dart';
 import 'package:sky_ui_api/src/engines/proxy/configuration.dart';
 import 'package:sky_ui_api/src/engines/amnezia/adapter.dart';
 import 'package:sky_ui_api/src/engines/amnezia/configuration.dart';
+import 'package:sky_ui_api/src/infrastructure/process/systemd_control.dart';
 
 Future<void> main(List<String> args) async {
   if (args.contains('--version')) {
@@ -19,7 +20,9 @@ Future<void> main(List<String> args) async {
     environment: {'SAFE_PATHS': config.certificatesDirectory},
   );
   final adapter = MihomoAdapter(runner);
-  final supervisor = SystemdSupervisor(runner);
+  final controlPath = Platform.environment['SKY_UI_SYSTEMD_CONTROL_SOCKET'];
+  final control = controlPath == null ? null : SystemdControl(controlPath);
+  final supervisor = SystemdSupervisor(runner, control: control);
   final manager = CoreManager(
     core: config.core,
     adapters: {adapter.id: adapter},
@@ -92,7 +95,7 @@ Future<void> main(List<String> args) async {
       manager,
       panel: panel,
       auth: ownerAuth,
-      maintenance: MaintenanceService(runner),
+      maintenance: MaintenanceService(runner, control: control),
     ),
     InternetAddress.loopbackIPv4,
     config.port,

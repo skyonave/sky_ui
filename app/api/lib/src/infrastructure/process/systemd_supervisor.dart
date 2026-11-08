@@ -6,11 +6,13 @@ import '../../engines/contracts.dart';
 import '../../engines/managed_core.dart';
 import '../../shared/api_exception.dart';
 import 'command_runner.dart';
+import 'systemd_control.dart';
 
 class SystemdSupervisor implements ProcessSupervisor {
-  SystemdSupervisor(this.runner, {bool? linux})
+  SystemdSupervisor(this.runner, {this.control, bool? linux})
     : supported = linux ?? Platform.isLinux;
   final CommandRunner runner;
+  final SystemdControl? control;
   @override
   final bool supported;
 
@@ -85,22 +87,18 @@ class SystemdSupervisor implements ProcessSupervisor {
       throw const ApiException('service_missing', status: 409);
     if (operation != CoreOperation.stop) {
       // Explicit owner actions may be frequent; retain crash-loop limits for automatic restarts.
-      final reset = await runner.run('/usr/bin/systemctl', [
-        '--no-ask-password',
-        'reset-failed',
-        core.service,
-      ]);
+      final reset = await _execute('reset-failed', core.service);
       // systemd may garbage-collect a stopped, never-used unit between inspect
       // and reset-failed. Starting it remains valid; a failed unit must reset.
       if (reset.exitCode != 0 && observed.state == CoreProcessState.failed)
         throw const ApiException('service_operation_failed');
     }
-    final result = await runner.run('/usr/bin/systemctl', [
-      '--no-ask-password',
-      operation.name,
-      core.service,
-    ]);
+    final result = await _execute(operation.name, core.service);
     if (result.exitCode != 0)
       throw const ApiException('service_operation_failed');
   }
+
+  Future<CommandResult> _execute(String verb, String unit) =>
+      control?.run(verb, unit) ??
+      runner.run('/usr/bin/systemctl', ['--no-ask-password', verb, unit]);
 }
