@@ -33,34 +33,27 @@ class RoutePolicy {
           policy.rules.length > NodeRouting.maxRules) {
         _invalid();
       }
+      final coreId = entry.key == input.ingress ? input.coreId : 'mihomo';
       final rules = <RoutingRule>[];
       for (final rule in policy.rules) {
-        if (!NodeRouting.matchesFor(input.coreId).contains(rule.type)) {
+        if (!NodeRouting.matchesFor(coreId).contains(rule.type) ||
+            !actions.contains(rule.action) ||
+            rule.target.length > NodeRouting.maxTargetLength) {
           _invalid();
         }
-        var target = rule.target.trim().toLowerCase();
-        final ip = rule.type == 'cidr'
-            ? InternetAddress.tryParse(target)
-            : null;
-        if (ip != null) {
-          target =
-              '${ip.address}/${ip.type == InternetAddressType.IPv4 ? 32 : 128}';
+        final targets = rule.targets;
+        if (targets.isEmpty ||
+            targets.length > NodeRouting.maxTargets ||
+            (targets.length > 1 &&
+                !NodeRouting.allowsTargetList(coreId, rule.type))) {
+          _invalid();
         }
-        final valid = switch (rule.type) {
-          'domain' || 'suffix' => CoreSettingsForm.domain(target),
-          'cidr' =>
-            (input.coreId != 'amneziawg' || !target.contains(':')) &&
-                RegExp(r'^[0-9a-f:.]+/\d{1,3}$').hasMatch(target) &&
-                CoreSettingsForm.cidr(target),
-          'port' =>
-            RegExp(r'^\d{1,5}$').hasMatch(target) &&
-                int.parse(target) >= 1 &&
-                int.parse(target) <= 65535,
-          'network' => target == 'tcp' || target == 'udp',
-          _ => false,
-        };
-        if (!valid || !actions.contains(rule.action)) _invalid();
-        rules.add(RoutingRule(rule.type, target, rule.action));
+        final normalized = targets
+            .map((target) => _target(rule.type, target.toLowerCase(), coreId))
+            .toSet()
+            .join(', ');
+        if (normalized.length > NodeRouting.maxTargetLength) _invalid();
+        rules.add(RoutingRule(rule.type, normalized, rule.action));
       }
       if (!policy.isDefault) {
         result[entry.key] = NodeRouting(
@@ -70,6 +63,45 @@ class RoutePolicy {
       }
     }
     return result;
+  }
+
+  static String _target(String type, String target, String coreId) {
+    if ((type == 'geosite' || type == 'geoip') && target.startsWith('$type:')) {
+      target = target.substring(type.length + 1);
+    }
+    if (type == 'domain' || type == 'suffix' || type == 'wildcard') {
+      if (target.endsWith('.')) {
+        target = target.substring(0, target.length - 1);
+      }
+    }
+    if (type == 'cidr') {
+      final ip = InternetAddress.tryParse(target);
+      if (ip != null) {
+        target =
+            '${ip.address}/${ip.type == InternetAddressType.IPv4 ? 32 : 128}';
+      }
+    }
+    final valid = switch (type) {
+      'domain' || 'suffix' => CoreSettingsForm.domain(target),
+      'wildcard' =>
+        target.contains('*') &&
+            CoreSettingsForm.domain(target.replaceAll('*', 'x')),
+      'keyword' => RegExp(r'^[a-z0-9][a-z0-9.-]{0,62}$').hasMatch(target),
+      'geosite' => RegExp(r'^[a-z0-9][a-z0-9_-]{0,63}$').hasMatch(target),
+      'geoip' => target == 'private' || RegExp(r'^[a-z]{2}$').hasMatch(target),
+      'cidr' =>
+        (coreId != 'amneziawg' || !target.contains(':')) &&
+            RegExp(r'^[0-9a-f:.]+/\d{1,3}$').hasMatch(target) &&
+            CoreSettingsForm.cidr(target),
+      'port' =>
+        RegExp(r'^\d{1,5}$').hasMatch(target) &&
+            int.parse(target) >= 1 &&
+            int.parse(target) <= 65535,
+      'network' => target == 'tcp' || target == 'udp',
+      _ => false,
+    };
+    if (!valid) _invalid();
+    return target;
   }
 
   static Never _invalid() =>

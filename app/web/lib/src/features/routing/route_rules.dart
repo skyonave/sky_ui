@@ -2,6 +2,7 @@ import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
+import '../../shared/components/field_help.dart';
 import '../../shared/components/primitives.dart';
 import '../../shared/localization/strings.dart';
 
@@ -28,7 +29,11 @@ class RouteRules extends StatelessComponent {
   static const _examples = {
     'domain': 'www.example.com',
     'suffix': 'example.com',
+    'wildcard': '*.example.com',
+    'keyword': 'example',
+    'geosite': 'youtube, category-ads-all',
     'cidr': '203.0.113.0/24',
+    'geoip': 'ru, private',
     'port': '443',
   };
   static const t = AppStrings();
@@ -67,6 +72,7 @@ class RouteRules extends StatelessComponent {
         _row(
           rows[i],
           {if (rows[i].action == NodeRouting.next) ...routeAction, ...actions},
+          i,
           change: (value) => update([...rows]..[i] = value),
           remove: () => update([...rows]..removeAt(i)),
           up: i > 0 ? () => move(i, i - 1) : null,
@@ -103,7 +109,8 @@ class RouteRules extends StatelessComponent {
 
   Component _row(
     RoutingRule rule,
-    Map<String, String> actions, {
+    Map<String, String> actions,
+    int index, {
     required void Function(RoutingRule) change,
     required void Function() remove,
     required void Function()? up,
@@ -126,20 +133,7 @@ class RouteRules extends StatelessComponent {
         'udp': 'UDP',
       }, (value) => change(RoutingRule(rule.type, value, rule.action)))
     else
-      label([
-        txt(t('routing.target')),
-        input<String>(
-          type: InputType.text,
-          value: rule.target,
-          disabled: !editable,
-          attributes: {
-            'placeholder': _examples[rule.type] ?? '',
-            'maxlength': '253',
-          },
-          onInput: (value) =>
-              change(RoutingRule(rule.type, value, rule.action)),
-        ),
-      ]),
+      _target(rule, index, change),
     _select(
       'routing.action',
       rule.action,
@@ -162,6 +156,46 @@ class RouteRules extends StatelessComponent {
       iconButton('trash', t('routing.remove'), remove, disabled: !editable),
     ], classes: 'route-rule-actions'),
   ], classes: 'route-rule-row');
+
+  Component _target(
+    RoutingRule rule,
+    int index,
+    void Function(RoutingRule) change,
+  ) {
+    final id = 'routing-target-$index';
+    final label = t('routing.target');
+    final multiple = NodeRouting.allowsTargetList(coreId, rule.type);
+    final help = [
+      t('routing.help.${rule.type}'),
+      if (multiple) t('routing.help.list', {'count': NodeRouting.maxTargets}),
+    ].join(' ');
+    final attributes = {
+      'placeholder': _examples[rule.type] ?? '',
+      'maxlength': multiple ? '${NodeRouting.maxTargetLength}' : '253',
+    };
+    void update(String value) =>
+        change(RoutingRule(rule.type, value, rule.action));
+
+    return div([
+      div([
+        el('label', [txt(label)], attributes: {'for': id}),
+        FieldHelp(
+          id: '$id-help',
+          label: t('routing.${rule.type}'),
+          description: help,
+          buttonLabel: t('common.help', {'name': label}),
+        ),
+      ], classes: 'field-label'),
+      input<String>(
+        id: id,
+        type: InputType.text,
+        value: rule.target,
+        disabled: !editable,
+        attributes: attributes,
+        onInput: update,
+      ),
+    ], classes: 'route-rule-target');
+  }
 
   Component _select(
     String labelKey,

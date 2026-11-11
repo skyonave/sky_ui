@@ -231,6 +231,7 @@ tbody tr:hover { background: #1d1a21; }
 .route-rule-row { display: grid; grid-template-columns: 1fr 1.2fr 1.2fr auto; gap: 8px; align-items: end; }
 .route-rule-row label { min-width: 0; }
 .route-rule-row select, .route-rule-row input { width: 100%; }
+.route-rule-target { min-width: 0; }
 .route-rule-actions { display: flex; }
 @media (max-width: 650px) {
   .route-rule-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }

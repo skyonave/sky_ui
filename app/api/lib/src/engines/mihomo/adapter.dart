@@ -179,15 +179,31 @@ class MihomoAdapter implements CoreAdapter, CorePresenceSource {
       throw const ApiException('binary_missing', status: 409);
     if (!await File(core.configuration).exists())
       throw const ApiException('configuration_missing', status: 409);
-    final result = await runner.run(core.binary, [
-      '-t',
-      '-d',
-      core.directory,
-      '-f',
-      core.configuration,
-    ]);
-    if (result.exitCode != 0)
+    final args = ['-t', '-d', core.directory, '-f', core.configuration];
+    // The validator can seed native GeoSite/GeoIP files used by the service.
+    final result = Platform.isLinux
+        ? await runner.run('/bin/sh', [
+            '-c',
+            r'umask 027; exec "$@"',
+            'mihomo',
+            core.binary,
+            ...args,
+          ])
+        : await runner.run(core.binary, args);
+    if (result.exitCode != 0) {
+      final message = result.output.toLowerCase();
+      if (RegExp(
+        r"can't download (geosite\.dat|geoip\.dat|mmdb)",
+      ).hasMatch(message)) {
+        throw const ApiException('route_geo_unavailable', status: 422);
+      }
+      if (RegExp(
+        r'(list|country(?: code)?) [a-z0-9_-]+ not found',
+      ).hasMatch(message)) {
+        throw const ApiException('route_geo_unknown', status: 422);
+      }
       throw const ApiException('configuration_invalid', status: 422);
+    }
   }
 
   @override

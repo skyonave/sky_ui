@@ -9,6 +9,7 @@ import '../../shared/api_exception.dart';
 import '../contracts.dart';
 import '../managed_core.dart';
 import '../xray/traffic.dart';
+import 'routing_geodata.dart';
 
 /// Only the required lifecycle/validation interface; no fictitious controller API.
 class JsonProxyAdapter implements CoreAdapter, CorePresenceSource {
@@ -120,14 +121,30 @@ class JsonProxyAdapter implements CoreAdapter, CorePresenceSource {
       throw const ApiException('binary_missing', status: 409);
     if (!await File(core.configuration).exists())
       throw const ApiException('configuration_missing', status: 409);
+    Object? config;
+    try {
+      config = jsonDecode(await File(core.configuration).readAsString());
+    } on FormatException {
+      // Let the native engine validate syntax outside the generated JSON.
+    }
+    if (config is Map<String, dynamic>) {
+      await RoutingGeoData.prepare(core, config, runner);
+    }
     final result = await runner.run(
       core.binary,
       id == 'xray'
           ? ['run', '-test', '-config', core.configuration]
           : ['check', '-c', core.configuration],
     );
-    if (result.exitCode != 0)
+    if (result.exitCode != 0) {
+      if (id == 'xray' &&
+          RegExp(
+            r'failed to check code [A-Z0-9_-]+ from sky-ui-(geosite|geoip)\.dat > EOF',
+          ).hasMatch(result.output)) {
+        throw const ApiException('route_geo_unknown', status: 422);
+      }
       throw const ApiException('configuration_invalid', status: 422);
+    }
   }
 
   @override

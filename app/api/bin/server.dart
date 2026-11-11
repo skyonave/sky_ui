@@ -19,7 +19,11 @@ Future<void> main(List<String> args) async {
   }
   final config = await ServerConfig.fromEnvironment();
   final runner = NativeCommandRunner(
-    environment: {'SAFE_PATHS': config.certificatesDirectory},
+    environment: {
+      'SAFE_PATHS': config.certificatesDirectory,
+      for (final core in config.proxyCores)
+        if (core.coreId == 'xray') 'XRAY_LOCATION_ASSET': core.directory,
+    },
   );
   final adapter = MihomoAdapter(runner);
   final controlPath = Platform.environment['SKY_UI_SYSTEMD_CONTROL_SOCKET'];

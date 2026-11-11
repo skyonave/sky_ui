@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../application/core_settings/form.dart';
+import '../domain_pattern.dart';
+import '../proxy/routing_geodata.dart';
 import '../../shared/api_exception.dart';
 import '../proxy/relay_outbounds.dart';
 
@@ -93,7 +95,7 @@ class XraySettings {
     final policyResolveIp =
         relays.isNotEmpty ||
         policies.values.any(
-          (policy) => policy.rules.any((rule) => rule.type == 'cidr'),
+          (policy) => policy.rules.any((rule) => rule.matchesIp),
         );
     final customDns = values['dnsMode'] != 'existing';
     final privateTags = values['blockPrivate'] == 'true'
@@ -182,19 +184,7 @@ class XraySettings {
             },
         for (final e in policies.entries) ...[
           for (final rule in e.value.rules)
-            _policyRule(e.key, rule.action, relays[e.key], switch (rule.type) {
-              'domain' => {
-                'domain': ['full:${rule.target}'],
-              },
-              'suffix' => {
-                'domain': ['domain:${rule.target}'],
-              },
-              'cidr' => {
-                'ip': [rule.target],
-              },
-              'port' => {'port': rule.target},
-              _ => {'network': rule.target},
-            }),
+            _policyRule(e.key, rule.action, relays[e.key], _match(rule)),
           _policyRule(e.key, e.value.fallback, relays[e.key], const {
             'network': 'tcp,udp',
           }),
@@ -218,6 +208,40 @@ class XraySettings {
     } else {
       base.remove('routing');
     }
+  }
+
+  static Map<String, Object?> _match(RoutingRule rule) {
+    final targets = rule.targets;
+    return switch (rule.type) {
+      'domain' => {
+        'domain': [for (final value in targets) 'full:$value'],
+      },
+      'suffix' => {
+        'domain': [for (final value in targets) 'domain:$value'],
+      },
+      'keyword' => {'domain': targets},
+      'wildcard' => {
+        'domain': [
+          for (final value in targets) 'regexp:${domainPattern(value)}',
+        ],
+      },
+      'geosite' => {
+        'domain': [
+          for (final value in targets)
+            'ext:${RoutingGeoData.xrayAsset('geosite')}:$value',
+        ],
+      },
+      'geoip' => {
+        'ip': [
+          for (final value in targets)
+            'ext:${RoutingGeoData.xrayAsset('geoip')}:$value',
+        ],
+      },
+      'cidr' => {'ip': targets},
+      'port' => {'port': targets.join(',')},
+      'network' => {'network': rule.target},
+      _ => throw StateError('Invalid routing match type'),
+    };
   }
 
   static Map<String, Object?> _policyRule(

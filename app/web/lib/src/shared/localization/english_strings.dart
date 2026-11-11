@@ -29,9 +29,28 @@ const englishStrings = <String, String>{
   'routing.action': 'Action',
   'routing.domain': 'Exact domain',
   'routing.suffix': 'Domain and subdomains',
+  'routing.wildcard': 'Domain wildcard',
+  'routing.keyword': 'Domain keyword',
+  'routing.geosite': 'GeoSite · domain groups',
   'routing.cidr': 'IP or network (CIDR)',
+  'routing.geoip': 'GeoIP · IP groups',
   'routing.port': 'Destination port',
   'routing.network': 'TCP or UDP',
+  'routing.help.domain': 'Enter a hostname without a scheme or path.',
+  'routing.help.suffix':
+      'example.com includes the domain and all its subdomains.',
+  'routing.help.wildcard':
+      '* matches any part of the hostname. *.example.com matches subdomains. Add example.com separately.',
+  'routing.help.keyword': 'Matches any hostname containing this text.',
+  'routing.help.geosite':
+      'Enter a domain group from the engine dataset, such as youtube or category-ads-all.',
+  'routing.help.cidr':
+      'Enter a single IP address or a network with a prefix length.',
+  'routing.help.geoip':
+      'Enter a two-letter country code, such as ru, or private for local addresses.',
+  'routing.help.port': 'Enter a destination port from 1 to 65535.',
+  'routing.help.list':
+      'Up to {count} comma-separated values. Any one can match.',
   'routing.up': 'Move rule up',
   'routing.down': 'Move rule down',
   'routing.remove': 'Delete rule',
@@ -40,6 +59,10 @@ const englishStrings = <String, String>{
   'routing.links': 'Additional relay ports (TCP and UDP)',
   'runtime.error.route_policy_invalid':
       'Check the rule conditions and actions. Traffic can only be forwarded to a later node.',
+  'runtime.error.route_geo_unknown':
+      'The GeoSite or GeoIP group is missing from the dataset. Check its name.',
+  'runtime.error.route_geo_unavailable':
+      'Could not download the GeoSite or GeoIP dataset. Check the server’s access to GitHub and save again.',
   'runtime.error.route_policy_conflict':
       'This connection already uses a custom native rule or outbound. Reset it to use panel routing rules.',
   'servers.bootstrap': 'Install over SSH',

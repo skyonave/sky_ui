@@ -10,6 +10,7 @@ Type=simple
 User=sky-ui-xray
 Group=sky-ui
 WorkingDirectory=/var/lib/sky-ui/cores/xray
+Environment=XRAY_LOCATION_ASSET=/var/lib/sky-ui/cores/xray
 ExecStartPre=/opt/sky-ui/cores/xray/current/xray run -test -config /var/lib/sky-ui/cores/xray/config.json
 ExecStart=/opt/sky-ui/cores/xray/current/xray run -config /var/lib/sky-ui/cores/xray/config.json
 Restart=on-failure

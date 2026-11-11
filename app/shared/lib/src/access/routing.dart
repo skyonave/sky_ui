@@ -18,6 +18,14 @@ class RoutingRule {
 
   final String type, target, action;
 
+  List<String> get targets => target
+      .split(RegExp(r'[,\r\n]+'))
+      .map((value) => value.trim())
+      .where((value) => value.isNotEmpty)
+      .toList();
+
+  bool get matchesIp => type == 'cidr' || type == 'geoip';
+
   factory RoutingRule.fromJson(Map<String, dynamic> json) => RoutingRule(
     json['type'] as String,
     json['target'] as String,
@@ -40,11 +48,26 @@ class NodeRouting {
   static const nodePrefix = 'node:';
   static const maxRules = 32;
   static const maxTotalRules = 128;
-  static const matches = ['domain', 'suffix', 'cidr', 'port', 'network'];
+  static const maxTargets = 8;
+  static const maxTargetLength = 1024;
+  static const matches = [
+    'domain',
+    'suffix',
+    'wildcard',
+    'keyword',
+    'geosite',
+    'cidr',
+    'geoip',
+    'port',
+    'network',
+  ];
   static const packetMatches = ['cidr', 'port', 'network'];
 
   static List<String> matchesFor(String coreId) =>
       coreId == 'amneziawg' ? packetMatches : matches;
+
+  static bool allowsTargetList(String coreId, String type) =>
+      coreId != 'amneziawg' && type != 'network';
 
   static bool supportsProxyCascade(String? coreId) =>
       const {'mihomo', 'sing-box', 'xray'}.contains(coreId);

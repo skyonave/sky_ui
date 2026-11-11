@@ -63,9 +63,28 @@ class AppStrings {
       'routing.action': 'Действие',
       'routing.domain': 'Точный домен',
       'routing.suffix': 'Домен и поддомены',
+      'routing.wildcard': 'Маска домена',
+      'routing.keyword': 'Часть домена',
+      'routing.geosite': 'GeoSite · группы доменов',
       'routing.cidr': 'IP или сеть (CIDR)',
+      'routing.geoip': 'GeoIP · группы IP',
       'routing.port': 'Порт назначения',
       'routing.network': 'TCP или UDP',
+      'routing.help.domain': 'Укажите имя хоста без схемы и пути.',
+      'routing.help.suffix':
+          'example.com включает сам домен и все его поддомены.',
+      'routing.help.wildcard':
+          '* заменяет любую часть имени. *.example.com включает поддомены, а example.com добавляется отдельно.',
+      'routing.help.keyword':
+          'Совпадает, если имя хоста содержит этот фрагмент.',
+      'routing.help.geosite':
+          'Введите название группы доменов из базы ядра, например youtube или category-ads-all.',
+      'routing.help.cidr': 'Укажите один IP или сеть с длиной префикса.',
+      'routing.help.geoip':
+          'Введите код страны из двух букв, например ru, или private для локальных адресов.',
+      'routing.help.port': 'Укажите порт назначения от 1 до 65535.',
+      'routing.help.list':
+          'До {count} значений через запятую. Достаточно любого совпадения.',
       'routing.up': 'Поднять правило',
       'routing.down': 'Опустить правило',
       'routing.remove': 'Удалить правило',
@@ -74,6 +93,10 @@ class AppStrings {
       'routing.links': 'Порты дополнительных переходов (TCP и UDP)',
       'runtime.error.route_policy_invalid':
           'Проверьте условия и действия правил. Передать трафик можно только узлу дальше по маршруту.',
+      'runtime.error.route_geo_unknown':
+          'Группа GeoSite или GeoIP отсутствует в базе. Проверьте её название.',
+      'runtime.error.route_geo_unavailable':
+          'Не удалось загрузить базу GeoSite или GeoIP. Проверьте доступ сервера к GitHub и повторите сохранение.',
       'runtime.error.route_policy_conflict':
           'У подключения уже задано собственное правило или выход в настройках ядра. Сбросьте его, чтобы использовать правила панели.',
       'servers.bootstrap': 'Установить по SSH',

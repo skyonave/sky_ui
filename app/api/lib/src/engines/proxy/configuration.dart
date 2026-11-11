@@ -422,6 +422,7 @@ class ProxyConfiguration
         data.coreSettings[core.id],
         policies: policies,
         relays: relays,
+        directory: core.directory,
       );
     }
     return '${const JsonEncoder.withIndent('  ').convert(base)}\n';

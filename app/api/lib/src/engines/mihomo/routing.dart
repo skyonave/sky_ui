@@ -1,6 +1,7 @@
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../application/access/records.dart';
+import '../domain_pattern.dart';
 import 'settings.dart';
 
 class MihomoRouting {
@@ -34,18 +35,29 @@ class MihomoRouting {
 
     return [
       for (final rule in policy.rules)
-        '${_kind(rule)},${rule.target},${target(rule.action)}',
+        for (final value in rule.targets)
+          '${_kind(rule.type, value)},${_value(rule.type, value)},${target(rule.action)}',
       'MATCH,${target(policy.fallback)}',
     ];
   }
 
-  static String _kind(RoutingRule rule) => switch (rule.type) {
+  static String _kind(String type, String value) => switch (type) {
     'domain' => 'DOMAIN',
     'suffix' => 'DOMAIN-SUFFIX',
-    'cidr' => rule.target.contains(':') ? 'IP-CIDR6' : 'IP-CIDR',
+    'wildcard' => 'DOMAIN-REGEX',
+    'keyword' => 'DOMAIN-KEYWORD',
+    'geosite' => 'GEOSITE',
+    'geoip' => 'GEOIP',
+    'cidr' => value.contains(':') ? 'IP-CIDR6' : 'IP-CIDR',
     'port' => 'DST-PORT',
     'network' => 'NETWORK',
     _ => throw StateError('Invalid routing match type'),
+  };
+
+  static String _value(String type, String value) => switch (type) {
+    'wildcard' => domainPattern(value),
+    'geoip' when value == 'private' => 'LAN',
+    _ => value,
   };
 
   static void applyIngress(

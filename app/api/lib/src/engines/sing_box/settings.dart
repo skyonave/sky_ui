@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../application/core_settings/form.dart';
+import '../domain_pattern.dart';
 import '../proxy/relay_outbounds.dart';
+import '../proxy/routing_geodata.dart';
 
 /// sing-box 1.14 typed DNS transports and scoped route actions.
 class SingBoxSettings {
@@ -79,6 +81,7 @@ class SingBoxSettings {
     Map<String, String>? values, {
     Map<String, NodeRouting> policies = const {},
     Map<String, Map<String, String>> relays = const {},
+    String? directory,
   }) {
     if (values == null) return;
     final original = jsonDecode(values['_baseline']!) as Map;
@@ -87,6 +90,27 @@ class SingBoxSettings {
     if (values['logLevel'] != 'disabled') log['level'] = values['logLevel'];
     base['log'] = log;
     final route = Map<String, dynamic>.from(original['route'] as Map? ?? {});
+    final ruleSets = <String, Map<String, Object?>>{};
+    for (final policy in policies.values) {
+      for (final rule in policy.rules) {
+        if (rule.type != 'geosite' && rule.type != 'geoip') continue;
+        for (final value in rule.targets) {
+          final tag = RoutingGeoData.singTag(rule.type, value);
+          ruleSets[tag] = {
+            'type': 'local',
+            'tag': tag,
+            'format': 'binary',
+            'path': RoutingGeoData.singPath(directory!, rule.type, value),
+          };
+        }
+      }
+    }
+    if (ruleSets.isNotEmpty) {
+      route['rule_set'] = [
+        ...route['rule_set'] as List? ?? [],
+        ...ruleSets.values,
+      ];
+    }
     final rows = jsonDecode(values['accessRules']!) as List;
     final resolveIp =
         values['blockPrivate'] == 'true' ||
@@ -97,7 +121,7 @@ class SingBoxSettings {
         : {
             ...relays.keys,
             for (final e in policies.entries)
-              if (e.value.rules.any((rule) => rule.type == 'cidr')) e.key,
+              if (e.value.rules.any((rule) => rule.matchesIp)) e.key,
           }.toList();
     final privateTags = values['blockPrivate'] == 'true'
         ? tags
@@ -150,17 +174,7 @@ class SingBoxSettings {
             },
         for (final e in policies.entries) ...[
           for (final rule in e.value.rules)
-            _policyRule(e.key, rule.action, relays[e.key], {
-              switch (rule.type) {
-                'domain' => 'domain',
-                'suffix' => 'domain_suffix',
-                'cidr' => 'ip_cidr',
-                'port' => 'port',
-                _ => 'network',
-              }: [
-                rule.type == 'port' ? int.parse(rule.target) : rule.target,
-              ],
-            }),
+            _policyRule(e.key, rule.action, relays[e.key], _match(rule)),
           _policyRule(e.key, e.value.fallback, relays[e.key], const {}),
         ],
       ],
@@ -181,6 +195,25 @@ class SingBoxSettings {
         (rows.any((r) => r['action'] == 'allow') || policies.isNotEmpty))
       outbounds.add({'type': 'direct', 'tag': directTag});
     base['outbounds'] = outbounds;
+  }
+
+  static Map<String, Object?> _match(RoutingRule rule) {
+    final targets = rule.targets;
+    return switch (rule.type) {
+      'domain' => {'domain': targets},
+      'suffix' => {'domain_suffix': targets},
+      'keyword' => {'domain_keyword': targets},
+      'wildcard' => {'domain_regex': targets.map(domainPattern).toList()},
+      'geosite' || 'geoip' => {
+        'rule_set': [
+          for (final value in targets) RoutingGeoData.singTag(rule.type, value),
+        ],
+      },
+      'cidr' => {'ip_cidr': targets},
+      'port' => {'port': targets.map(int.parse).toList()},
+      'network' => {'network': targets},
+      _ => throw StateError('Invalid routing match type'),
+    };
   }
 
   static Map<String, Object?> _policyRule(

@@ -197,6 +197,7 @@ Future<void> validateEngine(
     '-u',
     'sky-ui-$core',
     '--',
+    if (core == 'xray') ...['env', 'XRAY_LOCATION_ASSET=$dataRoot/cores/xray'],
     binary,
     ...core == 'xray'
         ? ['run', '-test', '-config', configuration]

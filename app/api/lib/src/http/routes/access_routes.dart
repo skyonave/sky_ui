@@ -124,7 +124,10 @@ void registerAccessRoutes(
     );
   });
   Future<Response> saveConnection(RequestContext context, {String? id}) async {
-    final value = await body(context);
+    final value = await body(
+      context,
+      limit: 65536 + NodeRouting.maxTotalRules * NodeRouting.maxTargetLength,
+    );
     Connection input;
     try {
       input = Connection.fromJson(
@@ -158,7 +161,7 @@ void registerAccessRoutes(
     RequestContext context,
     String id,
   ) async {
-    final value = await body(context, limit: 16384);
+    final value = await body(context);
     final node = value['node'];
     if (node is! String || node.isEmpty || node.length > 80) {
       throw const ApiException('request_invalid', status: 400);
