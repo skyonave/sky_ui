@@ -171,9 +171,17 @@ class ConnectionsPage extends StatelessComponent {
                     txt(
                       c.port == null
                           ? '—'
-                          : '${store.address}:${c.assignedPorts.firstOrNull ?? c.port}${c.assignedPorts.length > 1 ? ' (+${c.assignedPorts.length - 1})' : ''}',
+                          : '${c.ingress == Connection.localNode ? store.address : store.routeNodes[c.ingress] ?? c.ingress}:${c.assignedPorts.firstOrNull ?? c.port}${c.assignedPorts.length > 1 ? ' (+${c.assignedPorts.length - 1})' : ''}',
                       classes: 'endpoint',
                     ),
+                    if (c.route.length > 1)
+                      txt(
+                        [
+                          for (var i = 0; i < c.route.length; i++)
+                            '${store.routeNodes[c.route[i]] ?? c.route[i]}${i > 0 && c.routePorts.length >= i ? ':${c.routePorts[i - 1]}' : ''}',
+                        ].join(' → '),
+                        classes: 'transport-note',
+                      ),
                   ]),
                 ], classes: 'connection-name'),
               ]),
@@ -200,21 +208,23 @@ class ConnectionsPage extends StatelessComponent {
                   t(
                     dataBusy
                         ? 'data.applying'
-                        : !coreInstalled(c.coreId)
+                        : c.ingress == Connection.localNode &&
+                              !coreInstalled(c.coreId)
                         ? 'core.missingStatus'
                         : !c.enabled
                         ? 'status.disabled'
                         : c.shareable && store.recipientsFor(c.id).isEmpty
                         ? 'status.unassigned'
-                        : !store.deliveryReady
+                        : !store.ready(c)
                         ? 'status.stopped'
+                        : c.ingress != Connection.localNode
+                        ? 'status.deployed'
                         : 'status.active',
                   ),
                   positive:
                       !dataBusy &&
                       c.enabled &&
-                      coreInstalled(c.coreId) &&
-                      store.deliveryReady &&
+                      store.ready(c) &&
                       (!c.shareable || store.recipientsFor(c.id).isNotEmpty),
                 ),
               ]),
@@ -232,7 +242,7 @@ class ConnectionsPage extends StatelessComponent {
                     'activity',
                     '${t('diagnostics.action')}: ${c.name}',
                     () => onDiagnose(c),
-                    disabled: !canInspect,
+                    disabled: !canInspect || c.ingress != Connection.localNode,
                   ),
                   iconButton(
                     'edit',

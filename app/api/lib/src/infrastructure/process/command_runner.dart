@@ -26,6 +26,13 @@ class NativeCommandRunner implements CommandRunner {
     String executable,
     List<String> arguments, {
     Duration timeout = const Duration(seconds: 15),
+  }) => runWithInput(executable, arguments, timeout: timeout);
+
+  Future<CommandResult> runWithInput(
+    String executable,
+    List<String> arguments, {
+    String? input,
+    Duration timeout = const Duration(seconds: 15),
   }) async {
     final Process process;
     try {
@@ -47,10 +54,21 @@ class NativeCommandRunner implements CommandRunner {
     final output = process.stdout.listen(collect);
     final errors = process.stderr.listen(collect);
     try {
+      Future<void> write() async {
+        if (input == null) return;
+        try {
+          process.stdin.add(utf8.encode(input));
+          await process.stdin.close();
+        } on IOException {
+          // An early child exit is reported via its exit status.
+        }
+      }
+
       final completed = await Future.wait<Object?>([
         process.exitCode,
         output.asFuture<void>(),
         errors.asFuture<void>(),
+        write(),
       ]).timeout(timeout);
       final code = completed.first as int;
       return CommandResult(code, utf8.decode(bytes, allowMalformed: true));

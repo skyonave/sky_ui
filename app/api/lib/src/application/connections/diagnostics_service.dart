@@ -71,6 +71,11 @@ class ConnectionDiagnosticsService {
             .where((c) => c.value.id == connectionId)
             .firstOrNull;
         if (stored == null) throw const ApiException('not_found', status: 404);
+        if (stored.value.ingress != Connection.localNode)
+          throw const ApiException(
+            'route_diagnostics_unavailable',
+            status: 422,
+          );
         final owner = registry.owner(stored.value);
         final scoped = PanelData(
           serverName: data.serverName,

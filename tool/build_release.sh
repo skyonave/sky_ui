@@ -65,6 +65,8 @@ cp web/index.html web/styles.css "$payload/web/"
 cp web/fonts/* "$payload/web/fonts/"
 cp -R "$root/deploy/systemd" "$root/deploy/polkit" "$root/deploy/mihomo" "$payload/deploy/"
 cp "$root/deploy/"*.sh "$root/deploy/sky-ui" "$root/deploy/skyui" "$root/deploy/journald-sky-ui.conf" "$root/deploy/sky-ui-install-tmpfiles.conf" "$payload/deploy/"
+test -s "$payload/deploy/install-server-node.sh"
+bash -n "$payload/deploy/install-server-node.sh"
 cp -R "$root/compatibility" "$payload/"
 dart "$root/tool/collect_licenses.dart" "$root/app/api" "$root/app/ops" "$root/app/web" "$payload/licenses/dart"
 cp "$root/LICENSE" "$payload/LICENSE"
@@ -85,7 +87,9 @@ dart run tool/native_manifest.dart "$root" "$payload" "$arch"
 asset="sky-ui-linux-$arch.tar.gz"
 tar -czf "$output/$asset" -C "$payload" .
 (cd "$output" && sha256sum "$asset" >"$asset.sha256")
-cp "$root/install.sh" "$output/install.sh"
-(cd "$output" && sha256sum install.sh >install.sh.sha256)
+cp "$root/install.sh" "$payload/deploy/install-server-node.sh" "$output/"
+for script in install.sh install-server-node.sh; do
+  (cd "$output" && sha256sum "$script" >"$script.sha256")
+done
 if [[ "$arch" == "$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" ]]; then bash "$root/install.sh" --bundle "$output/$asset" --verify-only; fi
 printf 'Native release bundle: %s/%s\n' "$output" "$asset"

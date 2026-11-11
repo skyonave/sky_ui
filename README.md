@@ -41,6 +41,8 @@ The installer downloads ready-to-run binaries. Dart SDK and compilers are not re
 
 Core updates use the project's [compatibility catalog](compatibility/cores). Only releases verified for your panel version and server architecture can be installed.
 
+From v1.2.0, the Servers page can enroll Linux nodes over SSH and build cascades for Mihomo VLESS TCP + REALITY. Panel updates include the node installer. The release also provides `install-server-node.sh` and its SHA-256 checksum for manual enrollment.
+
 ### Source layout
 
 [app/web](app/web) is the Jaspr UI, [app/api](app/api) is the Dart Frog API, [app/shared](app/shared) contains portable contracts, and [app/ops](app/ops) handles the CLI and server maintenance. Features are grouped inside each application. Run `dart tool/check.dart` to check dependencies, analyze the code and run tests.
@@ -48,6 +50,8 @@ Core updates use the project's [compatibility catalog](compatibility/cores). Onl
 New panel releases appear in the sidebar. Confirm the update there or run `sudo skyui update`. A failed update restores the previous panel and its data.
 
 ## Русский
+
+С v1.2.0 в разделе «Серверы» можно подключать узлы по SSH и собирать каскады mihomo с VLESS TCP + REALITY. Установщик узла приходит с обновлением панели. Для ручной установки в релизе есть отдельный `install-server-node.sh` и его SHA-256.
 
 Панель для управления прокси-ядрами на своём Linux-сервере. Создавайте подключения и делитесь доступом через ссылки, QR-коды и подписки. Подходит для личного сервера, которым пользуются несколько человек.
 

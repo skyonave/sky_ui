@@ -9,6 +9,8 @@ import 'package:sky_ui_api/src/engines/proxy/configuration.dart';
 import 'package:sky_ui_api/src/engines/amnezia/adapter.dart';
 import 'package:sky_ui_api/src/engines/amnezia/configuration.dart';
 import 'package:sky_ui_api/src/infrastructure/process/systemd_control.dart';
+import 'package:sky_ui_api/src/infrastructure/process/ssh_servers.dart';
+import 'package:sky_ui_api/src/application/configuration/relay_routes.dart';
 
 Future<void> main(List<String> args) async {
   if (args.contains('--version')) {
@@ -67,6 +69,13 @@ Future<void> main(List<String> args) async {
     publicAddress: config.webOrigin.host,
     networkAdministration: config.networkAdministration,
   );
+  final servers = Platform.isLinux
+      ? SshServers(
+          config.dataDirectory,
+          runner,
+          bundle: File(Platform.resolvedExecutable).parent.parent,
+        )
+      : null;
   final panel = PanelService(
     configurationStore: ConfigurationFiles(config.dataDirectory),
     config: config,
@@ -86,6 +95,13 @@ Future<void> main(List<String> args) async {
               ),
     },
     exporter: ClashExporter(),
+    routes: servers == null
+        ? null
+        : RelayRoutes(
+            servers,
+            allowNew: config.remoteServersEnabled,
+            localRelayAddress: Platform.environment['SKY_UI_ROUTE_LOCAL_IP'],
+          ),
     additionalExporters: [V2RayExporter()],
   );
   await panel.initialize();
@@ -96,6 +112,7 @@ Future<void> main(List<String> args) async {
       panel: panel,
       auth: ownerAuth,
       maintenance: MaintenanceService(runner, control: control),
+      servers: config.remoteServersEnabled ? servers : null,
     ),
     InternetAddress.loopbackIPv4,
     config.port,

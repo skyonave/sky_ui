@@ -214,6 +214,12 @@ tbody tr:hover { background: #1d1a21; }
 .settings-panel { max-width: 840px; padding: 23px; }
 .settings-panel > h2 { margin-bottom: 24px; }
 .settings-panel > p { margin-top: 11px; }
+.server-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; margin-bottom: 16px; }
+.server-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.server-public-key { display: block; overflow-wrap: anywhere; }
+.server-logs { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.route-field { display: flex; align-items: end; gap: 8px; margin-bottom: 8px; }
+.route-field label { flex: 1; min-width: 0; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 20px; }
 label { display: flex; flex-direction: column; gap: 8px; color: #bfbfbf; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 23px 0; border-bottom: 1px solid #2d2d2d; }

@@ -8,6 +8,7 @@ import '../../shared/api_exception.dart';
 /// Settings owned by Sky UI; unrelated native sections are left intact.
 class MihomoSettings {
   static const rulePrefix = 'sky-ui/access/';
+  static const _relayBaseline = 'x-sky-ui-relay-baseline';
   static final fields = CoreSettingsForm.fields(
     logLevels: ['silent', 'error', 'warning', 'info', 'debug'],
     defaultLogLevel: 'info',
@@ -22,7 +23,41 @@ class MihomoSettings {
     final value = plain(loadYaml(text));
     if (value is! Map<String, dynamic>)
       throw const ApiException('configuration_invalid', status: 422);
+    restoreRelayMode(value);
     return value;
+  }
+
+  static void restoreRelayMode(Map<String, Object?> base) {
+    final old = base.remove(_relayBaseline);
+    if (old is Map) {
+      for (final key in ['mode', 'rules']) {
+        if (old.containsKey(key)) {
+          base[key] = old[key];
+        } else {
+          base.remove(key);
+        }
+      }
+    }
+  }
+
+  static void enableRelayMode(Map<String, Object?> base) {
+    final mode = base['mode']?.toString().toLowerCase() ?? 'rule';
+    if (mode == 'rule') return;
+    if (!{'direct', 'global'}.contains(mode) ||
+        (base['listeners'] as List? ?? const []).any(
+          (l) =>
+              l is Map &&
+              !(l['name']?.toString().startsWith('sky-ui/') ?? false) &&
+              (l['rule']?.toString().isNotEmpty ?? false),
+        )) {
+      throw const ApiException('route_requires_rule_mode', status: 422);
+    }
+    base[_relayBaseline] = {
+      for (final key in ['mode', 'rules'])
+        if (base.containsKey(key)) key: base[key],
+    };
+    base['mode'] = 'rule';
+    base['rules'] = ['MATCH,${mode == 'global' ? 'GLOBAL' : 'DIRECT'}'];
   }
 
   static Map<String, String> read(String text, Map<String, String>? stored) {
@@ -133,7 +168,7 @@ class MihomoSettings {
                 ? 'DOMAIN-SUFFIX'
                 : (row['target'] as String).contains(':')
                 ? 'IP-CIDR6'
-                : 'IP-CIDR'},${row['target']},${row['action'] == 'allow' ? 'DIRECT' : 'REJECT'}',
+                : 'IP-CIDR'},${row['target']},${row['action'] == 'allow' ? (fallbackProxy.startsWith('sky-ui/relay/') ? fallbackProxy : 'DIRECT') : 'REJECT'}',
           if (fallbackProxy.isNotEmpty)
             'MATCH,$fallbackProxy'
           else if (fallbackRule.isNotEmpty)

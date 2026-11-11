@@ -9,6 +9,7 @@ import '../contracts/configuration_store.dart';
 import '../engines/core_manager.dart';
 import '../engines/registry.dart';
 import '../logs/panel_log.dart';
+import 'relay_routes.dart';
 
 /// Owns the durable validate/publish/activate/commit/rollback boundary.
 class ConfigurationTransaction {
@@ -17,14 +18,48 @@ class ConfigurationTransaction {
     required this.repository,
     required this.files,
     required this.log,
+    this.routes,
   });
   final EngineRegistry registry;
   final AccessRepository repository;
   final ConfigurationStore files;
   final PanelLog log;
+  final RelayRoutes? routes;
   CoreManager get manager => registry.primary;
   Map<String, CoreManager> get managers => registry.managers;
   bool busy = false;
+  PanelData local(PanelData data, String instance) =>
+      routes?.project(data, Connection.localNode, instance) ??
+      data.forInstance(instance);
+
+  Future<void> _rollbackRemote(String intent) async {
+    Object? value;
+    try {
+      value = jsonDecode(intent);
+    } on FormatException {
+      return;
+    }
+    if (value is! Map ||
+        value['remote'] is! List ||
+        (value['remote'] as List).isEmpty)
+      return;
+    final transport = routes?.transport;
+    if (transport == null) throw const ApiException('route_node_missing');
+    var failed = false;
+    for (final node in (value['remote'] as List).reversed) {
+      try {
+        await transport.rollback(
+          node as String,
+          value['transaction'] as String,
+        );
+      } on Object {
+        failed = true;
+      }
+    }
+    if (failed)
+      throw const ApiException('configuration_rollback_failed', status: 503);
+  }
+
   Map<String, dynamic> _recovery(DeploymentIntent intent) {
     try {
       final value = jsonDecode(intent.previous);
@@ -44,10 +79,14 @@ class ConfigurationTransaction {
     if (pending == null) return;
     busy = true;
     try {
-      for (final entry in _recovery(pending).entries) {
-        final owner = managers[entry.key];
-        if (owner == null) throw const ApiException('core_unavailable');
-        await _restore(owner, controls[entry.key]!, entry.value as Map);
+      try {
+        for (final entry in _recovery(pending).entries) {
+          final owner = managers[entry.key];
+          if (owner == null) throw const ApiException('core_unavailable');
+          await _restore(owner, controls[entry.key]!, entry.value as Map);
+        }
+      } finally {
+        await _rollbackRemote(pending.previous);
       }
       repository.clearPending();
       log.event('Configuration recovery completed');
@@ -112,6 +151,7 @@ class ConfigurationTransaction {
     await checkRevision(revision);
     busy = true;
     var prepared = false;
+    String? recoveryIntent;
     var stage = 'update access records';
     final changes = <String, Map<String, dynamic>>{};
     final configurations = <String, String>{};
@@ -119,19 +159,43 @@ class ConfigurationTransaction {
       final before = repository.read();
       final after = before.copy();
       await update(after);
+      if (routes == null &&
+          after.connections.any((c) => c.value.route.isNotEmpty)) {
+        throw const ApiException('route_node_missing', status: 409);
+      }
+      final remote =
+          await routes?.changes(
+            before,
+            after,
+            registry.codec(manager.core.coreId),
+            manager.core,
+          ) ??
+          const <RelayChange>[];
       for (final owner in managers.values) {
         stage = 'validate ${owner.core.coreId} configuration';
         final native = registry.codec(owner.core.coreId);
-        final oldData = before.forInstance(owner.core.id);
-        final newData = after.forInstance(owner.core.id);
+        final oldData = local(before, owner.core.id);
+        final newData = local(after, owner.core.id);
         final previous = await files.read(owner.core);
         if (previous == null) {
-          if (newData.connections.isNotEmpty)
+          if (newData.connections.isNotEmpty || newData.relays.isNotEmpty)
             throw const ApiException('binary_missing', status: 409);
           continue;
         }
         String signature(PanelData data) => jsonEncode({
           'coreSettings': data.coreSettings,
+          'relays': [
+            for (final r in data.relays)
+              [
+                r.name,
+                r.port,
+                r.destination,
+                r.source,
+                r.password,
+                r.inbound,
+                r.nextIndex,
+              ],
+          ],
           'connections': data.connections
               .map((c) => {'value': c.value.toJson(), 'secrets': c.secrets})
               .toList(),
@@ -192,6 +256,7 @@ class ConfigurationTransaction {
                     .every((g) => previousActive.contains(g.id)),
               );
           if (!reductionsOnly ||
+              newData.relays.isNotEmpty ||
               (await owner.supervisor.inspect(owner.core)).state ==
                   CoreProcessState.active)
             throw const ApiException('binary_missing', status: 409);
@@ -233,7 +298,8 @@ class ConfigurationTransaction {
         final autoStart =
             !wasRunning &&
             owner.desired != CoreDesiredState.stopped &&
-            newData.listeningConnections.isNotEmpty;
+            (newData.listeningConnections.isNotEmpty ||
+                newData.relays.any((r) => r.inbound));
         if (candidate != previous || autoStart) {
           if (validation != candidate)
             await files.stage(
@@ -250,9 +316,16 @@ class ConfigurationTransaction {
           };
         }
       }
-      if (changes.isNotEmpty) {
+      if (changes.isNotEmpty || remote.isNotEmpty) {
         stage = 'prepare configuration deployment';
-        final intent = jsonEncode({'skyUiDeployment': 2, 'instances': changes});
+        final transaction = newId('tx');
+        final intent = jsonEncode({
+          'skyUiDeployment': 2,
+          'instances': changes,
+          if (remote.isNotEmpty) 'transaction': transaction,
+          if (remote.isNotEmpty) 'remote': remote.map((r) => r.node).toList(),
+        });
+        recoveryIntent = intent;
         // The existing durable row remains the single recovery/maintenance barrier.
         repository.prepare(
           DeploymentIntent(
@@ -262,6 +335,17 @@ class ConfigurationTransaction {
           ),
         );
         prepared = true;
+        for (final change in remote) {
+          stage = 'publish remote configuration';
+          await routes!.transport.publish(
+            change.node,
+            transaction,
+            change.previous,
+            change.configuration,
+            change.ports,
+            change.udpPorts,
+          );
+        }
         for (final entry in changes.entries) {
           final owner = managers[entry.key]!;
           stage = 'publish ${owner.core.coreId} configuration';
@@ -279,10 +363,12 @@ class ConfigurationTransaction {
             stage = 'verify ${owner.core.coreId} listeners';
             await registry
                 .codec(owner.core.coreId)
-                .verifyRunning(after.forInstance(entry.key), owner.core);
+                .verifyRunning(local(after, entry.key), owner.core);
           }
         }
       }
+      stage = 'verify remote links';
+      await routes?.verifyNewLinks(before, after);
       stage = 'commit configuration';
       repository.commit(
         after,
@@ -301,9 +387,13 @@ class ConfigurationTransaction {
       );
       if (prepared) {
         try {
-          for (final entry in changes.entries.toList().reversed) {
-            final owner = managers[entry.key]!;
-            await _restore(owner, controls[entry.key]!, entry.value);
+          try {
+            for (final entry in changes.entries.toList().reversed) {
+              final owner = managers[entry.key]!;
+              await _restore(owner, controls[entry.key]!, entry.value);
+            }
+          } finally {
+            await _rollbackRemote(recoveryIntent!);
           }
           repository.clearPending();
           log.event('Configuration rolled back', level: 'warning');

@@ -17,7 +17,8 @@ for file in bin/sky-ui bin/sky-ops bin/caddy licenses/dart-sdk.LICENSE lib/libsq
   deploy/systemd/sky-ui-mihomo.service deploy/systemd/sky-ui-edge.service deploy/systemd/sky-ui-certificates.service deploy/systemd/sky-ui-certificates.timer deploy/systemd/sky-ui-maintenance.service deploy/systemd/sky-ui-maintenance-recovery.service deploy/systemd/sky-ui-update.service deploy/systemd/sky-ui-update-recovery.service deploy/setup.sh deploy/render_access.sh deploy/sky-ui deploy/skyui compatibility/cores/mihomo.json compatibility/cores/sing-box.json compatibility/cores/xray.json deploy/polkit/49-sky-ui.rules deploy/mihomo/config.example.yaml LICENSE licenses/caddy.LICENSE; do
   printf 'Verification fixture; must never execute.\n' >"$payload/$file"
 done
-printf '0.1.0\n' >"$payload/VERSION"
+cp "$root/deploy/install-server-node.sh" "$payload/deploy/"
+printf '1.2.0\n' >"$payload/VERSION"
 printf '2.31\n' >"$payload/MIN_GLIBC"
 printf '{}\n' >"$payload/BUILD_MANIFEST.json"
 printf 'native-v1\n' >"$payload/BUILD_MODE"
@@ -36,6 +37,14 @@ reject() {
 tar -czf "$bundle" -C "$payload" .
 checksum
 bash "$root/install.sh" --bundle "$bundle" --verify-only
+tar -czf "$bundle" --exclude='./deploy/install-server-node.sh' -C "$payload" .
+checksum
+reject 'Incomplete release: deploy/install-server-node.sh'
+printf '1.1.2\n' >"$payload/VERSION"
+tar -czf "$bundle" --exclude='./deploy/install-server-node.sh' -C "$payload" .
+checksum
+bash "$root/install.sh" --bundle "$bundle" --verify-only
+printf '1.2.0\n' >"$payload/VERSION"
 printf 'Requires=sky-ui-systemd-control.socket\n' >>"$payload/deploy/systemd/sky-ui.service"
 tar -czf "$bundle" --exclude='./deploy/systemd/sky-ui-systemd-control@.service' -C "$payload" .
 checksum

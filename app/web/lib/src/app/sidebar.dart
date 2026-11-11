@@ -57,7 +57,7 @@ class AppSidebar extends StatelessComponent {
         txt(t('nav.workspace'), classes: 'nav-label'),
         for (final key in ['overview', 'connections', 'users']) navItem(key),
         txt(t('nav.system'), classes: 'nav-label second-label'),
-        for (final key in ['core', 'logs', 'settings']) navItem(key),
+        for (final key in ['servers', 'core', 'logs', 'settings']) navItem(key),
       ], classes: 'navigation'),
       div([
         panelUpdateCard(),
@@ -78,7 +78,11 @@ class AppSidebar extends StatelessComponent {
 
   Component navItem(String key) => button(
     [
-      icon(key == 'overview' ? 'grid' : key),
+      icon(switch (key) {
+        'overview' => 'grid',
+        'servers' => 'server',
+        _ => key,
+      }),
       txt(t('nav.$key')),
       if (key == 'connections') txt('$connectionCount', classes: 'nav-count'),
     ],

@@ -1,6 +1,7 @@
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../shared/api_exception.dart';
+import '../configuration/relay_routes.dart';
 import '../contracts/access_environment.dart';
 import '../engines/core_manager.dart';
 import '../engines/registry.dart';
@@ -13,10 +14,12 @@ class ConnectionCommands {
     required this.config,
     required this.registry,
     required this.portProbe,
+    this.routes,
   });
   final AccessEnvironment config;
   final EngineRegistry registry;
   final Future<bool> Function(int) portProbe;
+  final RelayRoutes? routes;
   Map<String, CoreManager> get managers => registry.managers;
   Future<void> save(PanelData data, Connection input, {String? id}) async {
     final old = data.connections.where((c) => c.value.id == id).firstOrNull;
@@ -39,6 +42,10 @@ class ConnectionCommands {
     if (definition == null)
       throw const ApiException('protocol_unavailable', status: 422);
     final port = definition.usesPort ? input.port : null;
+    if (input.route.isNotEmpty &&
+        (routes == null || port == null || port < 1024)) {
+      throw const ApiException('route_invalid', status: 422);
+    }
     if (definition.usesPort && (port == null || port < 1 || port > 65535))
       throw const ApiException('port_invalid', status: 422);
     if (port != null &&
@@ -52,10 +59,18 @@ class ConnectionCommands {
       throw const ApiException('port_reserved', status: 422);
     if (port != null &&
         (data.connections.any(
-              (c) => c.value.id != id && c.value.port == port,
+              (c) =>
+                  c.value.id != id &&
+                  c.value.ingress == input.ingress &&
+                  c.value.port == port,
             ) ||
             data.grants.any(
               (g) => g.connectionId != id && g.credentials['port'] == '$port',
+            ) ||
+            data.connections.any(
+              (c) => c.secrets.entries.any(
+                (e) => e.key.startsWith('relay:port:') && e.value == '$port',
+              ),
             )))
       throw const ApiException('port_in_use', status: 422);
     if (definition.isolatedBindings &&
@@ -64,7 +79,10 @@ class ConnectionCommands {
         data.grants.any((g) => g.credentials['port'] == '$port'))
       throw const ApiException('port_in_use', status: 422);
     if (port != null &&
-        (old == null || old.value.port != port) &&
+        input.ingress == Connection.localNode &&
+        (old == null ||
+            old.value.port != port ||
+            old.value.ingress != input.ingress) &&
         !await portProbe(port)) {
       throw const ApiException('port_in_use', status: 422);
     }
@@ -89,6 +107,13 @@ class ConnectionCommands {
         settings: secretInput,
       ),
     );
+    if (input.route.isNotEmpty &&
+        (settings['transport'] != 'TCP' ||
+            settings['security'] != 'REALITY' ||
+            (settings['routingRule'] ?? '').isNotEmpty ||
+            !{'', 'DIRECT'}.contains(settings['routingProxy'] ?? ''))) {
+      throw const ApiException('route_protocol_unsupported', status: 422);
+    }
     final secretIds = definition.fields
         .where((f) => f.secret)
         .map((f) => f.id)
@@ -103,11 +128,16 @@ class ConnectionCommands {
       enabled: input.enabled,
       settings: settings,
       shareable: definition.shareable,
+      route: input.route,
     );
     final secrets = await codec.connectionSecrets(
       value,
       previous: old?.secrets ?? const {},
     );
+    secrets.removeWhere((key, _) => key.startsWith('relay:'));
+    if (value.route.isNotEmpty) {
+      secrets.addAll(await routes!.prepare(data, value, old));
+    }
     for (final key in secretIds) {
       if ((settings[key] ?? '').isNotEmpty)
         secrets['field:$key'] = settings[key]!;
@@ -126,6 +156,7 @@ class ConnectionCommands {
       configuredSecrets: secretIds
           .where((key) => secrets.containsKey('field:$key'))
           .toList(),
+      route: value.route,
     );
     final record = StoredConnection(safeValue, secrets);
     for (var i = 0; i < data.grants.length; i++) {

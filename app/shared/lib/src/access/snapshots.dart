@@ -18,6 +18,7 @@ class PanelSnapshot {
     this.instanceIds = const {},
     this.instanceReadiness = const {},
     this.settingsInstances = const [],
+    this.routeNodes = const {},
   });
   final int revision;
   final List<Connection> connections;
@@ -32,6 +33,7 @@ class PanelSnapshot {
   final Map<String, String> instanceIds;
   final Map<String, bool> instanceReadiness;
   final List<String> settingsInstances;
+  final Map<String, String> routeNodes;
   Map<String, Object?> toJson() => {
     'revision': revision,
     'connections': connections.map((v) => v.toJson()).toList(),
@@ -45,12 +47,14 @@ class PanelSnapshot {
     'instanceIds': instanceIds,
     'instanceReadiness': instanceReadiness,
     'settingsInstances': settingsInstances,
+    if (routeNodes.isNotEmpty) 'routeNodes': routeNodes,
     'protocols': protocols.map(
       (k, v) => MapEntry(k, v.map((p) => p.toJson()).toList()),
     ),
   };
   factory PanelSnapshot.fromJson(Map<String, dynamic> json) => PanelSnapshot(
     revision: json['revision'] as int,
+    routeNodes: Map<String, String>.from(json['routeNodes'] as Map? ?? {}),
     settingsInstances: List<String>.from(
       json['settingsInstances'] as List? ?? [],
     ),

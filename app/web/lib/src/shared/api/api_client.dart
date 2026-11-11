@@ -12,6 +12,68 @@ class ApiClientException implements Exception {
 }
 
 class ApiClient {
+  Future<({bool enabled, List<ServerNode> nodes})> servers() async {
+    final response = await _request('/api/v1/servers');
+    return (
+      enabled: response['enabled'] == true,
+      nodes: [
+        for (final node in response['data'] as List)
+          ServerNode.fromJson(Map<String, dynamic>.from(node as Map)),
+      ],
+    );
+  }
+
+  Future<ServerNode> addServer({
+    required String name,
+    required String host,
+    required int port,
+    required String hostKey,
+    required String endpoint,
+    required String relayAddress,
+  }) async => ServerNode.fromJson(
+    Map<String, dynamic>.from(
+      (await _request(
+            '/api/v1/servers',
+            post: true,
+            payload: {
+              'name': name,
+              'host': host,
+              'port': port,
+              'hostKey': hostKey,
+              'endpoint': endpoint,
+              'relayAddress': relayAddress,
+            },
+          ))['data']
+          as Map,
+    ),
+  );
+
+  Future<String> serverOperation(String id, ServerOperation operation) async =>
+      (await _request(
+            '/api/v1/servers/$id/operation',
+            post: true,
+            payload: {'operation': operation.name},
+          ))['data']
+          as String;
+
+  Future<void> removeServer(String id) async {
+    await _request('/api/v1/servers/$id', method: 'DELETE');
+  }
+
+  Future<void> bootstrapServer(
+    String id,
+    String user,
+    String key,
+    String password,
+  ) async {
+    await _request(
+      '/api/v1/servers/$id/bootstrap',
+      post: true,
+      timeout: const Duration(minutes: 4),
+      payload: {'user': user, 'key': key, 'password': password},
+    );
+  }
+
   Future<PanelHttpsStatus> panelHttps() async => PanelHttpsStatus.fromJson(
     Map<String, dynamic>.from(
       (await _request('/api/v1/panel/https'))['data'] as Map,
@@ -351,7 +413,13 @@ class ApiClient {
     Map<String, Object?> payload,
   ) async => PanelSnapshot.fromJson(
     Map<String, dynamic>.from(
-      (await _request(path, method: method, payload: payload))['data'] as Map,
+      (await _request(
+            path,
+            method: method,
+            payload: payload,
+            timeout: const Duration(minutes: 15),
+          ))['data']
+          as Map,
     ),
   );
   Future<PanelSnapshot> saveConnection(

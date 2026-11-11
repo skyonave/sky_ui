@@ -507,6 +507,11 @@ class MihomoConfiguration
     bool validate = true,
   }) {
     final result = <({String host, int port, bool udp})>[];
+    for (final relay in data.relays.where((r) => r.inbound)) {
+      final host = relay.destination.contains(':') ? '::' : '0.0.0.0';
+      result.add((host: host, port: relay.port, udp: false));
+      result.add((host: host, port: relay.port, udp: true));
+    }
     for (final listener in _listeners(data)) {
       final c = listener.connection,
           s = validate ? _settings(c) : c.value.settings,
@@ -635,7 +640,9 @@ class MihomoConfiguration
         existing = base['listeners'];
     if (existing != null && existing is! List)
       throw const ApiException('configuration_invalid', status: 422);
+    MihomoSettings.restoreRelayMode(base);
     final owned = <Map<String, Object?>>[];
+    final outgoing = data.relays.where((r) => !r.inbound).toList();
     for (final listener in _listeners(data, validationOnly: validationOnly)) {
       final stored = listener.connection,
           c = stored.value,
@@ -653,7 +660,9 @@ class MihomoConfiguration
             : c.protocolId,
         'listen': s['listen'],
         if (c.port != null) 'port': listener.port,
-        'proxy': s['routingProxy'] ?? 'DIRECT',
+        'proxy': outgoing.any((r) => r.connectionId == c.id && r.index == 0)
+            ? RelayLink.proxyName(c.id, 0)
+            : s['routingProxy'] ?? 'DIRECT',
         if (s['routingRule']?.isNotEmpty == true) 'rule': s['routingRule'],
         if (s['routingMark']?.isNotEmpty == true)
           'routing-mark': int.parse(s['routingMark']!),
@@ -730,6 +739,68 @@ class MihomoConfiguration
       owned.add(out);
     }
     MihomoSettings.apply(base, owned, data.coreSettings[core.id]);
+    const relayPrefix = 'sky-ui/relay/';
+    final existingProxies = base['proxies'];
+    if (existingProxies != null && existingProxies is! List)
+      throw const ApiException('configuration_invalid', status: 422);
+    if (outgoing.isNotEmpty ||
+        (existingProxies as List? ?? const []).any(
+          (item) =>
+              item is Map &&
+              (item['name']?.toString().startsWith(relayPrefix) ?? false),
+        )) {
+      final proxies = [
+        for (final item in existingProxies as List? ?? const [])
+          if (item is! Map ||
+              !(item['name']?.toString().startsWith(relayPrefix) ?? false))
+            item,
+        for (final r in outgoing)
+          {
+            'name': r.name,
+            'type': 'ss',
+            'server': r.destination,
+            'port': r.port,
+            'cipher': '2022-blake3-aes-256-gcm',
+            'password': r.password,
+            'udp': true,
+          },
+      ];
+      if (proxies.isEmpty) {
+        base.remove('proxies');
+      } else {
+        base['proxies'] = proxies;
+      }
+    }
+    final relayRules = Map<String, Object?>.from(
+      base['sub-rules'] as Map? ?? {},
+    )..removeWhere((key, _) => key.startsWith(relayPrefix));
+    if (data.relays.isNotEmpty) MihomoSettings.enableRelayMode(base);
+    for (final r in data.relays.where((link) => link.inbound)) {
+      final outbound = r.nextIndex == null
+          ? 'DIRECT'
+          : RelayLink.proxyName(r.connectionId, r.nextIndex!);
+      relayRules[r.name] = [
+        for (final cidr in MihomoSettings.privateNetworks)
+          '${cidr.contains(':') ? 'IP-CIDR6' : 'IP-CIDR'},$cidr,REJECT',
+        'SRC-IP-CIDR,${r.source}/${r.source.contains(':') ? 128 : 32},$outbound',
+        'MATCH,REJECT',
+      ];
+      owned.add({
+        'name': r.name,
+        'type': 'shadowsocks',
+        'listen': r.destination.contains(':') ? '::' : '0.0.0.0',
+        'port': r.port,
+        'cipher': '2022-blake3-aes-256-gcm',
+        'password': r.password,
+        'udp': true,
+        'rule': r.name,
+      });
+    }
+    if (relayRules.isEmpty) {
+      base.remove('sub-rules');
+    } else {
+      base['sub-rules'] = relayRules;
+    }
     base['listeners'] = [
       if (existing is List)
         ...existing.where(

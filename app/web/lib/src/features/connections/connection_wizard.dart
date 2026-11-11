@@ -33,6 +33,7 @@ class ConnectionWizard extends StatefulComponent {
     required this.onInstalled,
     required this.onMaintenance,
     required this.onJob,
+    this.routeNodes = const {},
     super.key,
   });
   final ApiClient api;
@@ -47,6 +48,7 @@ class ConnectionWizard extends StatefulComponent {
   final void Function(PanelSnapshot, List<CoreSnapshot>) onInstalled;
   final void Function(MaintenanceSnapshot) onMaintenance;
   final void Function(MaintenanceJob) onJob;
+  final Map<String, String> routeNodes;
   @override
   State<ConnectionWizard> createState() => _ConnectionWizardState();
 }
@@ -65,7 +67,15 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
   bool get canEdit => component.canEdit;
   bool get dataBusy => component.dataBusy;
   bool get maintenanceBusy => component.maintenanceBusy;
-  bool coreInstalled(String id) => component.coreInstalled(id);
+  bool get canChooseRoute =>
+      component.routeNodes.length > 1 &&
+      model.selectedProtocol == 'vless' &&
+      model.selectedCore == 'mihomo';
+  List<String> route = [Connection.localNode];
+  bool forceLocalInstall = false;
+  bool coreInstalled(String id) =>
+      component.coreInstalled(id) ||
+      id == 'mihomo' && canChooseRoute && !forceLocalInstall;
   MaintenanceJob? maintenanceJob;
   String runtimeMessage(String code) {
     final key = 'runtime.error.$code';
@@ -97,6 +107,9 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
 
   void initialize(Connection? connection) {
     model.editingId = connection?.id;
+    route = connection?.route.isNotEmpty == true
+        ? [...connection!.route]
+        : [Connection.localNode];
     dependencyGeneration++;
     model.connectionStep = connection == null ? 'protocol' : 'parameters';
     dependencyMessage = null;
@@ -190,6 +203,8 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
     if (candidates.isEmpty) return;
     setState(() {
       model.selectedProtocol = protocol.id;
+      route = [Connection.localNode];
+      forceLocalInstall = false;
       model.selectedCore = null;
       fieldGeneration++;
       generatingFields.clear();
@@ -235,6 +250,29 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
     final old = store.connections
         .where((c) => c.id == model.editingId)
         .firstOrNull;
+    final selectedRoute =
+        canChooseRoute &&
+            !(route.length == 1 && route.single == Connection.localNode)
+        ? route
+        : const <String>[];
+    if (selectedRoute.isNotEmpty &&
+        (model.draft['transport'] != 'TCP' ||
+            model.draft['security'] != 'REALITY')) {
+      setState(
+        () => model.error = t('runtime.error.route_protocol_unsupported'),
+      );
+      return;
+    }
+    if (canChooseRoute &&
+        (selectedRoute.isEmpty ||
+            selectedRoute.contains(Connection.localNode)) &&
+        !component.coreInstalled(model.selectedCore!)) {
+      setState(() {
+        forceLocalInstall = true;
+        model.connectionStep = 'dependency';
+      });
+      return;
+    }
     final value = Connection(
       id: model.editingId ?? '',
       name: name,
@@ -244,6 +282,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       instanceId:
           old?.instanceId ?? store.instanceIds[model.selectedCore] ?? 'primary',
       enabled: old?.enabled ?? true,
+      route: selectedRoute,
       settings: {
         for (final f in definition.activeFields(model.draft))
           f.id: model.draft[f.id] ?? f.initialValue(model.draft),
@@ -440,9 +479,14 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
         el('dl', [
           for (final entry in <String, String>{
             t('field.name'): model.draft['name'] ?? '',
-            t('builder.address'): definition.usesPort
-                ? '${store.address}:${model.draft['port']}'
-                : store.address,
+            if (!canChooseRoute || route.first == Connection.localNode)
+              t('builder.address'): definition.usesPort
+                  ? '${store.address}:${model.draft['port']}'
+                  : store.address,
+            if (canChooseRoute)
+              t('builder.route'): route
+                  .map((node) => component.routeNodes[node] ?? node)
+                  .join(' → '),
             for (final f
                 in definition
                     .activeFields(model.draft)
@@ -487,6 +531,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
                 ),
               ),
           ], classes: 'form-grid'),
+          if (canChooseRoute) routeFields(),
         ],
         for (final f in fields.where((f) => f.kind == 'choice' && !f.advanced))
           field(f),
@@ -516,6 +561,56 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       ],
     ], classes: 'builder-content');
   }
+
+  Component routeFields() => div([
+    h3([txt(t('builder.route'))], classes: 'form-section-title'),
+    for (var i = 0; i < route.length; i++) routeField(i),
+    if (route.length < 8 && route.length < component.routeNodes.length)
+      action(
+        t('builder.routeAdd'),
+        () => setState(() {
+          route.add(
+            component.routeNodes.keys.firstWhere((id) => !route.contains(id)),
+          );
+        }),
+        glyph: 'plus',
+        disabled: !canEdit,
+      ),
+    p([txt(t('builder.routeHelp'))], classes: 'muted small'),
+  ]);
+
+  Component routeField(int index) => div([
+    label([
+      txt(
+        t(
+          index == 0
+              ? 'builder.routeIngress'
+              : index == route.length - 1
+              ? 'builder.routeEgress'
+              : 'builder.routeTransit',
+        ),
+      ),
+      select(
+        [
+          for (final entry in component.routeNodes.entries)
+            if (entry.key == route[index] || !route.contains(entry.key))
+              option([txt(entry.value)], value: entry.key),
+        ],
+        value: route[index],
+        disabled: !canEdit,
+        onChange: (values) {
+          if (values.isNotEmpty) setState(() => route[index] = values.single);
+        },
+      ),
+    ]),
+    if (route.length > 1)
+      iconButton(
+        'trash',
+        t('builder.routeRemove'),
+        () => setState(() => route.removeAt(index)),
+        disabled: !canEdit,
+      ),
+  ], classes: 'route-field');
 
   Component productProtocolCard(ProductProtocol protocol) {
     final available = model.candidateEngines(protocol.id).isNotEmpty;

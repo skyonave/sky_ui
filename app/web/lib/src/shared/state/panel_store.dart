@@ -9,6 +9,7 @@ class PanelStore {
   bool deliveryReady = false;
   Map<String, String> instanceIds = {};
   Map<String, bool> instanceReadiness = {};
+  Map<String, String> routeNodes = {};
   String serverName = 'Sky UI';
   String address = '';
   Map<String, List<ProtocolDefinition>> protocols = {};
@@ -21,7 +22,12 @@ class PanelStore {
     protocols = snapshot.protocols;
     instanceIds = snapshot.instanceIds;
     instanceReadiness = snapshot.instanceReadiness;
+    routeNodes = snapshot.routeNodes;
   }
+
+  bool ready(Connection c) => c.ingress != Connection.localNode
+      ? deliveryReady
+      : instanceReadiness[c.instanceId] ?? deliveryReady;
 
   bool supports(String? core, String? protocol) =>
       protocols[core]?.any((p) => p.id == protocol && p.available) ?? false;
@@ -36,7 +42,7 @@ class PanelStore {
             .where(
               (c) =>
                   c.enabled &&
-                  (instanceReadiness[c.instanceId] ?? deliveryReady) &&
+                  ready(c) &&
                   (!c.shareable || recipientsFor(c.id).isNotEmpty),
             )
             .length
@@ -48,10 +54,7 @@ class PanelStore {
                   u.enabled &&
                   u.connectionIds.any(
                     (id) => connections.any(
-                      (c) =>
-                          c.id == id &&
-                          c.enabled &&
-                          (instanceReadiness[c.instanceId] ?? deliveryReady),
+                      (c) => c.id == id && c.enabled && ready(c),
                     ),
                   ),
             )

@@ -39,5 +39,7 @@ chroot "$stage/root" /usr/bin/env HOME=/root PUB_CACHE=/root/.pub-cache PATH=/op
 version=$(tr -d '\r\n' <"$root/VERSION")
 output="$root/build/releases/v$version"
 mkdir -p "$output"
-cp "$stage/root/project/build/releases/sky-ui-linux-$arch.tar.gz"{,.sha256} "$stage/root/project/build/releases/install.sh"{,.sha256} "$output/"
+cp "$stage/root/project/build/releases/sky-ui-linux-$arch.tar.gz"{,.sha256} \
+  "$stage/root/project/build/releases/install.sh"{,.sha256} \
+  "$stage/root/project/build/releases/install-server-node.sh"{,.sha256} "$output/"
 printf 'Prepared native %s assets in %s.\n' "$arch" "$output"

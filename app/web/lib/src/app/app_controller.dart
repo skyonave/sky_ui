@@ -277,6 +277,7 @@ class AppController {
     'overview',
     'connections',
     'users',
+    'servers',
     'core',
     'logs',
     'settings',

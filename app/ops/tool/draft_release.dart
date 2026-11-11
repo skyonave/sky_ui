@@ -3,19 +3,32 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:sky_ui_ops/src/shared/archives.dart';
-import 'package:sky_ui_ops/src/platform/host.dart' show OpsError, digest, require;
+import 'package:sky_ui_ops/src/platform/host.dart'
+    show OpsError, digest, require;
 
 import 'native_manifest.dart' show buildSources, elfMatches;
 
 const repo = 'skyonave/sky_ui';
-const assetNames = [
+const standaloneInstallers = {
+  'install.sh': 'install.sh',
+  'install-server-node.sh': 'deploy/install-server-node.sh',
+};
+final assetNames = List<String>.unmodifiable([
   'sky-ui-linux-amd64.tar.gz',
   'sky-ui-linux-amd64.tar.gz.sha256',
   'sky-ui-linux-arm64.tar.gz',
   'sky-ui-linux-arm64.tar.gz.sha256',
-  'install.sh',
-  'install.sh.sha256',
-];
+  for (final name in standaloneInstallers.keys) ...[name, '$name.sha256'],
+]);
+
+void checkBundledNodeInstaller(List<int>? bundled, List<int> standalone) {
+  require(
+    bundled != null &&
+        bundled.isNotEmpty &&
+        digest(bundled) == digest(standalone),
+    'node_installer_bundle_mismatch',
+  );
+}
 
 void checkIdentity(Map release, String tag, String commit) {
   require(release['draft'] == true, 'refusing_published_release');
@@ -107,8 +120,7 @@ Map<String, Uint8List> checkAssets(
       'sky-ui-linux-$arch.tar.gz',
       'sky-ui-linux-$arch.tar.gz.sha256',
     ],
-    'install.sh',
-    'install.sh.sha256',
+    for (final name in standaloneInstallers.keys) ...[name, '$name.sha256'],
   ];
   final files = {
     for (final name in names)
@@ -116,7 +128,7 @@ Map<String, Uint8List> checkAssets(
   };
   for (final name in [
     for (final arch in architectures) 'sky-ui-linux-$arch.tar.gz',
-    'install.sh',
+    ...standaloneInstallers.keys,
   ]) {
     final parts = utf8
         .decode(files['$name.sha256']!)
@@ -129,17 +141,23 @@ Map<String, Uint8List> checkAssets(
   }
   String normalized(List<int> data) =>
       utf8.decode(data).replaceAll('\r\n', '\n');
-  require(
-    normalized(files['install.sh']!) ==
-        normalized(File('$root/install.sh').readAsBytesSync()),
-    'installer_source_mismatch',
-  );
+  for (final entry in standaloneInstallers.entries) {
+    require(
+      normalized(files[entry.key]!) ==
+          normalized(File('$root/${entry.value}').readAsBytesSync()),
+      'installer_source_mismatch',
+    );
+  }
   final sources = buildSources(root);
   for (final arch in architectures) {
     final members = tarSelected(
       files['sky-ui-linux-$arch.tar.gz']!,
       (_) => true,
       limit: 256 * 1024 * 1024,
+    );
+    checkBundledNodeInstaller(
+      members[standaloneInstallers['install-server-node.sh']],
+      files['install-server-node.sh']!,
     );
     require(
       normalized(members['VERSION']!).trim() == tag.substring(1) &&

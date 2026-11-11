@@ -1,5 +1,102 @@
 // English text for keys whose Russian catalog entries need translation.
 const englishStrings = <String, String>{
+  'builder.route': 'Route',
+  'builder.routeAdd': 'Add node',
+  'builder.routeRemove': 'Remove node',
+  'builder.routeIngress': 'Ingress',
+  'builder.routeTransit': 'Transit',
+  'builder.routeEgress': 'Egress',
+  'builder.routeHelp':
+      'The first server accepts clients. The last server reaches the internet. Remote routes use VLESS TCP + REALITY with mihomo.',
+  'servers.bootstrap': 'Install over SSH',
+  'servers.bootstrapUser': 'SSH username',
+  'servers.bootstrapAuth': 'SSH authentication',
+  'servers.bootstrapKey': 'SSH private key',
+  'servers.bootstrapPassword': 'SSH password',
+  'servers.bootstrapHelp':
+      'Use root or an account with passwordless sudo. The panel installs mihomo and enrolls its key. The supplied credentials are used during installation.',
+  'servers.error.server_bootstrap_invalid':
+      'Enter an SSH username and one authentication method.',
+  'servers.error.server_bootstrap_arch':
+      'There is no verified mihomo package for the node architecture. Install the node manually.',
+  'servers.error.server_bootstrap_unavailable':
+      'Node installer files are unavailable in this Sky UI build.',
+  'servers.error.route_node_in_use':
+      'The node is used by a route or awaiting recovery.',
+  'runtime.error.route_invalid':
+      'Check the route. Each server can appear once and the ingress port must be at least 1024.',
+  'runtime.error.route_node_missing':
+      'A route node is unavailable in the server list.',
+  'runtime.error.route_address_unavailable':
+      'Could not resolve the address for the link between nodes.',
+  'runtime.error.route_protocol_unsupported':
+      'Choose mihomo, VLESS, TCP and REALITY for a remote route.',
+  'runtime.error.route_node_protocol':
+      'Update the node using Install over SSH.',
+  'runtime.error.route_requires_rule_mode':
+      'Mihomo routing settings conflict with the cascade.',
+  'runtime.error.route_configuration_out_of_sync':
+      'The VPS configuration differs from the expected one. Check the node.',
+  'runtime.error.route_configuration_too_large':
+      'The remote configuration exceeds the size limit.',
+  'runtime.error.route_diagnostics_unavailable':
+      'Remote ingress diagnostics are unavailable.',
+  'runtime.error.server_ssh_failed': 'Could not connect to the node over SSH.',
+  'runtime.error.server_operation_failed':
+      'The node could not apply the configuration. Check its status and logs.',
+  'runtime.error.server_busy': 'Wait for the node operation to finish.',
+  'runtime.error.route_link_unreachable':
+      'A link is unreachable. Check the IP addresses and firewall rules for the cascade port.',
+  'status.deployed': 'Deployed',
+  'nav.servers': 'Servers',
+  'servers.title': 'Servers',
+  'servers.local': 'Panel server',
+  'servers.disabled':
+      'To enable remote management, add SKY_UI_REMOTE_SERVERS=enabled to /etc/sky-ui/server.env and restart Sky UI.',
+  'servers.add': 'Add server',
+  'servers.name': 'Name',
+  'servers.host': 'SSH host',
+  'servers.endpoint': 'Client address (optional)',
+  'servers.relayAddress': 'IP for links between nodes (optional)',
+  'servers.port': 'SSH port',
+  'servers.hostKey': 'SSH host key',
+  'servers.hostKeyHelp':
+      'Copy the first two fields from /etc/ssh/ssh_host_ed25519_key.pub using the VPS console.',
+  'servers.enrollmentHelp':
+      'Give this public key to the node installer and select Check.',
+  'servers.status': 'Check',
+  'servers.start': 'Start',
+  'servers.stop': 'Stop',
+  'servers.restart': 'Restart',
+  'servers.logs': 'Logs',
+  'servers.emptyLogs': 'No log entries',
+  'servers.remove': 'Remove',
+  'servers.removeHelp':
+      'Remove the server from the panel? The service keeps running. To revoke the key, remove /var/lib/sky-ui-node/.ssh/authorized_keys on the VPS.',
+  'servers.state.active': 'Running',
+  'servers.state.inactive': 'Stopped',
+  'servers.state.failed': 'Service failed',
+  'servers.state.activating': 'Starting',
+  'servers.state.deactivating': 'Stopping',
+  'servers.state.reloading': 'Reloading',
+  'servers.state.maintenance': 'Maintenance',
+  'servers.state.refreshing': 'Refreshing',
+  'servers.error.server_invalid':
+      'Check the name, address, port and SSH host key.',
+  'servers.error.server_duplicate': 'This SSH address is already registered.',
+  'servers.error.server_limit': 'The server limit has been reached.',
+  'servers.error.server_busy': 'Wait for the current operation to finish.',
+  'servers.error.server_key_failed': 'Could not create the node identity.',
+  'servers.error.server_ssh_failed':
+      'SSH connection failed. Check the address, host key and node installation.',
+  'servers.error.server_operation_failed':
+      'The node could not perform the operation.',
+  'servers.error.command_unavailable':
+      'OpenSSH is unavailable on the panel server.',
+  'servers.error.command_timeout': 'The node did not respond in time.',
+  'servers.error.api_unavailable': 'The panel API is unavailable.',
+  'servers.error.maintenance_busy': 'Wait for panel maintenance to finish.',
+  'servers.error.generic': 'The operation failed.',
   'builder.guide.TCP + QUIC':
       'Enable TCP and QUIC if clients can use either transport. Open the connection port for TCP and UDP. Use TCP on networks that restrict UDP.',
   'builder.choice.transport.TCP + UDP.help':

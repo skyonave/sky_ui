@@ -11,6 +11,8 @@ class Connection {
     this.shareable = true,
     this.configuredSecrets = const [],
     this.assignedPorts = const [],
+    this.route = const [],
+    this.routePorts = const [],
   });
   final String id;
   final String name;
@@ -23,8 +25,16 @@ class Connection {
   final bool shareable;
   final List<String> configuredSecrets;
   final List<int> assignedPorts;
+  static const localNode = 'local';
+  final List<String> route;
+  final List<int> routePorts;
+  String get ingress => route.firstOrNull ?? localNode;
 
-  Connection copyWith({bool? enabled, List<int>? assignedPorts}) => Connection(
+  Connection copyWith({
+    bool? enabled,
+    List<int>? assignedPorts,
+    List<int>? routePorts,
+  }) => Connection(
     id: id,
     name: name,
     coreId: coreId,
@@ -36,6 +46,8 @@ class Connection {
     shareable: shareable,
     configuredSecrets: configuredSecrets,
     assignedPorts: assignedPorts ?? this.assignedPorts,
+    route: route,
+    routePorts: routePorts ?? this.routePorts,
   );
   Map<String, Object?> toJson() => {
     'id': id,
@@ -49,6 +61,8 @@ class Connection {
     'shareable': shareable,
     'configuredSecrets': configuredSecrets,
     'assignedPorts': assignedPorts,
+    if (route.isNotEmpty) 'route': route,
+    if (routePorts.isNotEmpty) 'routePorts': routePorts,
   };
   factory Connection.fromJson(Map<String, dynamic> json) => Connection(
     id: json['id'] as String,
@@ -64,6 +78,8 @@ class Connection {
       json['configuredSecrets'] as List? ?? [],
     ),
     assignedPorts: List<int>.from(json['assignedPorts'] as List? ?? []),
+    route: List<String>.from(json['route'] as List? ?? []),
+    routePorts: List<int>.from(json['routePorts'] as List? ?? []),
   );
 }
 

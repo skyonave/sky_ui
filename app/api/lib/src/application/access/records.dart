@@ -80,6 +80,7 @@ class PanelData {
     List<StoredRecipient>? recipients,
     List<AccessGrant>? grants,
     Map<String, Map<String, String>>? coreSettings,
+    this.relays = const [],
   }) : connections = connections ?? [],
        recipients = recipients ?? [],
        grants = grants ?? [],
@@ -90,6 +91,7 @@ class PanelData {
   final List<StoredRecipient> recipients;
   final List<AccessGrant> grants;
   final Map<String, Map<String, String>> coreSettings;
+  final List<RelayLink> relays;
   PanelData copy() => PanelData(
     serverName: serverName,
     address: address,
@@ -104,7 +106,11 @@ class PanelData {
   /// A codec sees only its own instance; grants and recipients keep their identity.
   PanelData forInstance(String instanceId) {
     final owned = connections
-        .where((c) => c.value.instanceId == instanceId)
+        .where(
+          (c) =>
+              c.value.instanceId == instanceId &&
+              c.value.ingress == Connection.localNode,
+        )
         .toList();
     final ids = owned.map((c) => c.value.id).toSet();
     return PanelData(
@@ -158,4 +164,25 @@ class PanelData {
             (!c.value.shareable || activeGrants(c.value.id).isNotEmpty),
       )
       .toList();
+}
+
+class RelayLink {
+  const RelayLink({
+    required this.connectionId,
+    required this.index,
+    required this.destination,
+    required this.source,
+    required this.port,
+    required this.password,
+    required this.inbound,
+    this.nextIndex,
+  });
+
+  final String connectionId, destination, source, password;
+  final int index, port;
+  final bool inbound;
+  final int? nextIndex;
+
+  String get name => proxyName(connectionId, index);
+  static String proxyName(String id, int index) => 'sky-ui/relay/$id/$index';
 }

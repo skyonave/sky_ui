@@ -7,6 +7,7 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../shared/api_exception.dart';
 import '../configuration/transaction.dart';
+import '../configuration/relay_routes.dart';
 import '../connections/field_generators.dart';
 import '../contracts/access_environment.dart';
 import '../contracts/configuration_codec.dart';
@@ -32,6 +33,7 @@ class PanelService {
     required Map<String, ConfigurationCodec> codecs,
     required this.exporter,
     this.portProbe = connectionPortAvailable,
+    this.routes,
     List<CoreManager> additionalManagers = const [],
     List<ClientExporter> additionalExporters = const [],
   }) : exporters = {
@@ -48,6 +50,7 @@ class PanelService {
   final CoreManager manager;
   final AccessRepository repository;
   final ConfigurationStore configurationStore;
+  final RelayRoutes? routes;
   final log = PanelLog();
   final Map<String, ConfigurationCodec> codecs;
   final Map<String, CoreManager> managers;
@@ -70,6 +73,7 @@ class PanelService {
     repository: repository,
     files: configurationStore,
     log: log,
+    routes: routes,
   );
   bool get busy => deployment.busy;
   late final presence = RecipientPresenceService(
@@ -84,11 +88,13 @@ class PanelService {
     exporter: exporter,
     isBusy: () => busy,
     isSynchronized: isSynchronized,
+    routes: routes,
   );
   late final connectionCommands = ConnectionCommands(
     config: config,
     registry: registry,
     portProbe: portProbe,
+    routes: routes,
   );
   late final recipientCommands = RecipientCommands(
     config: config,
@@ -216,7 +222,7 @@ class PanelService {
         try {
           await _codec(
             owner.core.coreId,
-          ).verifyRunning(data.forInstance(owner.core.id), owner.core);
+          ).verifyRunning(deployment.local(data, owner.core.id), owner.core);
         } on ApiException catch (e) {
           ready = false;
           readinessError = e.code;
@@ -230,9 +236,14 @@ class PanelService {
           if (_codec(owner.core.coreId) is CoreSettingsCodec) owner.core.id,
       ],
       revision: repository.revision,
+      routeNodes: routes?.names(data) ?? const {},
       connections: data.connections
           .map(
             (c) => c.value.copyWith(
+              routePorts: [
+                for (var i = 0; i < c.value.route.length - 1; i++)
+                  int.parse(c.secrets['relay:port:$i']!),
+              ],
               assignedPorts: data
                   .activeGrants(c.value.id)
                   .where(
@@ -252,7 +263,12 @@ class PanelService {
       serverName: data.serverName,
       address: data.address,
       synchronized: synchronized,
-      deliveryReady: readiness.values.any((v) => v),
+      deliveryReady:
+          readiness.values.any((v) => v) ||
+          synchronized &&
+              data.listeningConnections.any(
+                (c) => c.value.ingress != Connection.localNode,
+              ),
       coreAvailability: {
         for (final value in snapshots.values)
           value.coreId: value.binaryAvailable,
@@ -267,13 +283,13 @@ class PanelService {
               .map((p) => p.withExportRestrictions(exporter.restrictions))
               .toList(),
       },
-      errorCode: !core.binaryAvailable
-          ? 'binary_missing'
-          : repository.pending != null
+      errorCode: repository.pending != null
           ? 'configuration_rollback_failed'
-          : synchronized
-          ? readinessError
-          : 'configuration_out_of_sync',
+          : !synchronized
+          ? 'configuration_out_of_sync'
+          : !core.binaryAvailable && !(routes?.allowNew ?? false)
+          ? 'binary_missing'
+          : readinessError,
     );
   }
 
@@ -403,7 +419,7 @@ class PanelService {
       if ([CoreOperation.start, CoreOperation.restart].contains(operation)) {
         try {
           await _codec(owner.core.coreId).verifyRunning(
-            repository.read().forInstance(owner.core.id),
+            deployment.local(repository.read(), owner.core.id),
             owner.core,
           );
         } on Object {
@@ -430,9 +446,10 @@ class PanelService {
           if (service.state != CoreProcessState.inactive &&
               service.state != CoreProcessState.failed)
             return;
-          final data = repository.read().forInstance(owner.core.id);
+          final data = deployment.local(repository.read(), owner.core.id);
           if (owner.desired != CoreDesiredState.running &&
-              data.listeningConnections.isEmpty)
+              data.listeningConnections.isEmpty &&
+              !data.relays.any((link) => link.inbound))
             return;
           if (!(await owner.adapter.probe(owner.core)).available ||
               !await isSynchronized())

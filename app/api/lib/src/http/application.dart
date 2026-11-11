@@ -13,6 +13,7 @@ import '../features/telemetry/system_monitor.dart';
 import '../features/updates/core_updates.dart';
 import '../features/updates/panel_updates.dart';
 import '../infrastructure/process/command_runner.dart';
+import '../infrastructure/process/ssh_servers.dart';
 import '../infrastructure/network/diagnostic_probe.dart';
 import 'responses.dart';
 import 'routes/access_routes.dart';
@@ -22,6 +23,7 @@ import 'routes/auth_routes.dart';
 import 'routes/engine_routes.dart';
 import 'routes/https_routes.dart';
 import 'routes/maintenance_routes.dart';
+import 'routes/server_routes.dart';
 import 'routes/telemetry_routes.dart';
 import 'routes/update_routes.dart';
 import 'security.dart';
@@ -37,6 +39,7 @@ Handler createApplication(
   CoreUpdates? coreUpdates,
   PanelUpdates? panelUpdates,
   ConnectionDiagnosticsService? diagnostics,
+  SshServers? servers,
 }) {
   if (config.requireOwnerAuth && auth == null)
     throw StateError('Owner authentication is required.');
@@ -64,7 +67,10 @@ Handler createApplication(
       panel,
       panelLog,
     );
-  if (auth != null) registerAuthRoutes(router, config, auth);
+  if (auth != null) {
+    registerAuthRoutes(router, config, auth);
+    registerServerRoutes(router, servers, panel);
+  }
   registerTelemetryRoutes(router, config, system);
   registerCoreUpdateRoutes(router, instances, updates);
   registerEngineRoutes(router, instances, panel, auth, panelLog);

@@ -5,6 +5,7 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../../shared/api_exception.dart';
 import '../access/records.dart';
 import '../access/repository.dart';
+import '../configuration/relay_routes.dart';
 import '../contracts/access_environment.dart';
 import '../contracts/configuration_codec.dart';
 import '../engines/core_manager.dart';
@@ -19,6 +20,7 @@ class SubscriptionService {
     required this.exporter,
     required this.isBusy,
     required this.isSynchronized,
+    this.routes,
   });
   final AccessEnvironment config;
   final EngineRegistry registry;
@@ -26,6 +28,7 @@ class SubscriptionService {
   final ClientExporter exporter;
   final bool Function() isBusy;
   final Future<bool> Function() isSynchronized;
+  final RelayRoutes? routes;
   bool get busy => isBusy();
   Map<String, CoreManager> get managers => registry.managers;
   ConfigurationCodec _codec(String id) => registry.codec(id);
@@ -60,9 +63,14 @@ class SubscriptionService {
     final connection = data.connections.firstWhere(
       (c) => c.value.id == grant.connectionId,
     );
-    return _codec(
-      connection.value.coreId,
-    ).clientEndpoint(connection, grant, data.address);
+    return _codec(connection.value.coreId).clientEndpoint(
+      connection,
+      grant,
+      connection.value.ingress == Connection.localNode
+          ? data.address
+          : routes?.address(data, connection.value.ingress) ??
+                (throw const ApiException('route_node_missing', status: 503)),
+    );
   }
 
   Future<void> _canExport(
@@ -81,6 +89,7 @@ class SubscriptionService {
         .where(
           (c) =>
               c.value.enabled &&
+              c.value.ingress == Connection.localNode &&
               (connectionIds == null || connectionIds.contains(c.value.id)) &&
               granted.contains(c.value.id),
         )
@@ -95,9 +104,10 @@ class SubscriptionService {
         throw const ApiException('binary_missing', status: 503);
       if (core.processState != CoreProcessState.active || !core.controllerReady)
         throw const ApiException('core_not_ready', status: 503);
-      await _codec(
-        owner.core.coreId,
-      ).verifyRunning(data.forInstance(id), owner.core);
+      await _codec(owner.core.coreId).verifyRunning(
+        routes?.project(data, Connection.localNode, id) ?? data.forInstance(id),
+        owner.core,
+      );
     }
   }
 

@@ -141,6 +141,7 @@ String? _loggedOperation(Request request) {
   final method = request.method;
   if (method == HttpMethod.get || method == HttpMethod.head) return null;
   final operation = switch (request.url.pathSegments) {
+    ['api', 'v1', 'servers', ...] => 'servers',
     ['api', 'v1', 'connections'] ||
     ['api', 'v1', 'connections', _] => 'connection',
     ['api', 'v1', 'recipients'] ||

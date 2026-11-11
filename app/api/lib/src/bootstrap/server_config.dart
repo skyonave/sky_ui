@@ -32,6 +32,7 @@ class ServerConfig implements AccessEnvironment {
     this.requireOwnerAuth = true,
     this.certificatesDirectory = '/var/lib/sky-ui-certificates',
     this.networkAdministration = false,
+    this.remoteServersEnabled = false,
   });
   final int port;
   final Uri webOrigin;
@@ -48,6 +49,7 @@ class ServerConfig implements AccessEnvironment {
   final bool requireOwnerAuth;
   final String certificatesDirectory;
   final bool networkAdministration;
+  final bool remoteServersEnabled;
 
   List<ManagedCore> get proxyCores => [
     for (final id in ['sing-box', 'xray', 'amneziawg'])
@@ -138,6 +140,9 @@ class ServerConfig implements AccessEnvironment {
       certificatesDirectory:
           env['SKY_UI_CERTIFICATES_DIR'] ?? '/var/lib/sky-ui-certificates',
       networkAdministration: env['SKY_UI_NETWORK_ADMINISTRATION'] == 'enabled',
+      remoteServersEnabled:
+            Platform.isLinux &&
+            (env['SKY_UI_REMOTE_SERVERS'] ?? 'enabled') == 'enabled',
       publicDirectory: env['SKY_UI_PUBLIC_DIR'] ?? '../web/build/web',
       dataDirectory: env['SKY_UI_DATA_DIR'] ?? '../../runtime/api',
       core: ManagedCore(

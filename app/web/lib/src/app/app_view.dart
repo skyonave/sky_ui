@@ -17,6 +17,7 @@ import '../features/overview/overview_page.dart';
 import '../features/recipients/recipient_form.dart';
 import '../features/recipients/recipients_page.dart';
 import '../features/recipients/share_content.dart';
+import '../features/servers/servers_page.dart';
 import '../features/settings/owner_form.dart';
 import '../features/settings/session_list.dart';
 import '../features/settings/settings_page.dart';
@@ -108,6 +109,11 @@ class AppView extends StatelessComponent {
                   : usersPage(),
             if (controller.page == 'overview') overviewPage(),
             if (controller.page == 'core') corePage(),
+            if (controller.page == 'servers')
+              ServersPage(
+                api: controller.api,
+                localName: controller.store.serverName,
+              ),
             if (controller.page == 'logs') logsPage(),
             if (controller.page == 'settings') settingsPage(),
             el('footer', [
@@ -432,6 +438,7 @@ class AppView extends StatelessComponent {
           dataBusy: controller.dataBusy,
           maintenanceBusy: controller.maintenanceBusy,
           job: controller.maintenanceJob,
+          routeNodes: controller.panelData?.routeNodes ?? const {},
           coreInstalled: controller.observations.coreInstalled,
           onClose: controller.closeModal,
           onSave: (revision, value) async {

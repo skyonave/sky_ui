@@ -34,6 +34,104 @@ class AppStrings {
 
   static const _catalogs = {
     'ru': {
+      'builder.route': 'Маршрут',
+      'builder.routeAdd': 'Добавить узел',
+      'builder.routeRemove': 'Убрать узел',
+      'builder.routeIngress': 'Вход',
+      'builder.routeTransit': 'Транзит',
+      'builder.routeEgress': 'Выход',
+      'builder.routeHelp':
+          'Первый сервер принимает подключения клиентов. Последний выходит в интернет. Удалённый маршрут доступен для VLESS TCP + REALITY через mihomo.',
+      'servers.bootstrap': 'Установить по SSH',
+      'servers.bootstrapUser': 'Логин SSH',
+      'servers.bootstrapAuth': 'Доступ SSH',
+      'servers.bootstrapKey': 'Приватный ключ SSH',
+      'servers.bootstrapPassword': 'Пароль SSH',
+      'servers.bootstrapHelp':
+          'Укажите root или пользователя с sudo без пароля. Панель установит mihomo и зарегистрирует свой ключ. Введённый доступ используется только для установки.',
+      'servers.error.server_bootstrap_invalid':
+          'Укажите логин и один способ доступа SSH.',
+      'servers.error.server_bootstrap_arch':
+          'Для архитектуры узла нет проверенного пакета mihomo. Установите узел вручную.',
+      'servers.error.server_bootstrap_unavailable':
+          'Файлы установщика недоступны в этой сборке Sky UI.',
+      'servers.error.route_node_in_use':
+          'Узел используется в маршруте или ожидает завершения восстановления.',
+      'runtime.error.route_invalid':
+          'Проверьте маршрут. Каждый сервер может встречаться один раз, порт входа должен быть от 1024.',
+      'runtime.error.route_node_missing':
+          'Узел маршрута недоступен в списке серверов.',
+      'runtime.error.route_address_unavailable':
+          'Не удалось определить адрес для связи между узлами.',
+      'runtime.error.route_protocol_unsupported':
+          'Для удалённого маршрута выберите mihomo, VLESS, TCP и REALITY.',
+      'runtime.error.route_node_protocol':
+          'Узел нужно обновить через «Установить по SSH».',
+      'runtime.error.route_requires_rule_mode':
+          'Настройки маршрутизации mihomo конфликтуют с каскадом.',
+      'runtime.error.route_configuration_out_of_sync':
+          'Конфиг на VPS отличается от ожидаемого. Проверьте узел.',
+      'runtime.error.route_configuration_too_large':
+          'Конфиг удалённого узла превышает лимит.',
+      'runtime.error.route_diagnostics_unavailable':
+          'Удалённая диагностика входа недоступна.',
+      'runtime.error.server_ssh_failed':
+          'Не удалось подключиться к узлу по SSH.',
+      'runtime.error.server_operation_failed':
+          'Узел не смог применить конфиг. Проверьте состояние и логи на сервере.',
+      'runtime.error.server_busy': 'Дождитесь завершения операции на узле.',
+      'runtime.error.route_link_unreachable':
+          'Переход между узлами недоступен. Проверьте IP и правила firewall для порта каскада.',
+      'status.deployed': 'Применено',
+      'nav.servers': 'Серверы',
+      'servers.title': 'Серверы',
+      'servers.local': 'Сервер панели',
+      'servers.disabled':
+          'Чтобы включить удалённое управление, добавьте SKY_UI_REMOTE_SERVERS=enabled в /etc/sky-ui/server.env и перезапустите Sky UI.',
+      'servers.add': 'Добавить сервер',
+      'servers.name': 'Название',
+      'servers.host': 'Хост SSH',
+      'servers.endpoint': 'Адрес для клиентов (опционально)',
+      'servers.relayAddress': 'IP для связи узлов (опционально)',
+      'servers.port': 'Порт SSH',
+      'servers.hostKey': 'Ключ сервера SSH',
+      'servers.hostKeyHelp':
+          'Возьмите первые два поля из /etc/ssh/ssh_host_ed25519_key.pub через консоль VPS.',
+      'servers.enrollmentHelp':
+          'Передайте этот публичный ключ установщику узла и нажмите «Проверить».',
+      'servers.status': 'Проверить',
+      'servers.start': 'Запустить',
+      'servers.stop': 'Остановить',
+      'servers.restart': 'Перезапустить',
+      'servers.logs': 'Логи',
+      'servers.emptyLogs': 'Логи пусты',
+      'servers.remove': 'Удалить',
+      'servers.removeHelp':
+          'Удалить сервер из панели? Сервис продолжит работать. Для отзыва ключа удалите /var/lib/sky-ui-node/.ssh/authorized_keys на VPS.',
+      'servers.state.active': 'Работает',
+      'servers.state.inactive': 'Остановлен',
+      'servers.state.failed': 'Ошибка сервиса',
+      'servers.state.activating': 'Запускается',
+      'servers.state.deactivating': 'Останавливается',
+      'servers.state.reloading': 'Перезагружается',
+      'servers.state.maintenance': 'Обслуживание',
+      'servers.state.refreshing': 'Обновляется',
+      'servers.error.server_invalid':
+          'Проверьте название, адрес, порт и ключ SSH.',
+      'servers.error.server_duplicate': 'Этот SSH-адрес уже добавлен.',
+      'servers.error.server_limit': 'Достигнут лимит серверов.',
+      'servers.error.server_busy': 'Дождитесь завершения текущей операции.',
+      'servers.error.server_key_failed': 'Не удалось создать ключ узла.',
+      'servers.error.server_ssh_failed':
+          'SSH не подключился. Проверьте адрес, ключ хоста и установку узла.',
+      'servers.error.server_operation_failed': 'Узел не выполнил операцию.',
+      'servers.error.command_unavailable':
+          'На сервере панели недоступен OpenSSH.',
+      'servers.error.command_timeout': 'Узел не ответил вовремя.',
+      'servers.error.api_unavailable': 'API панели недоступен.',
+      'servers.error.maintenance_busy':
+          'Дождитесь завершения обслуживания панели.',
+      'servers.error.generic': 'Не удалось выполнить операцию.',
       'coreSettings.title': 'Настройки ядра',
       'coreSettings.forCore': 'Настройки {core}',
       'coreSettings.group.dns': 'DNS',

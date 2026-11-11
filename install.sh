@@ -256,6 +256,10 @@ for file in bin/sky-ui bin/sky-ops lib/libsqlite3.so lib/libsky_posix.so; do [[ 
 release_version="$(tr -d '\r\n' <"$payload/VERSION")"
 release_arch="$(tr -d '\r\n' <"$payload/ARCH")"
 [[ "$release_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]] || fail 'Invalid release metadata.'
+if [[ "$(printf '%s\n' 1.2.0 "${release_version%%-*}" | sort -V | head -n 1)" == 1.2.0 ]]; then
+  [[ -s "$payload/deploy/install-server-node.sh" ]] || fail 'Incomplete release: deploy/install-server-node.sh'
+  bash -n "$payload/deploy/install-server-node.sh" || fail 'Invalid remote node installer.'
+fi
 [[ "$release_arch" == "$arch" ]] || fail 'Release architecture mismatch.'
 if [[ "$version" != latest ]]; then [[ "$version" == "v$release_version" ]] || fail 'Release version mismatch.'; fi
 minimum_glibc="$(tr -d '\r\n' <"$payload/MIN_GLIBC")"

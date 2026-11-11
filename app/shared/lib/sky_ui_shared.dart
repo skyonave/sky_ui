@@ -1,6 +1,7 @@
 library;
 
 export 'src/access/models.dart';
+export 'src/access/server_node.dart';
 export 'src/access/diagnostics.dart';
 export 'src/protocols/schema.dart';
 export 'src/engines/runtime.dart';
