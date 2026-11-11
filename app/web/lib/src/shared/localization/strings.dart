@@ -41,7 +41,33 @@ class AppStrings {
       'builder.routeTransit': 'Транзит',
       'builder.routeEgress': 'Выход',
       'builder.routeHelp':
-          'Первый сервер принимает подключения клиентов. Последний выходит в интернет. Удалённый маршрут доступен для VLESS TCP + REALITY через mihomo.',
+          'Первый узел принимает подключения. По умолчанию трафик проходит через все узлы и выходит с последнего.',
+      'routing.title': 'Правила маршрутизации',
+      'routing.help':
+          'Срабатывает первое совпадение сверху вниз. Без совпадений используется действие по умолчанию. Прямой трафик выходит с IP текущего узла. На входе общие правила доступа ядра проверяются первыми.',
+      'routing.local': 'Этот сервер',
+      'routing.direct': 'Напрямую с этого узла',
+      'routing.block': 'Блокировать',
+      'routing.forward': 'Через {node}',
+      'routing.next': 'По маршруту → {node}',
+      'routing.fallback': 'Действие по умолчанию',
+      'routing.add': 'Добавить правило',
+      'routing.type': 'Условие',
+      'routing.target': 'Назначение',
+      'routing.action': 'Действие',
+      'routing.domain': 'Точный домен',
+      'routing.suffix': 'Домен и поддомены',
+      'routing.cidr': 'IP или сеть (CIDR)',
+      'routing.port': 'Порт назначения',
+      'routing.network': 'TCP или UDP',
+      'routing.up': 'Поднять правило',
+      'routing.down': 'Опустить правило',
+      'routing.remove': 'Удалить правило',
+      'routing.missingNode': 'Выберите доступное действие',
+      'routing.review': 'Узлов с настройками: {nodes}, правил: {rules}',
+      'routing.links': 'Порты дополнительных переходов (TCP и UDP)',
+      'runtime.error.route_policy_invalid':
+          'Проверьте условия и действия правил. Передать трафик можно только узлу дальше по маршруту.',
       'servers.bootstrap': 'Установить по SSH',
       'servers.bootstrapUser': 'Логин SSH',
       'servers.bootstrapAuth': 'Доступ SSH',
@@ -64,7 +90,7 @@ class AppStrings {
       'runtime.error.route_address_unavailable':
           'Не удалось определить адрес для связи между узлами.',
       'runtime.error.route_protocol_unsupported':
-          'Для удалённого маршрута выберите mihomo, VLESS, TCP и REALITY.',
+          'Для каскада и правил выберите mihomo, VLESS, TCP и REALITY.',
       'runtime.error.route_node_protocol':
           'Узел нужно обновить через «Установить по SSH».',
       'runtime.error.route_requires_rule_mode':

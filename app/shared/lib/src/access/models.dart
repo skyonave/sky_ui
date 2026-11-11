@@ -1,3 +1,5 @@
+import 'routing.dart';
+
 class Connection {
   const Connection({
     required this.id,
@@ -13,6 +15,8 @@ class Connection {
     this.assignedPorts = const [],
     this.route = const [],
     this.routePorts = const [],
+    this.routeShortcuts = const [],
+    this.routing = const {},
   });
   final String id;
   final String name;
@@ -28,12 +32,15 @@ class Connection {
   static const localNode = 'local';
   final List<String> route;
   final List<int> routePorts;
+  final List<RouteShortcut> routeShortcuts;
+  final Map<String, NodeRouting> routing;
   String get ingress => route.firstOrNull ?? localNode;
 
   Connection copyWith({
     bool? enabled,
     List<int>? assignedPorts,
     List<int>? routePorts,
+    List<RouteShortcut>? routeShortcuts,
   }) => Connection(
     id: id,
     name: name,
@@ -48,6 +55,8 @@ class Connection {
     assignedPorts: assignedPorts ?? this.assignedPorts,
     route: route,
     routePorts: routePorts ?? this.routePorts,
+    routeShortcuts: routeShortcuts ?? this.routeShortcuts,
+    routing: routing,
   );
   Map<String, Object?> toJson() => {
     'id': id,
@@ -63,6 +72,12 @@ class Connection {
     'assignedPorts': assignedPorts,
     if (route.isNotEmpty) 'route': route,
     if (routePorts.isNotEmpty) 'routePorts': routePorts,
+    if (routeShortcuts.isNotEmpty)
+      'routeShortcuts': [for (final link in routeShortcuts) link.toJson()],
+    if (routing.isNotEmpty)
+      'routing': {
+        for (final entry in routing.entries) entry.key: entry.value.toJson(),
+      },
   };
   factory Connection.fromJson(Map<String, dynamic> json) => Connection(
     id: json['id'] as String,
@@ -80,6 +95,16 @@ class Connection {
     assignedPorts: List<int>.from(json['assignedPorts'] as List? ?? []),
     route: List<String>.from(json['route'] as List? ?? []),
     routePorts: List<int>.from(json['routePorts'] as List? ?? []),
+    routeShortcuts: [
+      for (final link in json['routeShortcuts'] as List? ?? const [])
+        RouteShortcut.fromJson(Map<String, dynamic>.from(link as Map)),
+    ],
+    routing: {
+      for (final entry in (json['routing'] as Map? ?? const {}).entries)
+        entry.key as String: NodeRouting.fromJson(
+          Map<String, dynamic>.from(entry.value as Map),
+        ),
+    },
   );
 }
 

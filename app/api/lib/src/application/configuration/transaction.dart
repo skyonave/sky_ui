@@ -194,6 +194,8 @@ class ConfigurationTransaction {
                 r.password,
                 r.inbound,
                 r.nextIndex,
+                r.targetNode,
+                r.routing?.toJson(),
               ],
           ],
           'connections': data.connections
@@ -284,7 +286,13 @@ class ConfigurationTransaction {
         }
         final wasRunning = observation.state == CoreProcessState.active;
         final validation = native.compile(
-          newData,
+          routes?.project(
+                after,
+                Connection.localNode,
+                owner.core.id,
+                validationOnly: true,
+              ) ??
+              newData,
           owner.core,
           previous,
           validationOnly: true,

@@ -42,6 +42,7 @@ Component icon(String name, {String? classes}) {
     'arrow': 'M7 17 17 7M7 7h10v10',
     'chevron': 'm9 5 7 7-7 7',
     'down': 'm6 9 6 6 6-6',
+    'up': 'm6 15 6-6 6 6',
     'close': 'm6 6 12 12M6 18 18 6',
     'check': 'm5 12 4 4L19 6',
     'copy': 'M9 9h12v12H9z M15 9V3H3v12h6',

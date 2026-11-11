@@ -2,6 +2,7 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../shared/api_exception.dart';
 import '../configuration/relay_routes.dart';
+import '../configuration/route_policy.dart';
 import '../contracts/access_environment.dart';
 import '../engines/core_manager.dart';
 import '../engines/registry.dart';
@@ -107,13 +108,16 @@ class ConnectionCommands {
         settings: secretInput,
       ),
     );
-    if (input.route.isNotEmpty &&
-        (settings['transport'] != 'TCP' ||
+    if ((input.route.isNotEmpty || input.routing.isNotEmpty) &&
+        (input.coreId != 'mihomo' ||
+            input.protocolId != 'vless' ||
+            settings['transport'] != 'TCP' ||
             settings['security'] != 'REALITY' ||
             (settings['routingRule'] ?? '').isNotEmpty ||
             !{'', 'DIRECT'}.contains(settings['routingProxy'] ?? ''))) {
       throw const ApiException('route_protocol_unsupported', status: 422);
     }
+    final routing = RoutePolicy.validate(input);
     final secretIds = definition.fields
         .where((f) => f.secret)
         .map((f) => f.id)
@@ -129,6 +133,7 @@ class ConnectionCommands {
       settings: settings,
       shareable: definition.shareable,
       route: input.route,
+      routing: routing,
     );
     final secrets = await codec.connectionSecrets(
       value,
@@ -157,6 +162,7 @@ class ConnectionCommands {
           .where((key) => secrets.containsKey('field:$key'))
           .toList(),
       route: value.route,
+      routing: value.routing,
     );
     final record = StoredConnection(safeValue, secrets);
     for (var i = 0; i < data.grants.length; i++) {

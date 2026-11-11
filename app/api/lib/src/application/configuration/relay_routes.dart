@@ -8,6 +8,7 @@ import '../../engines/managed_core.dart';
 import '../../shared/api_exception.dart';
 import '../access/records.dart';
 import '../contracts/configuration_codec.dart';
+import 'route_policy.dart';
 
 abstract interface class RelayTransport {
   Map<String, ServerNode> nodes();
@@ -95,12 +96,7 @@ class RelayRoutes {
     for (final node in nodes) {
       address(data, node);
     }
-    if (jsonEncode(old?.value.route) == jsonEncode(nodes)) {
-      return {
-        for (final entry in old!.secrets.entries)
-          if (entry.key.startsWith('relay:')) entry.key: entry.value,
-      };
-    }
+    final unchangedNodes = jsonEncode(old?.value.route) == jsonEncode(nodes);
     final reserved = <int>{
       if (input.port != null) input.port!,
       for (final c in data.connections) ...{
@@ -112,9 +108,17 @@ class RelayRoutes {
         if (int.tryParse(g.credentials['port'] ?? '') case final port?) port,
     };
     final result = <String, String>{};
-    for (var i = 0; i < nodes.length - 1; i++) {
-      final source = await _ip(_relayAddress(data, nodes[i]));
-      final destination = await _ip(_relayAddress(data, nodes[i + 1]));
+    for (final edge in RoutePolicy.edges(input)) {
+      final i = edge.index;
+      if (unchangedNodes && old!.secrets.containsKey('relay:port:$i')) {
+        for (final field in ['port', 'source', 'destination', 'key']) {
+          final key = 'relay:$field:$i';
+          result[key] = old.secrets[key]!;
+        }
+        continue;
+      }
+      final source = await _ip(_relayAddress(data, nodes[edge.from]));
+      final destination = await _ip(_relayAddress(data, nodes[edge.to]));
       if (source.contains(':') != destination.contains(':')) {
         throw const ApiException('route_address_unavailable', status: 422);
       }
@@ -156,7 +160,12 @@ class RelayRoutes {
     throw const ApiException('route_address_unavailable', status: 422);
   }
 
-  PanelData project(PanelData data, String node, String instance) {
+  PanelData project(
+    PanelData data,
+    String node,
+    String instance, {
+    bool validationOnly = false,
+  }) {
     final connections = data.connections
         .where((c) => c.value.ingress == node && c.value.instanceId == instance)
         .toList();
@@ -182,19 +191,27 @@ class RelayRoutes {
               },
             },
       relays: [
-        for (final c in data.listeningConnections)
+        for (final c
+            in validationOnly ? data.connections : data.listeningConnections)
           if (c.value.instanceId == instance)
-            for (var i = 0; i < c.value.route.length - 1; i++)
-              if (c.value.route[i] == node || c.value.route[i + 1] == node)
+            for (final edge in RoutePolicy.edges(c.value))
+              if (c.value.route[edge.from] == node ||
+                  c.value.route[edge.to] == node)
                 RelayLink(
                   connectionId: c.value.id,
-                  index: i,
-                  destination: c.secrets['relay:destination:$i']!,
-                  source: c.secrets['relay:source:$i']!,
-                  port: int.parse(c.secrets['relay:port:$i']!),
-                  password: c.secrets['relay:key:$i']!,
-                  inbound: c.value.route[i + 1] == node,
-                  nextIndex: i + 2 < c.value.route.length ? i + 1 : null,
+                  index: edge.index,
+                  destination: c.secrets['relay:destination:${edge.index}']!,
+                  source: c.secrets['relay:source:${edge.index}']!,
+                  port: int.parse(c.secrets['relay:port:${edge.index}']!),
+                  password: c.secrets['relay:key:${edge.index}']!,
+                  inbound: c.value.route[edge.to] == node,
+                  nextIndex: edge.to < c.value.route.length - 1
+                      ? edge.to
+                      : null,
+                  targetNode: c.value.route[edge.to],
+                  routing: c.value.route[edge.to] == node
+                      ? c.value.routing[node]
+                      : null,
                 ),
       ],
     );
@@ -256,12 +273,13 @@ class RelayRoutes {
     final old = {for (final c in before.listeningConnections) c.value.id: c};
     for (final c in after.listeningConnections) {
       final previous = old[c.value.id];
-      for (var i = 0; i < c.value.route.length - 1; i++) {
+      for (final edge in RoutePolicy.edges(c.value)) {
+        final i = edge.index;
         final port = c.secrets['relay:port:$i']!;
         if (previous?.secrets['relay:port:$i'] == port) continue;
         final destination = c.secrets['relay:destination:$i']!;
         try {
-          if (c.value.route[i] == _local) {
+          if (c.value.route[edge.from] == _local) {
             final socket = await Socket.connect(
               destination,
               int.parse(port),
@@ -270,7 +288,7 @@ class RelayRoutes {
             socket.destroy();
           } else {
             await transport.probe(
-              c.value.route[i],
+              c.value.route[edge.from],
               destination,
               int.parse(port),
             );

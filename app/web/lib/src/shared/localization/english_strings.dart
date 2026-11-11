@@ -7,7 +7,33 @@ const englishStrings = <String, String>{
   'builder.routeTransit': 'Transit',
   'builder.routeEgress': 'Egress',
   'builder.routeHelp':
-      'The first server accepts clients. The last server reaches the internet. Remote routes use VLESS TCP + REALITY with mihomo.',
+      'The first node accepts connections. By default, traffic passes through every node and exits from the last one.',
+  'routing.title': 'Routing rules',
+  'routing.help':
+      'The first matching rule wins. If nothing matches, the node uses the default action. Direct traffic exits from the current node’s IP. On ingress, the core-wide access rules are checked first.',
+  'routing.local': 'This server',
+  'routing.direct': 'Direct from this node',
+  'routing.block': 'Block',
+  'routing.forward': 'Via {node}',
+  'routing.next': 'Follow route → {node}',
+  'routing.fallback': 'Default action',
+  'routing.add': 'Add rule',
+  'routing.type': 'Match',
+  'routing.target': 'Destination',
+  'routing.action': 'Action',
+  'routing.domain': 'Exact domain',
+  'routing.suffix': 'Domain and subdomains',
+  'routing.cidr': 'IP or network (CIDR)',
+  'routing.port': 'Destination port',
+  'routing.network': 'TCP or UDP',
+  'routing.up': 'Move rule up',
+  'routing.down': 'Move rule down',
+  'routing.remove': 'Delete rule',
+  'routing.missingNode': 'Choose an available action',
+  'routing.review': 'Configured nodes: {nodes}, rules: {rules}',
+  'routing.links': 'Additional relay ports (TCP and UDP)',
+  'runtime.error.route_policy_invalid':
+      'Check the rule conditions and actions. Traffic can only be forwarded to a later node.',
   'servers.bootstrap': 'Install over SSH',
   'servers.bootstrapUser': 'SSH username',
   'servers.bootstrapAuth': 'SSH authentication',
@@ -30,7 +56,7 @@ const englishStrings = <String, String>{
   'runtime.error.route_address_unavailable':
       'Could not resolve the address for the link between nodes.',
   'runtime.error.route_protocol_unsupported':
-      'Choose mihomo, VLESS, TCP and REALITY for a remote route.',
+      'Choose mihomo, VLESS, TCP and REALITY for cascades and routing rules.',
   'runtime.error.route_node_protocol':
       'Update the node using Install over SSH.',
   'runtime.error.route_requires_rule_mode':

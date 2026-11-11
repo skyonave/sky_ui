@@ -220,6 +220,20 @@ tbody tr:hover { background: #1d1a21; }
 .server-logs { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .route-field { display: flex; align-items: end; gap: 8px; margin-bottom: 8px; }
 .route-field label { flex: 1; min-width: 0; }
+.route-rules { margin-top: 20px; }
+.route-rule-node { margin-top: 8px; border: 1px solid var(--line); border-radius: 6px; }
+.route-rule-node > summary { padding: 10px 12px; cursor: pointer; }
+.route-rule-node > summary:hover, .route-rule-node > summary:focus-visible { color: var(--accent); outline: none; }
+.route-rule-node > summary > span + span { margin-left: 12px; }
+.route-rule-body { display: grid; gap: 12px; padding: 0 12px 12px; }
+.route-rule-body > .button { justify-self: start; }
+.route-rule-row { display: grid; grid-template-columns: 1fr 1.2fr 1.2fr auto; gap: 8px; align-items: end; }
+.route-rule-row label { min-width: 0; }
+.route-rule-row select, .route-rule-row input { width: 100%; }
+.route-rule-actions { display: flex; }
+@media (max-width: 650px) {
+  .route-rule-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px 20px; }
 label { display: flex; flex-direction: column; gap: 8px; color: #bfbfbf; }
 .setting-row { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 23px 0; border-bottom: 1px solid #2d2d2d; }

@@ -176,12 +176,16 @@ class RelayLink {
     required this.password,
     required this.inbound,
     this.nextIndex,
+    this.targetNode,
+    this.routing,
   });
 
   final String connectionId, destination, source, password;
   final int index, port;
   final bool inbound;
   final int? nextIndex;
+  final String? targetNode;
+  final NodeRouting? routing;
 
   String get name => proxyName(connectionId, index);
   static String proxyName(String id, int index) => 'sky-ui/relay/$id/$index';

@@ -8,6 +8,7 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../../shared/api_exception.dart';
 import '../configuration/transaction.dart';
 import '../configuration/relay_routes.dart';
+import '../configuration/route_policy.dart';
 import '../connections/field_generators.dart';
 import '../contracts/access_environment.dart';
 import '../contracts/configuration_codec.dart';
@@ -243,6 +244,15 @@ class PanelService {
               routePorts: [
                 for (var i = 0; i < c.value.route.length - 1; i++)
                   int.parse(c.secrets['relay:port:$i']!),
+              ],
+              routeShortcuts: [
+                for (final edge in RoutePolicy.edges(c.value))
+                  if (edge.to > edge.from + 1)
+                    RouteShortcut(
+                      c.value.route[edge.from],
+                      c.value.route[edge.to],
+                      int.parse(c.secrets['relay:port:${edge.index}']!),
+                    ),
               ],
               assignedPorts: data
                   .activeGrants(c.value.id)

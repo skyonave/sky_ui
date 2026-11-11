@@ -4,10 +4,12 @@ import 'dart:io';
 
 import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sky_ui_api/src/application/configuration/relay_routes.dart';
+import 'package:sky_ui_api/src/application/configuration/route_policy.dart';
 import 'package:sky_ui_api/src/application/configuration/transaction.dart';
 import 'package:sky_ui_api/src/application/engines/registry.dart';
 import 'package:sky_ui_api/src/application/logs/panel_log.dart';
 import 'package:sky_ui_api/src/application/subscriptions/subscription_service.dart';
+import 'package:sky_ui_api/src/engines/mihomo/routing.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:test/test.dart';
 
@@ -216,16 +218,22 @@ void main() {
     },
   );
 
-  test('native mihomo passes traffic through two encrypted links', () async {
+  Future<void> verifyNativeRouting() async {
     final directory = await Directory.systemTemp.createTemp(
       'sky-ui-native-links-',
     );
     final processes = <Process>[];
-    final origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    origin.listen((request) async {
-      request.response.write('sky-ui-relay-traffic');
-      await request.response.close();
-    });
+    final origins = [
+      for (var i = 0; i < 4; i++)
+        await HttpServer.bind(InternetAddress.loopbackIPv4, 0),
+    ];
+    final [ordinary, shortcut, transit, blocked] = origins;
+    for (final origin in origins) {
+      origin.listen((request) async {
+        request.response.write('sky-ui-relay-traffic');
+        await request.response.close();
+      });
+    }
     Future<int> allocate() async {
       final socket = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       final port = socket.port;
@@ -233,7 +241,7 @@ void main() {
       return port;
     }
 
-    final ports = [await allocate(), await allocate(), await allocate()];
+    final ports = [for (var i = 0; i < 4; i++) await allocate()];
     RelayLink link(int index, bool inbound) => RelayLink(
       connectionId: 'fixture',
       index: index,
@@ -243,6 +251,21 @@ void main() {
       password: base64.encode(List<int>.filled(32, index + 1)),
       inbound: inbound,
       nextIndex: index == 0 ? 1 : null,
+      targetNode: index == 0 ? 'transit' : 'exit',
+      routing: !inbound
+          ? null
+          : index == 0
+          ? NodeRouting(
+              rules: [
+                RoutingRule('port', '${transit.port}', NodeRouting.direct),
+                RoutingRule('port', '${shortcut.port}', NodeRouting.block),
+              ],
+            )
+          : NodeRouting(
+              rules: [
+                RoutingRule('port', '${blocked.port}', NodeRouting.block),
+              ],
+            ),
     );
     final logs = StringBuffer();
     try {
@@ -253,6 +276,7 @@ void main() {
           relays: [
             if (node > 0) link(node - 1, true),
             if (node < 2) link(node, false),
+            if (node != 1) link(2, node == 2),
           ],
         );
         final config =
@@ -262,12 +286,21 @@ void main() {
           (rules as List).removeWhere((rule) => '$rule'.startsWith('IP-CIDR'));
         }
         if (node == 0) {
+          config['sub-rules'] ??= <String, Object?>{};
+          (config['sub-rules'] as Map)['fixture-ingress'] = MihomoRouting.rules(
+            NodeRouting(
+              rules: [RoutingRule('port', '${shortcut.port}', 'node:exit')],
+            ),
+            link(0, false).name,
+            [link(0, false), link(2, false)],
+            'fixture',
+          );
           (config['listeners'] as List).add({
             'name': 'fixture-client',
             'type': 'mixed',
             'listen': '127.0.0.1',
             'port': ports[0],
-            'proxy': link(0, false).name,
+            'rule': 'fixture-ingress',
           });
         }
         final home = await Directory('${directory.path}/$node').create();
@@ -300,7 +333,7 @@ void main() {
         }
         expect(ready, isTrue, reason: '$lastError\n$logs');
       }
-      Future<String> request() async {
+      Future<String> request(HttpServer origin) async {
         final socket = await Socket.connect('127.0.0.1', ports[0]);
         try {
           socket.write(
@@ -308,32 +341,56 @@ void main() {
             'Host: 127.0.0.1:${origin.port}\r\nConnection: close\r\n\r\n',
           );
           await socket.flush();
-          return await utf8.decoder
-              .bind(socket)
-              .join()
-              .timeout(const Duration(seconds: 6), onTimeout: () => '');
+          try {
+            return await utf8.decoder
+                .bind(socket)
+                .join()
+                .timeout(const Duration(seconds: 3), onTimeout: () => '');
+          } on SocketException {
+            return '';
+          }
         } finally {
           socket.destroy();
         }
       }
 
       expect(
-        await request(),
+        await request(ordinary),
+        contains('sky-ui-relay-traffic'),
+        reason: '$logs',
+      );
+      expect(await request(blocked), isNot(contains('sky-ui-relay-traffic')));
+      expect(
+        await request(shortcut),
         contains('sky-ui-relay-traffic'),
         reason: '$logs',
       );
       processes.first.kill();
       await processes.first.exitCode;
-      expect(await request(), isNot(contains('sky-ui-relay-traffic')));
+      expect(await request(ordinary), isNot(contains('sky-ui-relay-traffic')));
+      expect(await request(shortcut), isNot(contains('sky-ui-relay-traffic')));
+      expect(
+        await request(transit),
+        contains('sky-ui-relay-traffic'),
+        reason: '$logs',
+      );
     } finally {
       for (final process in processes.reversed) {
         process.kill();
         await process.exitCode;
       }
-      await origin.close(force: true);
+      for (final origin in origins) {
+        await origin.close(force: true);
+      }
       await directory.delete(recursive: true);
     }
-  }, skip: native == null || !Platform.isLinux);
+  }
+
+  test(
+    'native mihomo routes and blocks traffic at different cascade nodes',
+    verifyNativeRouting,
+    skip: native == null || !Platform.isLinux,
+  );
 
   test(
     'three-node route compiles, limits hop sources, and exports only ingress',
@@ -437,12 +494,13 @@ void main() {
         expect(output, isNot(contains(secret['relay:key:0']!)));
       }
 
-      if (native != null) {
+      Future<void> validateNative(List<RelayChange> candidates) async {
+        if (native == null) return;
         final dir = await Directory.systemTemp.createTemp(
           'sky-ui-relay-native-',
         );
         try {
-          for (final change in changes) {
+          for (final change in candidates) {
             final file = File('${dir.path}/${change.node}.json');
             await file.writeAsString(change.configuration);
             final check = await Process.run(native, [
@@ -462,7 +520,125 @@ void main() {
           await dir.delete(recursive: true);
         }
       }
+
+      await validateNative(changes);
       for (final change in changes) {
+        transport.hashes[change.node] = digest(change.configuration);
+      }
+      Connection withRouting(Map<String, NodeRouting> routing) =>
+          Connection.fromJson({
+            ...connection.toJson(),
+            'routing': routing.map(
+              (node, policy) => MapEntry(node, policy.toJson()),
+            ),
+          });
+      expect(
+        () => RoutePolicy.validate(
+          withRouting({'exit': const NodeRouting(fallback: 'node:entry')}),
+        ),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.code,
+            'code',
+            'route_policy_invalid',
+          ),
+        ),
+      );
+      final routed = withRouting(
+        RoutePolicy.validate(
+          withRouting({
+            'entry': const NodeRouting(
+              rules: [
+                RoutingRule('suffix', ' Example.COM ', 'node:exit'),
+                RoutingRule('network', 'udp', NodeRouting.block),
+              ],
+            ),
+            'transit': const NodeRouting(fallback: NodeRouting.direct),
+            'exit': const NodeRouting(
+              rules: [RoutingRule('cidr', '2001:db8::1', NodeRouting.block)],
+            ),
+          }),
+        ),
+      );
+      final updated = after.copy();
+      final routedSecrets = await routes.prepare(updated, routed, record);
+      updated.connections[0] = StoredConnection(routed, {
+        ...secret,
+        ...routedSecrets,
+      });
+      expect(routedSecrets['relay:key:0'], secret['relay:key:0']);
+      expect(routedSecrets['relay:key:1'], secret['relay:key:1']);
+      final routedChanges = await routes.changes(after, updated, codec, core);
+      expect(routedChanges.map((change) => change.node), [
+        'exit',
+        'transit',
+        'entry',
+      ]);
+      final ingressRules =
+          (jsonDecode(routedChanges.last.configuration) as Map)['sub-rules']
+              as Map;
+      expect(
+        ingressRules.values.single,
+        containsAllInOrder([
+          'DOMAIN-SUFFIX,example.com,sky-ui/relay/cascade/10',
+          'NETWORK,udp,REJECT',
+          'MATCH,sky-ui/relay/cascade/0',
+        ]),
+      );
+      final exitRules =
+          (jsonDecode(routedChanges.first.configuration) as Map)['sub-rules']
+              as Map;
+      expect(
+        exitRules['sky-ui/relay/cascade/10'],
+        contains(
+          'SUB-RULE,(SRC-IP-CIDR,192.0.2.11/32),sky-ui/relay/cascade/10/policy',
+        ),
+      );
+      expect(exitRules['sky-ui/relay/cascade/10/policy'], [
+        'IP-CIDR6,2001:db8::1/128,REJECT',
+        'MATCH,DIRECT',
+      ]);
+      final draft = PanelData(serverName: 'panel', address: '192.0.2.10');
+      final localIngress = Connection.fromJson({
+        ...routed.toJson(),
+        'route': [Connection.localNode, 'transit', 'exit'],
+        'routing': {Connection.localNode: routed.routing['entry']!.toJson()},
+      });
+      final draftSecrets = await routes.prepare(draft, localIngress, null);
+      draft.connections.add(
+        StoredConnection(localIngress, {...secret, ...draftSecrets}),
+      );
+      final inactive = routes.project(draft, Connection.localNode, core.id);
+      expect(inactive.relays, isEmpty);
+      final validation = routes.project(
+        draft,
+        Connection.localNode,
+        core.id,
+        validationOnly: true,
+      );
+      final localConfig = codec.compile(
+        validation,
+        core,
+        RelayFixture.base,
+        validationOnly: true,
+      );
+      expect(
+        localConfig,
+        contains('DOMAIN-SUFFIX,example.com,sky-ui/relay/cascade/10'),
+      );
+      await validateNative([
+        ...routedChanges,
+        RelayChange('local', '', localConfig, const {}, const {}),
+      ]);
+      for (final change in routedChanges) {
+        transport.hashes[change.node] = digest(change.configuration);
+      }
+      final restored = await routes.changes(updated, after, codec, core);
+      expect(
+        restored.map((c) => c.configuration),
+        changes.map((c) => c.configuration),
+      );
+      for (final change in restored) {
         transport.hashes[change.node] = digest(change.configuration);
       }
       final removal = await routes.changes(after, before, codec, core);

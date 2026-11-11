@@ -17,6 +17,7 @@ import '../../infrastructure/process/command_runner.dart';
 import '../../shared/api_exception.dart';
 import '../contracts.dart';
 import '../managed_core.dart';
+import 'routing.dart';
 import 'schema.dart';
 import 'settings.dart';
 
@@ -643,6 +644,7 @@ class MihomoConfiguration
     MihomoSettings.restoreRelayMode(base);
     final owned = <Map<String, Object?>>[];
     final outgoing = data.relays.where((r) => !r.inbound).toList();
+    final ingressPolicies = <(Map<String, Object?>, Connection)>[];
     for (final listener in _listeners(data, validationOnly: validationOnly)) {
       final stored = listener.connection,
           c = stored.value,
@@ -737,6 +739,7 @@ class MihomoConfiguration
         ];
       _protection(out, stored, s, grants);
       owned.add(out);
+      if (c.routing.containsKey(c.ingress)) ingressPolicies.add((out, c));
     }
     MihomoSettings.apply(base, owned, data.coreSettings[core.id]);
     const relayPrefix = 'sky-ui/relay/';
@@ -771,20 +774,49 @@ class MihomoConfiguration
         base['proxies'] = proxies;
       }
     }
-    final relayRules = Map<String, Object?>.from(
-      base['sub-rules'] as Map? ?? {},
-    )..removeWhere((key, _) => key.startsWith(relayPrefix));
-    if (data.relays.isNotEmpty) MihomoSettings.enableRelayMode(base);
+    final relayRules =
+        Map<String, Object?>.from(base['sub-rules'] as Map? ?? {})..removeWhere(
+          (key, _) =>
+              key.startsWith(relayPrefix) ||
+              key.startsWith(MihomoRouting.prefix),
+        );
+    if (data.relays.isNotEmpty || ingressPolicies.isNotEmpty) {
+      MihomoSettings.enableRelayMode(base);
+    }
+    for (final (listener, connection) in ingressPolicies) {
+      final cascade = connection.route.length > 1;
+      final rules = MihomoRouting.rules(
+        connection.routing[connection.ingress]!,
+        cascade ? RelayLink.proxyName(connection.id, 0) : 'DIRECT',
+        outgoing,
+        connection.id,
+      );
+      MihomoRouting.applyIngress(listener, relayRules, rules, cascade: cascade);
+    }
     for (final r in data.relays.where((link) => link.inbound)) {
       final outbound = r.nextIndex == null
           ? 'DIRECT'
           : RelayLink.proxyName(r.connectionId, r.nextIndex!);
+      final source =
+          'SRC-IP-CIDR,${r.source}/${r.source.contains(':') ? 128 : 32}';
+      final policy = r.routing;
+      final policyName = '${r.name}/policy';
       relayRules[r.name] = [
-        for (final cidr in MihomoSettings.privateNetworks)
-          '${cidr.contains(':') ? 'IP-CIDR6' : 'IP-CIDR'},$cidr,REJECT',
-        'SRC-IP-CIDR,${r.source}/${r.source.contains(':') ? 128 : 32},$outbound',
+        ...MihomoRouting.privateBlocks,
+        if (policy == null)
+          '$source,$outbound'
+        else
+          'SUB-RULE,($source),$policyName',
         'MATCH,REJECT',
       ];
+      if (policy != null) {
+        relayRules[policyName] = MihomoRouting.rules(
+          policy,
+          outbound,
+          outgoing,
+          r.connectionId,
+        );
+      }
       owned.add({
         'name': r.name,
         'type': 'shadowsocks',
