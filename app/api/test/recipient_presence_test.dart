@@ -56,6 +56,7 @@ void main() {
       );
       final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       addTearDown(() => server.close(force: true));
+      var now = DateTime.utc(2026, 1, 1);
       var response = <String, Object?>{
         'connections': [
           for (final (name, user) in [
@@ -65,6 +66,10 @@ void main() {
             ('sky-ui/c_ss/g_ss', ''),
           ])
             {
+              'id': '$name/$user',
+              'start': now.toIso8601String(),
+              'upload': 3,
+              'download': 0,
               'metadata': {'inboundName': name, 'inboundUser': user},
             },
         ],
@@ -75,7 +80,10 @@ void main() {
         request.response.write(jsonEncode(response));
         request.response.close();
       });
-      final adapter = MihomoAdapter(const NativeCommandRunner());
+      final adapter = MihomoAdapter(
+        const NativeCommandRunner(),
+        now: () => now,
+      );
       final core = ManagedCore(
         id: 'primary',
         coreId: 'mihomo',
@@ -88,10 +96,31 @@ void main() {
       );
       expect(await adapter.presence(core, data), {
         'g_active': RecipientPresence.online,
-        'g_idle': RecipientPresence.unavailable,
+        'g_idle': RecipientPresence.offline,
         'g_ss': RecipientPresence.online,
       });
+      now = now.add(const Duration(seconds: 9));
+      expect(
+        (await adapter.presence(core, data))['g_active'],
+        RecipientPresence.online,
+      );
+      now = now.add(const Duration(seconds: 1));
+      expect(
+        (await adapter.presence(core, data))['g_active'],
+        RecipientPresence.offline,
+      );
+      final first = (response['connections'] as List).first as Map;
+      first['upload'] = 4;
+      expect(
+        (await adapter.presence(core, data))['g_active'],
+        RecipientPresence.online,
+      );
       response = {'connections': null};
+      expect(
+        (await adapter.presence(core, data))['g_active'],
+        RecipientPresence.online,
+      );
+      now = now.add(const Duration(seconds: 10));
       expect(
         (await adapter.presence(core, data)).values,
         everyElement(RecipientPresence.offline),

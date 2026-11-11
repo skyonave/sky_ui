@@ -25,6 +25,7 @@ class MihomoConfiguration
     implements
         ConfigurationCodec,
         CoreSettingsCodec,
+        RelayBindingsCodec,
         ConnectionDiagnosticsCodec {
   @override
   ConnectionDiagnosticPlan diagnosticPlan(
@@ -534,6 +535,21 @@ class MihomoConfiguration
         result.add((host: host, port: listener.port, udp: true));
     }
     return result;
+  }
+
+  @override
+  ({Set<int> tcp, Set<int> udp}) relayIngressBindings(PanelData data) {
+    final sockets = _sockets(data);
+    return (
+      tcp: {
+        for (final socket in sockets)
+          if (!socket.udp) socket.port,
+      },
+      udp: {
+        for (final socket in sockets)
+          if (socket.udp) socket.port,
+      },
+    );
   }
 
   String _tunDevice(StoredConnection c) =>

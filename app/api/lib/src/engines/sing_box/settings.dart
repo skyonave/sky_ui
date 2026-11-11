@@ -1,7 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:sky_ui_shared/sky_ui_shared.dart';
+
 import '../../application/core_settings/form.dart';
+import '../proxy/relay_outbounds.dart';
 
 /// sing-box 1.14 typed DNS transports and scoped route actions.
 class SingBoxSettings {
@@ -73,8 +76,10 @@ class SingBoxSettings {
   static void apply(
     Map<String, dynamic> base,
     List<String> tags,
-    Map<String, String>? values,
-  ) {
+    Map<String, String>? values, {
+    Map<String, NodeRouting> policies = const {},
+    Map<String, Map<String, String>> relays = const {},
+  }) {
     if (values == null) return;
     final original = jsonDecode(values['_baseline']!) as Map;
     final log = Map<String, dynamic>.from(base['log'] as Map? ?? {});
@@ -87,6 +92,17 @@ class SingBoxSettings {
         values['blockPrivate'] == 'true' ||
         rows.any((r) => r['type'] == 'cidr');
     final customDns = values['dnsMode'] != 'existing';
+    final resolveTags = resolveIp || customDns
+        ? tags
+        : {
+            ...relays.keys,
+            for (final e in policies.entries)
+              if (e.value.rules.any((rule) => rule.type == 'cidr')) e.key,
+          }.toList();
+    final privateTags = values['blockPrivate'] == 'true'
+        ? tags
+        : relays.keys.toList();
+    final allowed = ProxyRelayOutbounds.allowedTargets(tags, relays, directTag);
     if (original.containsKey('dns')) {
       base['dns'] = original['dns'];
     } else {
@@ -94,7 +110,7 @@ class SingBoxSettings {
     }
     String? server;
     if (customDns ||
-        (resolveIp &&
+        (resolveTags.isNotEmpty &&
             (((base['dns'] as Map? ?? {})['servers'] as List?) ?? [])
                 .isEmpty)) {
       server = values['dnsMode'] == 'custom' ? upstreamTag : systemTag;
@@ -109,27 +125,44 @@ class SingBoxSettings {
     }
     final prefix = <Map<String, Object?>>[
       if (tags.isNotEmpty) ...[
-        if (resolveIp || customDns)
+        if (resolveTags.isNotEmpty)
           {
-            'inbound': tags,
+            'inbound': resolveTags,
             'action': 'resolve',
             if (server != null) 'server': server,
           },
-        if (values['blockPrivate'] == 'true')
+        if (privateTags.isNotEmpty)
           {
-            'inbound': tags,
+            'inbound': privateTags,
             'ip_cidr': CoreSettingsForm.privateNetworks,
             'action': 'reject',
           },
         for (final row in rows)
-          {
-            'inbound': tags,
-            row['type'] == 'domain' ? 'domain_suffix' : 'ip_cidr': [
-              row['target'],
-            ],
-            'action': row['action'] == 'allow' ? 'route' : 'reject',
-            if (row['action'] == 'allow') 'outbound': directTag,
-          },
+          for (final target
+              in (row['action'] == 'allow' ? allowed : {'': tags}).entries)
+            {
+              'inbound': target.value,
+              row['type'] == 'domain' ? 'domain_suffix' : 'ip_cidr': [
+                row['target'],
+              ],
+              'action': target.key.isEmpty ? 'reject' : 'route',
+              if (target.key.isNotEmpty) 'outbound': target.key,
+            },
+        for (final e in policies.entries) ...[
+          for (final rule in e.value.rules)
+            _policyRule(e.key, rule.action, relays[e.key], {
+              switch (rule.type) {
+                'domain' => 'domain',
+                'suffix' => 'domain_suffix',
+                'cidr' => 'ip_cidr',
+                'port' => 'port',
+                _ => 'network',
+              }: [
+                rule.type == 'port' ? int.parse(rule.target) : rule.target,
+              ],
+            }),
+          _policyRule(e.key, e.value.fallback, relays[e.key], const {}),
+        ],
       ],
     ];
     if (prefix.isNotEmpty)
@@ -144,8 +177,22 @@ class SingBoxSettings {
           .where((o) => o is! Map || o['tag'] != directTag)
           .toList(),
     );
-    if (tags.isNotEmpty && rows.any((r) => r['action'] == 'allow'))
+    if (tags.isNotEmpty &&
+        (rows.any((r) => r['action'] == 'allow') || policies.isNotEmpty))
       outbounds.add({'type': 'direct', 'tag': directTag});
     base['outbounds'] = outbounds;
   }
+
+  static Map<String, Object?> _policyRule(
+    String tag,
+    String action,
+    Map<String, String>? relay,
+    Map<String, Object?> match,
+  ) => {
+    'inbound': [tag],
+    ...match,
+    'action': action == NodeRouting.block ? 'reject' : 'route',
+    if (action != NodeRouting.block)
+      'outbound': ProxyRelayOutbounds.target(relay, action, directTag),
+  };
 }

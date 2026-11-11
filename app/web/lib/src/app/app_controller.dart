@@ -278,6 +278,7 @@ class AppController {
     'connections',
     'users',
     'servers',
+    'routing',
     'core',
     'logs',
     'settings',

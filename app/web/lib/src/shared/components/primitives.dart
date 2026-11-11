@@ -37,6 +37,7 @@ Component icon(String name, {String? classes}) {
     'settings':
         'M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8 M10 2h4l1 3 3 1 3 2-1 4 1 4-3 2-3 1-1 3h-4l-1-3-3-1-3-2 1-4-1-4 3-2 3-1z',
     'server': 'M4 3h16v7H4z M4 14h16v7H4z M7 6h.01M7 17h.01 M11 6h6m-6 11h6',
+    'routing': 'M6 3v18 M6 13a6 6 0 0 1 6-6h6 M15 4l3 3-3 3',
     'plus': 'M12 5v14M5 12h14',
     'search': 'M21 21l-5-5 M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0',
     'arrow': 'M7 17 17 7M7 7h10v10',

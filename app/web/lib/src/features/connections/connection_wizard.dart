@@ -14,7 +14,6 @@ import '../../shared/protocols/catalog.dart';
 import '../../shared/state/panel_store.dart';
 import '../engines/install_progress.dart';
 import 'connection_draft.dart';
-import 'route_rules.dart';
 import 'sni_picker.dart';
 
 class ConnectionWizard extends StatefulComponent {
@@ -70,13 +69,13 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
   bool get maintenanceBusy => component.maintenanceBusy;
   bool get canChooseRoute =>
       component.routeNodes.length > 1 &&
-      model.selectedProtocol == 'vless' &&
-      model.selectedCore == 'mihomo';
-  bool get supportsRouting =>
-      model.selectedProtocol == 'vless' &&
+      model.selectedProtocol != null &&
+      NodeRouting.supportsProxyCascade(model.selectedCore) &&
+      store.definition(model.selectedCore!, model.selectedProtocol!).shareable;
+  bool get canRemoteIngress =>
       model.selectedCore == 'mihomo' &&
-      model.draft['transport'] == 'TCP' &&
-      model.draft['security'] == 'REALITY';
+      (model.draft['security'] != 'TLS' ||
+          model.draft['certificateSource'] == 'custom');
   List<String> route = [Connection.localNode];
   Map<String, NodeRouting> routing = {};
   bool forceLocalInstall = false;
@@ -263,7 +262,9 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
         !(route.length == 1 && route.single == Connection.localNode)
         ? route
         : const <String>[];
-    if ((selectedRoute.isNotEmpty || routing.isNotEmpty) && !supportsRouting) {
+    if (selectedRoute.isNotEmpty &&
+        (!canChooseRoute ||
+            selectedRoute.first != Connection.localNode && !canRemoteIngress)) {
       setState(
         () => model.error = t('runtime.error.route_protocol_unsupported'),
       );
@@ -566,20 +567,6 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
               ),
           ], classes: 'form-grid'),
           if (canChooseRoute) routeFields(),
-          if (supportsRouting || routing.isNotEmpty)
-            RouteRules(
-              nodes: route,
-              names: component.routeNodes,
-              policies: routing,
-              editable: canEdit,
-              onChange: (node, policy) => setState(() {
-                if (policy.isDefault) {
-                  routing.remove(node);
-                } else {
-                  routing[node] = policy;
-                }
-              }),
-            ),
           if (component.initial?.routeShortcuts.isNotEmpty == true)
             div([
               h3([txt(t('routing.links'))], classes: 'form-section-title'),
@@ -652,7 +639,11 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       select(
         [
           for (final entry in component.routeNodes.entries)
-            if (entry.key == route[index] || !route.contains(entry.key))
+            if (entry.key == route[index] ||
+                !route.contains(entry.key) &&
+                    (index != 0 ||
+                        canRemoteIngress ||
+                        entry.key == Connection.localNode))
               option([txt(entry.value)], value: entry.key),
         ],
         value: route[index],

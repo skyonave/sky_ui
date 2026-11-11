@@ -18,7 +18,9 @@ import '../contracts.dart';
 import '../managed_core.dart';
 import '../sing_box/settings.dart';
 import '../xray/settings.dart';
+import '../xray/traffic.dart';
 import 'inbound_builder.dart';
+import 'relay_outbounds.dart';
 import 'schema.dart';
 
 /// Shared protocol semantics for JSON proxy engines; native documents stay distinct.
@@ -26,6 +28,7 @@ class ProxyConfiguration
     implements
         ConfigurationCodec,
         CoreSettingsCodec,
+        RoutingBaselineCodec,
         ConnectionDiagnosticsCodec {
   @override
   ConnectionDiagnosticPlan diagnosticPlan(
@@ -81,6 +84,13 @@ class ProxyConfiguration
     required this.core,
     this.certificatesDirectory = '/var/lib/sky-ui-certificates',
   });
+  @override
+  Map<String, String> initialRoutingSettings(String native) =>
+      prepareCoreSettings(
+        native.trim().isEmpty ? '{}' : native,
+        null,
+        const {},
+      );
   @override
   final String coreId;
   final ProcessSupervisor supervisor;
@@ -340,8 +350,9 @@ class ProxyConfiguration
       certificates: certificates,
       readSettings: _settings,
     );
+    final listeners = _listeners(data, validationOnly);
     final inbounds = [
-      for (final l in _listeners(data, validationOnly))
+      for (final l in listeners)
         builder.build(l.connection, l.grants, l.port, l.tag),
     ];
     final defaults = coreId == 'xray'
@@ -377,10 +388,41 @@ class ProxyConfiguration
     if (base['outbounds'] is! List || (base['outbounds'] as List).isEmpty)
       throw const ApiException('configuration_invalid', status: 422);
     final tags = inbounds.map((i) => i['tag'] as String).toList();
+    final targets = ProxyRelayOutbounds.apply(
+      base,
+      data.relays,
+      xray: coreId == 'xray',
+    );
+    final relays = {
+      for (final listener in listeners)
+        if (targets[listener.connection.value.id] case final target?)
+          listener.tag: target,
+    };
+    final policies = {
+      for (final listener in listeners)
+        if (relays.containsKey(listener.tag) ||
+            listener.connection.value.routing.containsKey(Connection.localNode))
+          listener.tag:
+              listener.connection.value.routing[Connection.localNode] ??
+              const NodeRouting(),
+    };
     if (coreId == 'xray') {
-      XraySettings.apply(base, tags, data.coreSettings[core.id]);
+      if (tags.isNotEmpty) XrayTraffic.configure(base, core);
+      XraySettings.apply(
+        base,
+        tags,
+        data.coreSettings[core.id],
+        policies: policies,
+        relays: relays,
+      );
     } else {
-      SingBoxSettings.apply(base, tags, data.coreSettings[core.id]);
+      SingBoxSettings.apply(
+        base,
+        tags,
+        data.coreSettings[core.id],
+        policies: policies,
+        relays: relays,
+      );
     }
     return '${const JsonEncoder.withIndent('  ').convert(base)}\n';
   }

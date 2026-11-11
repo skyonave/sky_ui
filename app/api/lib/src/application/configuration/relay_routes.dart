@@ -27,9 +27,10 @@ abstract interface class RelayTransport {
 }
 
 class RelayState {
-  const RelayState(this.hash, this.running);
+  const RelayState(this.hash, this.running, {this.extendedUdp = false});
   final String hash;
   final bool running;
+  final bool extendedUdp;
 }
 
 class RelayChange {
@@ -45,10 +46,16 @@ class RelayChange {
 }
 
 class RelayRoutes {
-  RelayRoutes(this.transport, {required this.allowNew, this.localRelayAddress});
+  RelayRoutes(
+    this.transport, {
+    required this.allowNew,
+    this.localRelayAddress,
+    this.relayInstanceId = 'primary',
+  });
   final RelayTransport transport;
   final bool allowNew;
   final String? localRelayAddress;
+  final String relayInstanceId;
   final _random = Random.secure();
   static const _local = Connection.localNode;
   static const _base = '{"mode":"rule","log-level":"info","listeners":[]}\n';
@@ -88,8 +95,8 @@ class RelayRoutes {
     if ((!allowNew && jsonEncode(old?.value.route) != jsonEncode(nodes)) ||
         nodes.length > 8 ||
         nodes.toSet().length != nodes.length ||
-        input.coreId != 'mihomo' ||
-        input.protocolId != 'vless' ||
+        !NodeRouting.supportsProxyCascade(input.coreId) ||
+        input.ingress != _local && input.coreId != 'mihomo' ||
         nodes.length == 1 && nodes.single == _local) {
       throw const ApiException('route_invalid', status: 422);
     }
@@ -193,7 +200,8 @@ class RelayRoutes {
       relays: [
         for (final c
             in validationOnly ? data.connections : data.listeningConnections)
-          if (c.value.instanceId == instance)
+          if ((node == _local ? c.value.instanceId : relayInstanceId) ==
+              instance)
             for (final edge in RoutePolicy.edges(c.value))
               if (c.value.route[edge.from] == node ||
                   c.value.route[edge.to] == node)
@@ -248,22 +256,16 @@ class RelayRoutes {
           status: 409,
         );
       }
+      final ports = (codec as RelayBindingsCodec).relayIngressBindings(next);
+      if (!state.extendedUdp &&
+          ports.udp.isNotEmpty &&
+          (ports.tcp.isEmpty ||
+              ports.udp.any((p) => p < 40000 || p >= 60000))) {
+        throw const ApiException('route_node_protocol', status: 409);
+      }
       await transport.validate(node, candidate);
       result.add(
-        RelayChange(
-          node,
-          state.hash,
-          candidate,
-          {
-            for (final c in next.listeningConnections) c.value.port!,
-            for (final link in next.relays)
-              if (link.inbound) link.port,
-          },
-          {
-            for (final link in next.relays)
-              if (link.inbound) link.port,
-          },
-        ),
+        RelayChange(node, state.hash, candidate, ports.tcp, ports.udp),
       );
     }
     return result;

@@ -41,15 +41,21 @@ class AppStrings {
       'builder.routeTransit': 'Транзит',
       'builder.routeEgress': 'Выход',
       'builder.routeHelp':
-          'Первый узел принимает подключения. По умолчанию трафик проходит через все узлы и выходит с последнего.',
+          'Первый узел принимает подключения. По умолчанию трафик проходит через все узлы. Для удалённого входа через mihomo с TLS укажите свой сертификат.',
       'routing.title': 'Правила маршрутизации',
+      'nav.routing': 'Маршрутизация',
+      'routing.noConnections': 'На этой ноде пока нет подключений.',
+      'routing.connection': 'Подключение',
+      'routing.link': 'Из {from} через {to}, порт {port}',
+      'routing.packetHelp':
+          'AmneziaWG применяет правила к IPv4-пакетам. Можно указать IP, порт или TCP/UDP. Срабатывает первое совпадение сверху вниз.',
       'routing.help':
           'Срабатывает первое совпадение сверху вниз. Без совпадений используется действие по умолчанию. Прямой трафик выходит с IP текущего узла. На входе общие правила доступа ядра проверяются первыми.',
       'routing.local': 'Этот сервер',
       'routing.direct': 'Напрямую с этого узла',
       'routing.block': 'Блокировать',
       'routing.forward': 'Через {node}',
-      'routing.next': 'По маршруту → {node}',
+      'routing.next': 'По маршруту через {node}',
       'routing.fallback': 'Действие по умолчанию',
       'routing.add': 'Добавить правило',
       'routing.type': 'Условие',
@@ -68,6 +74,8 @@ class AppStrings {
       'routing.links': 'Порты дополнительных переходов (TCP и UDP)',
       'runtime.error.route_policy_invalid':
           'Проверьте условия и действия правил. Передать трафик можно только узлу дальше по маршруту.',
+      'runtime.error.route_policy_conflict':
+          'У подключения уже задано собственное правило или выход в настройках ядра. Сбросьте его, чтобы использовать правила панели.',
       'servers.bootstrap': 'Установить по SSH',
       'servers.bootstrapUser': 'Логин SSH',
       'servers.bootstrapAuth': 'Доступ SSH',
@@ -90,7 +98,7 @@ class AppStrings {
       'runtime.error.route_address_unavailable':
           'Не удалось определить адрес для связи между узлами.',
       'runtime.error.route_protocol_unsupported':
-          'Для каскада и правил выберите mihomo, VLESS, TCP и REALITY.',
+          'Выберите текущий сервер первым узлом или используйте mihomo для удалённого входа. Для TLS на удалённом входе нужен свой сертификат.',
       'runtime.error.route_node_protocol':
           'Узел нужно обновить через «Установить по SSH».',
       'runtime.error.route_requires_rule_mode':
@@ -1002,10 +1010,11 @@ class AppStrings {
       'users.presence.offline': 'Не в сети',
       'users.presence.unavailable': '—',
       'users.presence.help.online':
-          'Ядро видит активное соединение пользователя.',
+          'Замечена активность за последние 10 секунд.',
       'users.presence.help.recent':
           'Ядро недавно приняло запрос или рукопожатие пользователя.',
-      'users.presence.help.offline': 'Активных соединений не видно.',
+      'users.presence.help.offline':
+          'За последние 10 секунд трафика не замечено.',
       'users.presence.help.unavailable':
           'Ядро пока не предоставило данные о подключении.',
       'users.subscription': 'QR-код',

@@ -316,6 +316,15 @@ class PanelService {
     String? id,
   }) =>
       _change(revision, (data) => connectionCommands.save(data, input, id: id));
+  Future<PanelSnapshot> saveRouting(
+    int revision,
+    String id,
+    String node,
+    NodeRouting policy,
+  ) => _change(
+    revision,
+    (data) => connectionCommands.saveRouting(data, id, node, policy),
+  );
   Future<PanelSnapshot> deleteConnection(int revision, String id) =>
       _change(revision, (data) async {
         if (!data.connections.any((c) => c.value.id == id))

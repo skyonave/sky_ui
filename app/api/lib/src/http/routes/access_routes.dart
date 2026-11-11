@@ -154,6 +154,27 @@ void registerAccessRoutes(
   }
 
   router.post('/api/v1/connections', (context) => saveConnection(context));
+  router.put('/api/v1/connections/<id>/routing', (
+    RequestContext context,
+    String id,
+  ) async {
+    final value = await body(context, limit: 16384);
+    final node = value['node'];
+    if (node is! String || node.isEmpty || node.length > 80) {
+      throw const ApiException('request_invalid', status: 400);
+    }
+    final NodeRouting policy;
+    try {
+      policy = NodeRouting.fromJson(
+        Map<String, dynamic>.from(value['policy'] as Map),
+      );
+    } on Object {
+      throw const ApiException('request_invalid', status: 400);
+    }
+    return data(
+      await panel.saveRouting(value['revision'] as int, id, node, policy),
+    );
+  });
   router.put(
     '/api/v1/connections/<id>',
     (RequestContext context, String id) => saveConnection(context, id: id),

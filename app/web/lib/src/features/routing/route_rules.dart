@@ -8,19 +8,23 @@ import '../../shared/localization/strings.dart';
 class RouteRules extends StatelessComponent {
   const RouteRules({
     required this.nodes,
+    required this.node,
     required this.names,
-    required this.policies,
+    required this.policy,
+    required this.coreId,
+    required this.ruleLimit,
     required this.editable,
     required this.onChange,
     super.key,
   });
 
   final List<String> nodes;
+  final String node, coreId;
   final Map<String, String> names;
-  final Map<String, NodeRouting> policies;
+  final NodeRouting policy;
+  final int ruleLimit;
   final bool editable;
-  final void Function(String, NodeRouting) onChange;
-  static const _types = ['domain', 'suffix', 'cidr', 'port', 'network'];
+  final void Function(NodeRouting) onChange;
   static const _examples = {
     'domain': 'www.example.com',
     'suffix': 'example.com',
@@ -30,15 +34,8 @@ class RouteRules extends StatelessComponent {
   static const t = AppStrings();
 
   @override
-  Component build(BuildContext context) => div([
-    h3([txt(t('routing.title'))], classes: 'form-section-title'),
-    p([txt(t('routing.help'))], classes: 'muted small'),
-    for (var index = 0; index < nodes.length; index++) _node(index),
-  ], classes: 'route-rules');
-
-  Component _node(int index) {
-    final id = nodes[index];
-    final policy = policies[id] ?? const NodeRouting();
+  Component build(BuildContext context) {
+    final index = nodes.indexOf(node);
     final rows = policy.rules;
     final next = index + 1 < nodes.length ? nodes[index + 1] : null;
     final routeAction = {
@@ -55,76 +52,53 @@ class RouteRules extends StatelessComponent {
         }),
     };
     void update(List<RoutingRule> rules) =>
-        onChange(id, NodeRouting(fallback: policy.fallback, rules: rules));
+        onChange(NodeRouting(fallback: policy.fallback, rules: rules));
     void move(int from, int to) {
       final next = [...rows];
       next.insert(to, next.removeAt(from));
       update(next);
     }
 
-    return el(
-      'details',
-      [
-        el('summary', [
-          txt(
-            names[id] ?? (id == Connection.localNode ? t('routing.local') : id),
+    return div([
+      p([
+        txt(t(coreId == 'amneziawg' ? 'routing.packetHelp' : 'routing.help')),
+      ], classes: 'muted small'),
+      for (var i = 0; i < rows.length; i++)
+        _row(
+          rows[i],
+          {if (rows[i].action == NodeRouting.next) ...routeAction, ...actions},
+          change: (value) => update([...rows]..[i] = value),
+          remove: () => update([...rows]..removeAt(i)),
+          up: i > 0 ? () => move(i, i - 1) : null,
+          down: i + 1 < rows.length ? () => move(i, i + 1) : null,
+        ),
+      action(
+        t('routing.add'),
+        () => update([
+          ...rows,
+          RoutingRule(
+            NodeRouting.matchesFor(coreId).first,
+            '',
+            NodeRouting.block,
           ),
-          txt(
-            t(
-              index == 0
-                  ? 'builder.routeIngress'
-                  : next == null
-                  ? 'builder.routeEgress'
-                  : 'builder.routeTransit',
-            ),
-            classes: 'muted',
-          ),
-          if (!policy.isDefault) txt('${rows.length}', classes: 'protocol-tag'),
         ]),
-        div([
-          for (var i = 0; i < rows.length; i++)
-            _row(
-              rows[i],
-              {
-                if (rows[i].action == NodeRouting.next) ...routeAction,
-                ...actions,
-              },
-              change: (value) => update([...rows]..[i] = value),
-              remove: () => update([...rows]..removeAt(i)),
-              up: i > 0 ? () => move(i, i - 1) : null,
-              down: i + 1 < rows.length ? () => move(i, i + 1) : null,
-            ),
-          action(
-            t('routing.add'),
-            () => update([
-              ...rows,
-              const RoutingRule('suffix', '', NodeRouting.block),
-            ]),
-            glyph: 'plus',
-            disabled:
-                !editable ||
-                rows.length >= NodeRouting.maxRules ||
-                policies.values.fold(0, (total, p) => total + p.rules.length) >=
-                    NodeRouting.maxTotalRules,
-          ),
-          _select(
-            'routing.fallback',
-            next == null && policy.fallback == NodeRouting.direct
-                ? NodeRouting.next
-                : policy.fallback,
-            {
-              ...routeAction,
-              for (final entry in actions.entries)
-                if (next != null || entry.key != NodeRouting.direct)
-                  entry.key: entry.value,
-            },
-            (value) => onChange(id, NodeRouting(fallback: value, rules: rows)),
-          ),
-        ], classes: 'route-rule-body'),
-      ],
-      classes: 'route-rule-node',
-      key: ValueKey(id),
-    );
+        glyph: 'plus',
+        disabled: !editable || rows.length >= ruleLimit,
+      ),
+      _select(
+        'routing.fallback',
+        next == null && policy.fallback == NodeRouting.direct
+            ? NodeRouting.next
+            : policy.fallback,
+        {
+          ...routeAction,
+          for (final entry in actions.entries)
+            if (next != null || entry.key != NodeRouting.direct)
+              entry.key: entry.value,
+        },
+        (value) => onChange(NodeRouting(fallback: value, rules: rows)),
+      ),
+    ], classes: 'route-rule-body');
   }
 
   Component _row(
@@ -138,7 +112,10 @@ class RouteRules extends StatelessComponent {
     _select(
       'routing.type',
       rule.type,
-      {for (final type in _types) type: t('routing.$type')},
+      {
+        for (final type in NodeRouting.matchesFor(coreId))
+          type: t('routing.$type'),
+      },
       (type) => change(
         RoutingRule(type, type == 'network' ? 'tcp' : '', rule.action),
       ),

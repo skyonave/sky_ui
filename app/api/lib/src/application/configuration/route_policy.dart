@@ -35,6 +35,9 @@ class RoutePolicy {
       }
       final rules = <RoutingRule>[];
       for (final rule in policy.rules) {
+        if (!NodeRouting.matchesFor(input.coreId).contains(rule.type)) {
+          _invalid();
+        }
         var target = rule.target.trim().toLowerCase();
         final ip = rule.type == 'cidr'
             ? InternetAddress.tryParse(target)
@@ -46,7 +49,8 @@ class RoutePolicy {
         final valid = switch (rule.type) {
           'domain' || 'suffix' => CoreSettingsForm.domain(target),
           'cidr' =>
-            RegExp(r'^[0-9a-f:.]+/\d{1,3}$').hasMatch(target) &&
+            (input.coreId != 'amneziawg' || !target.contains(':')) &&
+                RegExp(r'^[0-9a-f:.]+/\d{1,3}$').hasMatch(target) &&
                 CoreSettingsForm.cidr(target),
           'port' =>
             RegExp(r'^\d{1,5}$').hasMatch(target) &&

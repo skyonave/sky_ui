@@ -314,6 +314,8 @@ class AmneziaConfiguration
         'port': c.value.port,
         'privateKey': c.secrets['privateKey'],
         'headerProtectionKey': c.secrets['headerProtectionKey'],
+        if (c.value.routing[Connection.localNode] case final policy?)
+          'routing': policy.toJson(),
         'options': {
           for (final e in s.entries.where(
             (e) => e.key.startsWith('awg.') && e.value.isNotEmpty,

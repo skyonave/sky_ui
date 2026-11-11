@@ -431,6 +431,16 @@ class ApiClient {
     id == null ? 'POST' : 'PUT',
     {'revision': revision, 'connection': value.toJson()},
   );
+  Future<PanelSnapshot> saveRouting(
+    int revision,
+    String id,
+    String node,
+    NodeRouting policy,
+  ) => _mutate('/api/v1/connections/$id/routing', 'PUT', {
+    'revision': revision,
+    'node': node,
+    'policy': policy.toJson(),
+  });
   Future<PanelSnapshot> saveRecipient(
     int revision,
     Recipient value, {

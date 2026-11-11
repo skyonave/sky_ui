@@ -1,8 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:sky_ui_shared/sky_ui_shared.dart';
+
 import '../../application/core_settings/form.dart';
 import '../../shared/api_exception.dart';
+import '../proxy/relay_outbounds.dart';
 
 /// Xray's built-in DNS and field routing retain their native semantics.
 class XraySettings {
@@ -67,8 +70,10 @@ class XraySettings {
   static void apply(
     Map<String, dynamic> base,
     List<String> tags,
-    Map<String, String>? values,
-  ) {
+    Map<String, String>? values, {
+    Map<String, NodeRouting> policies = const {},
+    Map<String, Map<String, String>> relays = const {},
+  }) {
     if (values == null) return;
     final original = jsonDecode(values['_baseline']!) as Map;
     final log = Map<String, dynamic>.from(original['log'] as Map? ?? {});
@@ -85,8 +90,20 @@ class XraySettings {
     final resolveIp =
         values['blockPrivate'] == 'true' ||
         rows.any((r) => r['type'] == 'cidr');
+    final policyResolveIp =
+        relays.isNotEmpty ||
+        policies.values.any(
+          (policy) => policy.rules.any((rule) => rule.type == 'cidr'),
+        );
     final customDns = values['dnsMode'] != 'existing';
-    final active = values['blockPrivate'] == 'true' || rows.isNotEmpty;
+    final privateTags = values['blockPrivate'] == 'true'
+        ? tags
+        : relays.keys.toList();
+    final allowed = ProxyRelayOutbounds.allowedTargets(tags, relays, directTag);
+    final active =
+        values['blockPrivate'] == 'true' ||
+        rows.isNotEmpty ||
+        policies.isNotEmpty;
     final originalRules = (routing['rules'] as List? ?? []);
     final foreign = (base['inbounds'] as List).any(
       (i) => i is Map && !(i['tag']?.toString().startsWith('sky-') ?? false),
@@ -95,7 +112,7 @@ class XraySettings {
         ? node.containsKey('ip') || node.values.any(hasIpRule)
         : node is List && node.any(hasIpRule);
     if ((active && (routing['script']?.toString().isNotEmpty ?? false)) ||
-        (resolveIp &&
+        ((resolveIp || policyResolveIp) &&
             foreign &&
             routing['domainStrategy'] != 'IPOnDemand' &&
             hasIpRule(originalRules)))
@@ -105,7 +122,7 @@ class XraySettings {
     } else {
       base.remove('dns');
     }
-    if (customDns || (resolveIp && base['dns'] == null)) {
+    if (customDns || ((resolveIp || policyResolveIp) && base['dns'] == null)) {
       base['dns'] = {
         'servers': values['dnsMode'] == 'custom'
             ? CoreSettingsForm.lines(
@@ -116,7 +133,9 @@ class XraySettings {
           'hosts': (original['dns'] as Map)['hosts'],
       };
     }
-    if (resolveIp && tags.isNotEmpty) routing['domainStrategy'] = 'IPOnDemand';
+    if ((resolveIp || policyResolveIp) && tags.isNotEmpty) {
+      routing['domainStrategy'] = 'IPOnDemand';
+    }
     final outbounds = List<dynamic>.from(
       (base['outbounds'] as List)
           .where((o) => o is! Map || ![directTag, rejectTag].contains(o['tag']))
@@ -125,21 +144,22 @@ class XraySettings {
     final ownsDirect =
         tags.isNotEmpty &&
         (customDns || resolveIp || rows.any((r) => r['action'] == 'allow'));
-    if (ownsDirect)
+    if (ownsDirect || policies.isNotEmpty)
       outbounds.add({
         'protocol': 'freedom',
         'tag': directTag,
-        'settings': {'domainStrategy': 'UseIP'},
+        if (ownsDirect || policyResolveIp)
+          'settings': {'domainStrategy': 'UseIP'},
       });
     if (tags.isNotEmpty && active)
       outbounds.add({'protocol': 'blackhole', 'tag': rejectTag});
     base['outbounds'] = outbounds;
     final prefix = <Map<String, Object?>>[
       if (tags.isNotEmpty) ...[
-        if (values['blockPrivate'] == 'true')
+        if (privateTags.isNotEmpty)
           {
             'type': 'field',
-            'inboundTag': tags,
+            'inboundTag': privateTags,
             // Xray unmaps IPv4-mapped IPv6 before matching IPv4 CIDRs.
             'ip': CoreSettingsForm.privateNetworks
                 .where((net) => net != '::ffff:0:0/96')
@@ -147,16 +167,38 @@ class XraySettings {
             'outboundTag': rejectTag,
           },
         for (final row in rows)
-          {
-            'type': 'field',
-            'inboundTag': tags,
-            row['type'] == 'domain' ? 'domain' : 'ip': [
-              row['type'] == 'domain'
-                  ? 'domain:${row['target']}'
-                  : row['target'],
-            ],
-            'outboundTag': row['action'] == 'allow' ? directTag : rejectTag,
-          },
+          for (final target
+              in (row['action'] == 'allow' ? allowed : {rejectTag: tags})
+                  .entries)
+            {
+              'type': 'field',
+              'inboundTag': target.value,
+              row['type'] == 'domain' ? 'domain' : 'ip': [
+                row['type'] == 'domain'
+                    ? 'domain:${row['target']}'
+                    : row['target'],
+              ],
+              'outboundTag': target.key,
+            },
+        for (final e in policies.entries) ...[
+          for (final rule in e.value.rules)
+            _policyRule(e.key, rule.action, relays[e.key], switch (rule.type) {
+              'domain' => {
+                'domain': ['full:${rule.target}'],
+              },
+              'suffix' => {
+                'domain': ['domain:${rule.target}'],
+              },
+              'cidr' => {
+                'ip': [rule.target],
+              },
+              'port' => {'port': rule.target},
+              _ => {'network': rule.target},
+            }),
+          _policyRule(e.key, e.value.fallback, relays[e.key], const {
+            'network': 'tcp,udp',
+          }),
+        ],
       ],
     ];
     if (prefix.isNotEmpty || ownsDirect)
@@ -177,4 +219,18 @@ class XraySettings {
       base.remove('routing');
     }
   }
+
+  static Map<String, Object?> _policyRule(
+    String tag,
+    String action,
+    Map<String, String>? relay,
+    Map<String, Object?> match,
+  ) => {
+    'type': 'field',
+    'inboundTag': [tag],
+    ...match,
+    'outboundTag': action == NodeRouting.block
+        ? rejectTag
+        : ProxyRelayOutbounds.target(relay, action, directTag),
+  };
 }

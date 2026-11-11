@@ -122,6 +122,7 @@ Map<String, dynamic> validateAwg(Object? value) {
       'headerProtectionKey',
       'options',
       'peers',
+      if (i.containsKey('routing')) 'routing',
     });
     awgRequire(
       i['name'] is String &&
@@ -149,6 +150,7 @@ Map<String, dynamic> validateAwg(Object? value) {
     awgRequire(i['mtu'] is int && i['mtu'] >= 1280 && i['mtu'] <= 1420);
     awgKey(i['privateKey']);
     awgKey(i['headerProtectionKey']);
+    if (i.containsKey('routing')) validateAwgRouting(i['routing']);
     final options = object(i['options']);
     awgRequire(options.keys.every(awgOptions.containsKey));
     for (final entry in options.entries) {
@@ -202,6 +204,101 @@ Map<String, dynamic> validateAwg(Object? value) {
     }
   }
   return config;
+}
+
+void validateAwgRouting(Object? value) {
+  final policy = object(value);
+  exactKeys(policy, {'fallback', 'rules'});
+  const actions = {'next', 'direct', 'block'};
+  final rules = policy['rules'];
+  awgRequire(
+    actions.contains(policy['fallback']) && rules is List && rules.length <= 32,
+  );
+  for (final raw in rules as List) {
+    final rule = object(raw);
+    exactKeys(rule, {'type', 'target', 'action'});
+    final target = rule['target'] as String;
+    awgRequire(actions.contains(rule['action']));
+    switch (rule['type']) {
+      case 'cidr':
+        awgRequire(RegExp(r'^[0-9.]+/\d{1,2}$').hasMatch(target));
+        ipv4(target);
+      case 'network':
+        awgRequire(target == 'tcp' || target == 'udp');
+      case 'port':
+        final port = int.tryParse(target);
+        awgRequire(
+          RegExp(r'^\d{1,5}$').hasMatch(target) &&
+              port != null &&
+              port >= 1 &&
+              port <= 65535,
+        );
+      default:
+        awgRequire(false);
+    }
+  }
+}
+
+String awgNftRules(Map<String, dynamic> config) {
+  final rules = StringBuffer()
+    ..writeln('add table ip $awgTable { comment "Managed by Sky UI"; }')
+    ..writeln(
+      'add chain ip $awgTable postrouting { type nat hook postrouting priority srcnat; policy accept; }',
+    );
+  final interfaces = (config['interfaces'] as List).cast<Map>();
+  if (interfaces.isNotEmpty) {
+    rules.writeln(
+      'add set ip $awgTable $awgActiveSet { type ipv4_addr; flags dynamic,timeout; timeout 10s; size 8192; }',
+    );
+    for (final hook in ['input', 'forward', 'postrouting']) {
+      rules.writeln(
+        'add chain ip $awgTable traffic_$hook { type filter hook $hook priority filter; policy accept; }',
+      );
+    }
+  }
+  for (final i in interfaces) {
+    final net = ipv4(i['address'] as String);
+    final name = i['name'] as String;
+    rules.writeln(
+      'add rule ip $awgTable postrouting ip saddr ${ipv4Text(net.network)}/${net.prefix} oifname != "$name" masquerade',
+    );
+    if (i['routing'] case final Map policy) {
+      rules.writeln('add chain ip $awgTable $name');
+      for (final hook in ['input', 'forward']) {
+        rules.writeln(
+          'add rule ip $awgTable traffic_$hook iifname "$name" jump $name',
+        );
+      }
+      for (final rule in (policy['rules'] as List).cast<Map>()) {
+        final target = rule['target'];
+        final condition = switch (rule['type']) {
+          'cidr' => _awgDestination(target as String),
+          'port' =>
+            'meta l4proto { tcp, udp } th dport ${int.parse(target as String)}',
+          _ => 'meta l4proto $target',
+        };
+        final verdict = rule['action'] == 'block' ? 'drop' : 'return';
+        rules.writeln('add rule ip $awgTable $name $condition $verdict');
+      }
+      if (policy['fallback'] == 'block') {
+        rules.writeln('add rule ip $awgTable $name drop');
+      }
+    }
+    for (final hook in ['input', 'forward']) {
+      rules.writeln(
+        'add rule ip $awgTable traffic_$hook iifname "$name" update @$awgActiveSet { ip saddr }',
+      );
+    }
+    rules.writeln(
+      'add rule ip $awgTable traffic_postrouting oifname "$name" update @$awgActiveSet { ip daddr }',
+    );
+  }
+  return rules.toString();
+}
+
+String _awgDestination(String target) {
+  final network = ipv4(target);
+  return 'ip daddr ${ipv4Text(network.network)}/${network.prefix}';
 }
 
 Map<String, dynamic> loadAwg(String path) =>
@@ -263,6 +360,9 @@ Future<void> runAwg(String configuration, String binary) async {
       ints = ProcessSignal.sigint.watch().listen((_) => stopping = true);
   try {
     await cleanupAwgTable();
+    if ((config['interfaces'] as List).isNotEmpty) {
+      await command(['nft', '-f', '-'], input: awgNftRules(config));
+    }
     final routes = jsonDecode(
       await run(['ip', '-j', 'route', 'show', 'table', 'main']),
     ) as List;
@@ -330,14 +430,6 @@ Future<void> runAwg(String configuration, String binary) async {
           mode: 0x180,
         );
       File('/proc/sys/net/ipv4/ip_forward').writeAsStringSync('1\n');
-      var rules =
-          'add table ip $awgTable { comment "Managed by Sky UI"; }\nadd chain ip $awgTable postrouting { type nat hook postrouting priority srcnat; policy accept; }\n';
-      for (final v in config['interfaces']) {
-        final i = object(v), net = ipv4(i['address'] as String);
-        rules +=
-            'add rule ip $awgTable postrouting ip saddr ${ipv4Text(net.network)}/${net.prefix} oifname != "${i['name']}" masquerade\n';
-      }
-      await command(['nft', '-f', '-'], input: rules);
     }
     stdout.writeln('AmneziaWG 3.1 ready');
     var failed = false;
@@ -345,21 +437,18 @@ Future<void> runAwg(String configuration, String binary) async {
       unawaited(child.exitCode.then((_) => failed = true));
     final tracked = {
       for (final i in config['interfaces'] as List)
-        i['name'] as String: {
-          for (final p in i['peers'] as List) awgKey(p['publicKey']),
-        },
+        for (final p in i['peers'] as List)
+          (p['address'] as String).split('/').first: digest(
+            utf8.encode('${i['name']}/${awgKey(p['publicKey'])}'),
+          ),
     };
-    final observed = {for (final name in tracked.keys) name: <String, int>{}};
     var nextObservation = Duration.zero;
     final clock = Stopwatch()..start();
     while (!stopping) {
       require(!failed, 'amnezia_process_failed');
       if (clock.elapsed >= nextObservation && tracked.isNotEmpty) {
-        nextObservation = clock.elapsed + const Duration(seconds: 5);
-        await Future.wait([
-          for (final entry in tracked.entries)
-            observeAwgHandshakes(entry.key, entry.value, observed[entry.key]!),
-        ]);
+        nextObservation = clock.elapsed + const Duration(seconds: 2);
+        await observeAwgTraffic(awgTable, tracked);
       }
       await sleep(200);
     }

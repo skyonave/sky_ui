@@ -6,6 +6,7 @@ import '../../shared/api_exception.dart';
 import '../access/records.dart';
 import '../access/repository.dart';
 import '../contracts/configuration_store.dart';
+import '../contracts/configuration_codec.dart';
 import '../engines/core_manager.dart';
 import '../engines/registry.dart';
 import '../logs/panel_log.dart';
@@ -181,6 +182,16 @@ class ConfigurationTransaction {
           if (newData.connections.isNotEmpty || newData.relays.isNotEmpty)
             throw const ApiException('binary_missing', status: 409);
           continue;
+        }
+        if (native is RoutingBaselineCodec &&
+            !after.coreSettings.containsKey(owner.core.id) &&
+            newData.connections.any(
+              (c) => c.value.routing.isNotEmpty || c.value.route.isNotEmpty,
+            )) {
+          final settings = (native as RoutingBaselineCodec)
+              .initialRoutingSettings(previous);
+          after.coreSettings[owner.core.id] = settings;
+          newData.coreSettings[owner.core.id] = settings;
         }
         String signature(PanelData data) => jsonEncode({
           'coreSettings': data.coreSettings,

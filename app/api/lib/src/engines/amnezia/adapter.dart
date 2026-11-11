@@ -37,17 +37,27 @@ class AmneziaAdapter extends JsonProxyAdapter {
       }
     }
     if (expected.isEmpty) return {};
-    final event = RegExp(
-      r'^sky-ui-peer-handshake ([0-9a-f]{64}) ([0-9]{1,12})$',
-    );
-    final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-    return {
-      for (final line in await recentPresenceLogs(core, 180))
-        if (event.firstMatch(line) case final match?)
-          if (expected[match[1]] case final grant?)
-            if (now - int.parse(match[2]!) case >= 0 && <= 180)
-              grant: RecipientPresence.recent,
-    };
+    const prefix = 'sky-ui-peer-traffic ';
+    final now = DateTime.now().millisecondsSinceEpoch;
+    for (final line in await recentPresenceLogs(core, 5)) {
+      if (!line.startsWith(prefix)) continue;
+      final payload = jsonDecode(line.substring(prefix.length));
+      if (payload is! Map ||
+          payload['time'] is! int ||
+          payload['active'] is! List)
+        continue;
+      final elapsed = now - (payload['time'] as int);
+      if (elapsed < -1000 || elapsed > 5000) continue;
+      final active = (payload['active'] as List).toSet();
+      return {
+        for (final entry in expected.entries)
+          if (active.contains(entry.key))
+            entry.value: RecipientPresence.online
+          else if (payload['complete'] == true)
+            entry.value: RecipientPresence.offline,
+      };
+    }
+    return {};
   }
 
   @override

@@ -21,6 +21,7 @@ class RelayFixture implements RelayTransport {
   final undo = <String, String>{};
   final rolledBack = <String>[];
   String? failOn;
+  bool extendedUdp = false;
   static const base = '{"mode":"rule","log-level":"info","listeners":[]}\n';
 
   @override
@@ -35,7 +36,7 @@ class RelayFixture implements RelayTransport {
 
   @override
   Future<RelayState> inspect(String node) async =>
-      RelayState(hashes[node] ?? digest(base), true);
+      RelayState(hashes[node] ?? digest(base), true, extendedUdp: extendedUdp);
 
   @override
   Future<void> validate(String node, String configuration) async {
@@ -135,6 +136,90 @@ void main() {
     controller: Uri.parse('http://127.0.0.1:19090'),
     secret: '',
   );
+
+  test(
+    'JSON ingress and remote transit get distinct relay projections',
+    () async {
+      final transport = RelayFixture();
+      final routes = RelayRoutes(transport, allowNew: true);
+      final data = PanelData(serverName: 'panel', address: '192.0.2.10');
+      const value = Connection(
+        id: 'json-route',
+        name: 'JSON route',
+        coreId: 'sing-box',
+        instanceId: 'sing-box',
+        protocolId: 'naive',
+        port: 35444,
+        route: [Connection.localNode, 'transit', 'exit'],
+        shareable: false,
+      );
+      data.connections.add(
+        StoredConnection(value, await routes.prepare(data, value, null)),
+      );
+      expect(
+        routes.project(data, Connection.localNode, core.id).relays,
+        isEmpty,
+      );
+      expect(
+        routes
+            .project(data, Connection.localNode, 'sing-box')
+            .relays
+            .single
+            .inbound,
+        false,
+      );
+      expect(routes.project(data, 'transit', core.id).relays, hasLength(2));
+      expect(routes.project(data, 'exit', core.id).relays.single.inbound, true);
+    },
+  );
+
+  test('UDP-only remote ingress requires the new node worker', () async {
+    final transport = RelayFixture();
+    final routes = RelayRoutes(transport, allowNew: true);
+    final before = PanelData(serverName: 'panel', address: '192.0.2.10');
+    final after = before.copy();
+    const value = Connection(
+      id: 'udp-ingress',
+      name: 'UDP ingress',
+      coreId: 'mihomo',
+      protocolId: 'mieru',
+      port: 35444,
+      route: ['entry'],
+      shareable: false,
+      settings: {'transport': 'UDP'},
+    );
+    after.connections.add(StoredConnection(value, const {}));
+    after.recipients.add(
+      const StoredRecipient(
+        id: 'user',
+        name: 'User',
+        enabled: true,
+        token: 'token',
+      ),
+    );
+    after.grants.add(
+      const AccessGrant(
+        id: 'grant',
+        recipientId: 'user',
+        connectionId: 'udp-ingress',
+        credentials: {'username': 'fixture', 'password': 'fixture-password'},
+      ),
+    );
+    await expectLater(
+      routes.changes(before, after, codec, core),
+      throwsA(
+        isA<ApiException>().having(
+          (e) => e.code,
+          'code',
+          'route_node_protocol',
+        ),
+      ),
+    );
+    transport.extendedUdp = true;
+    final change = (await routes.changes(before, after, codec, core)).single;
+    expect(change.ports, isEmpty);
+    expect(change.udpPorts, {35444});
+  });
 
   test(
     'partial remote activation rolls back before grants become visible',

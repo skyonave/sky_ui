@@ -41,6 +41,7 @@ class Connection {
     List<int>? assignedPorts,
     List<int>? routePorts,
     List<RouteShortcut>? routeShortcuts,
+    Map<String, NodeRouting>? routing,
   }) => Connection(
     id: id,
     name: name,
@@ -56,7 +57,7 @@ class Connection {
     route: route,
     routePorts: routePorts ?? this.routePorts,
     routeShortcuts: routeShortcuts ?? this.routeShortcuts,
-    routing: routing,
+    routing: routing ?? this.routing,
   );
   Map<String, Object?> toJson() => {
     'id': id,

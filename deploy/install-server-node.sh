@@ -147,7 +147,7 @@ case "$1" in
     ;;
   inspect)
     locked
-    printf '%s %s\n' "$(digest "$config")" "$(active)"
+    printf '%s %s 2\n' "$(digest "$config")" "$(active)"
     exit 0
     ;;
   probe)
@@ -177,9 +177,13 @@ case "$1" in
     IFS= read -r -t 10 -n 65 previous
     [[ "$previous" =~ ^[0-9a-f]{64}$ && "$(digest "$config")" == "$previous" ]]
     IFS= read -r -t 10 -n 8192 ports
-    [[ -z "$ports" || "$ports" =~ ^[0-9]{4,5}(\ [0-9]{4,5})*$ ]]
     IFS= read -r -t 10 -n 8192 udp_ports
-    [[ -z "$udp_ports" || "$udp_ports" =~ ^[45][0-9]{4}(\ [45][0-9]{4})*$ ]]
+    for list in "$ports" "$udp_ports"; do
+      [[ -z "$list" || "$list" =~ ^[1-9][0-9]{3,4}(\ [1-9][0-9]{3,4})*$ ]]
+      for port in $list; do
+        (( port >= 1024 && port <= 65535 ))
+      done
+    done
     receive_candidate "$candidate"
     if [[ -d "$undo" ]]; then
       rm -f -- "$undo/"{transaction,config.json,running,enabled}
@@ -192,7 +196,7 @@ case "$1" in
     printf '%s\n' "$tx" > "$undo/transaction"
     sync -f "$state"
     replace_config "$candidate"
-    if [[ -n "$ports" || "$(cat "$undo/running")" == active ]]; then
+    if [[ -n "$ports$udp_ports" || "$(cat "$undo/running")" == active ]]; then
       timeout 18 systemctl restart "$unit" >/dev/null
       verify_ports() {
         local flag=$1 port ready attempt pid
@@ -212,7 +216,7 @@ case "$1" in
       }
       verify_ports t $ports
       verify_ports u $udp_ports
-      if [[ -n "$ports" ]]; then systemctl enable "$unit" >/dev/null 2>&1; fi
+      if [[ -n "$ports$udp_ports" ]]; then systemctl enable "$unit" >/dev/null 2>&1; fi
     fi
     exit 0
     ;;

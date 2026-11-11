@@ -230,6 +230,41 @@ void main() {
     },
   );
   for (final id in ['xray', 'sing-box']) {
+    test('$id saves connection routing without changing grants', () async {
+      final c = await connection(id, 35519);
+      await panel.saveRecipient(
+        repository.revision,
+        Recipient(id: '', name: 'routing fixture', connectionIds: [c.id]),
+      );
+      final credentials = repository.read().grants.single.credentials;
+      final configuration = File(managers[id]!.core.configuration);
+      final routeKey = id == 'xray' ? 'routing' : 'route';
+      final original = jsonDecode(await configuration.readAsString()) as Map;
+      await panel.saveRouting(
+        repository.revision,
+        c.id,
+        Connection.localNode,
+        const NodeRouting(
+          rules: [
+            RoutingRule('network', 'udp', NodeRouting.block),
+            RoutingRule('suffix', 'example.test', NodeRouting.direct),
+          ],
+        ),
+      );
+      final configured = jsonDecode(await configuration.readAsString()) as Map;
+      expect(configured[routeKey]['rules'], hasLength(3));
+      expect(repository.read().grants.single.credentials, credentials);
+      await panel.saveRouting(
+        repository.revision,
+        c.id,
+        Connection.localNode,
+        const NodeRouting(),
+      );
+      final restored = jsonDecode(await configuration.readAsString()) as Map;
+      expect(restored[routeKey], original[routeKey]);
+      expect(restored['outbounds'], original['outbounds']);
+      expect(repository.read().connections.single.value.routing, isEmpty);
+    });
     test(
       '$id settings are isolated, survive connection edits and roll back on activation failure',
       () async {

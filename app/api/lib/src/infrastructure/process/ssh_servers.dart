@@ -171,11 +171,15 @@ class SshServers implements RelayTransport {
   Future<RelayState> inspect(String node) async {
     final output = await _ssh(node, 'inspect');
     final match = RegExp(
-      r'^([a-f0-9]{64}) (active|inactive|failed)$',
+      r'^([a-f0-9]{64}) (active|inactive|failed)( 2)?$',
     ).firstMatch(output);
     if (match == null)
       throw const ApiException('route_node_protocol', status: 502);
-    return RelayState(match[1]!, match[2] == 'active');
+    return RelayState(
+      match[1]!,
+      match[2] == 'active',
+      extendedUdp: match[3] != null,
+    );
   }
 
   @override

@@ -22,6 +22,40 @@ class ConnectionCommands {
   final Future<bool> Function(int) portProbe;
   final RelayRoutes? routes;
   Map<String, CoreManager> get managers => registry.managers;
+
+  Future<void> saveRouting(
+    PanelData data,
+    String id,
+    String node,
+    NodeRouting policy,
+  ) async {
+    final index = data.connections.indexWhere((c) => c.value.id == id);
+    if (index < 0) throw const ApiException('not_found', status: 404);
+    final old = data.connections[index];
+    final input = old.value.copyWith(
+      routing: {...old.value.routing, node: policy},
+    );
+    _checkRouting(input, input.settings);
+    final value = input.copyWith(routing: RoutePolicy.validate(input));
+    final secrets = {...old.secrets};
+    if (value.route.isNotEmpty) {
+      if (routes == null)
+        throw const ApiException('route_node_missing', status: 409);
+      secrets.removeWhere((key, _) => key.startsWith('relay:'));
+      secrets.addAll(await routes!.prepare(data, value, old));
+    }
+    data.connections[index] = StoredConnection(value, secrets);
+  }
+
+  void _checkRouting(Connection input, Map<String, String> settings) {
+    if (input.coreId == 'mihomo' &&
+        input.routing[input.ingress]?.isDefault == false &&
+        ((settings['routingRule'] ?? '').isNotEmpty ||
+            !{'', 'DIRECT'}.contains(settings['routingProxy'] ?? ''))) {
+      throw const ApiException('route_policy_conflict', status: 422);
+    }
+  }
+
   Future<void> save(PanelData data, Connection input, {String? id}) async {
     final old = data.connections.where((c) => c.value.id == id).firstOrNull;
     registry.owner(input);
@@ -108,15 +142,18 @@ class ConnectionCommands {
         settings: secretInput,
       ),
     );
-    if ((input.route.isNotEmpty || input.routing.isNotEmpty) &&
-        (input.coreId != 'mihomo' ||
-            input.protocolId != 'vless' ||
-            settings['transport'] != 'TCP' ||
-            settings['security'] != 'REALITY' ||
+    if (input.route.isNotEmpty &&
+        (!NodeRouting.supportsProxyCascade(input.coreId) ||
+            !definition.shareable ||
+            input.ingress != Connection.localNode &&
+                (input.coreId != 'mihomo' ||
+                    settings['security'] == 'TLS' &&
+                        settings['certificateSource'] != 'custom') ||
             (settings['routingRule'] ?? '').isNotEmpty ||
             !{'', 'DIRECT'}.contains(settings['routingProxy'] ?? ''))) {
       throw const ApiException('route_protocol_unsupported', status: 422);
     }
+    if (input.routing.isNotEmpty) _checkRouting(input, settings);
     final routing = RoutePolicy.validate(input);
     final secretIds = definition.fields
         .where((f) => f.secret)

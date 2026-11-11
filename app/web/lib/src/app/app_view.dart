@@ -17,6 +17,7 @@ import '../features/overview/overview_page.dart';
 import '../features/recipients/recipient_form.dart';
 import '../features/recipients/recipients_page.dart';
 import '../features/recipients/share_content.dart';
+import '../features/routing/routing_page.dart';
 import '../features/servers/servers_page.dart';
 import '../features/settings/owner_form.dart';
 import '../features/settings/session_list.dart';
@@ -114,6 +115,25 @@ class AppView extends StatelessComponent {
                 api: controller.api,
                 localName: controller.store.serverName,
               ),
+            if (controller.page == 'routing')
+              if (controller.panelData case final snapshot?)
+                RoutingPage(
+                  snapshot: snapshot,
+                  editable: controller.canEdit,
+                  save: (revision, id, node, policy) => controller.changePanel(
+                    () =>
+                        controller.api.saveRouting(revision, id, node, policy),
+                  ),
+                )
+              else
+                emptyState(
+                  'server',
+                  t(
+                    controller.dataError == null
+                        ? 'runtime.loading'
+                        : 'runtime.offline',
+                  ),
+                ),
             if (controller.page == 'logs') logsPage(),
             if (controller.page == 'settings') settingsPage(),
             el('footer', [

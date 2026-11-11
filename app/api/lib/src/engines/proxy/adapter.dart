@@ -8,6 +8,7 @@ import '../../infrastructure/process/command_runner.dart';
 import '../../shared/api_exception.dart';
 import '../contracts.dart';
 import '../managed_core.dart';
+import '../xray/traffic.dart';
 
 /// Only the required lifecycle/validation interface; no fictitious controller API.
 class JsonProxyAdapter implements CoreAdapter, CorePresenceSource {
@@ -21,6 +22,7 @@ class JsonProxyAdapter implements CoreAdapter, CorePresenceSource {
   DateTime? _clearedAt;
   final _seen = <String>{};
   bool _observing = false;
+  final _xrayTraffic = XrayTraffic();
   static final _xrayAccepted = RegExp(
     r'^(?:\d{4}/\d\d/\d\d \d\d:\d\d:\d\d(?:\.\d+)? )?from \S+ accepted \S+ \[(sky-[\w-]+) (?:->|>>) [^\]\r\n]+\](?: email: ([\w-]+))?$',
   );
@@ -47,13 +49,17 @@ class JsonProxyAdapter implements CoreAdapter, CorePresenceSource {
       }
     }
     if (expected.isEmpty) return {};
+    if (id == 'xray') {
+      final sampled = await _xrayTraffic.sample(runner, core, expected);
+      if (sampled != null) return sampled;
+    }
     final accepted = id == 'xray' ? _xrayAccepted : _singAccepted;
     final result = <String, RecipientPresence>{};
-    for (final line in await recentPresenceLogs(core, 60)) {
+    for (final line in await recentPresenceLogs(core, 10)) {
       final match = accepted.firstMatch(line);
       if (match == null) continue;
       final grant = expected[(match[1]!, match[2])];
-      if (grant != null) result[grant] = RecipientPresence.recent;
+      if (grant != null) result[grant] = RecipientPresence.online;
     }
     return result;
   }
@@ -170,7 +176,9 @@ class JsonProxyAdapter implements CoreAdapter, CorePresenceSource {
           if (!_seen.add(cursor)) continue;
           if (_since == null || time.isAfter(_since!)) _since = time;
           final raw = value['MESSAGE'] as String? ?? '';
-          if (id == 'amneziawg' && raw.startsWith('sky-ui-peer-handshake '))
+          if (id == 'amneziawg' &&
+              (raw.startsWith('sky-ui-peer-handshake ') ||
+                  raw.startsWith('sky-ui-peer-traffic ')))
             continue;
           final message = redact(
             raw.replaceAll(RegExp(r'\x1b\[[0-?]*[ -/]*[@-~]'), ''),

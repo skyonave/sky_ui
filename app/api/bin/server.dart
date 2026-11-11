@@ -100,6 +100,7 @@ Future<void> main(List<String> args) async {
         : RelayRoutes(
             servers,
             allowNew: config.remoteServersEnabled,
+            relayInstanceId: config.core.id,
             localRelayAddress: Platform.environment['SKY_UI_ROUTE_LOCAL_IP'],
           ),
     additionalExporters: [V2RayExporter()],

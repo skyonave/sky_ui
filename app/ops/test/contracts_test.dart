@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -290,6 +291,42 @@ void main() {
       expect(payload, contains('random_trailers=1\n'));
       expect(payload, contains('allowed_ip=10.66.0.2/32\n'));
       expect(payload, endsWith('\n\n'));
+    });
+    test('routing is scoped to the owned AWG interface and preserves rule order', () async {
+      final fixture = clone(awgFixture());
+      fixture['interfaces'][0]['routing'] = {
+        'fallback': 'block',
+        'rules': [
+          {'type': 'cidr', 'target': '203.0.113.0/24', 'action': 'direct'},
+          {'type': 'port', 'target': '443', 'action': 'block'},
+        ],
+      };
+      final name = fixture['interfaces'][0]['name'];
+      final rules = awgNftRules(validateAwg(fixture));
+      expect(
+        rules.split('\n'),
+        containsAllInOrder([
+          'add rule ip $awgTable traffic_input iifname "$name" jump $name',
+          'add rule ip $awgTable traffic_forward iifname "$name" jump $name',
+          'add rule ip $awgTable $name ip daddr 203.0.113.0/24 return',
+          'add rule ip $awgTable $name meta l4proto { tcp, udp } th dport 443 drop',
+          'add rule ip $awgTable $name drop',
+        ]),
+      );
+      if (Platform.environment['SKY_UI_NFT_CHECK'] case final checker?) {
+        final root = await Directory.systemTemp.createTemp('sky-awg-rules-');
+        addTearDown(() => root.delete(recursive: true));
+        final file = await File('${root.path}/awg.nft').writeAsString(rules);
+        final checked = await Process.run(checker, [file.path]);
+        expect(
+          checked.exitCode,
+          0,
+          reason: '${checked.stdout}\n${checked.stderr}',
+        );
+      }
+      fixture['interfaces'][0]['routing']['rules'][0]['target'] =
+          '203.0.113.0/24 drop\nadd chain ip foreign x';
+      expect(() => validateAwg(fixture), throwsA(anything));
     });
     for (final text in [
       '<r 9999>',

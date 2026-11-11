@@ -1,66 +1,48 @@
 import 'dart:convert';
-import 'dart:io';
 
 import '../../platform/host.dart';
 
-/// The root worker reads UAPI locally. Only a peer fingerprint and time are
-/// emitted, never the raw reply, which also contains private and preshared keys.
-Future<void> observeAwgHandshakes(
-  String name,
-  Set<String> peers,
-  Map<String, int> previous,
+const awgActiveSet = 'active_peers';
+
+Set<String> awgActivePeers(Object? value, Map<String, String> tracked) {
+  final tables = object(value)['nftables'] as List;
+  final set =
+      tables.map(object).where((row) => row['set'] != null).single['set']
+          as Map;
+  final peers = <String>{};
+  for (final entry in set['elem'] as List? ?? const []) {
+    final element = entry is Map ? entry['elem'] : null;
+    if (element is Map && element['expires'] == 0) continue;
+    final address = element is Map ? element['val'] : entry;
+    if (tracked[address] case final peer?) peers.add(peer);
+  }
+  return peers;
+}
+
+/// The kernel expires active addresses after ten seconds. Only peer hashes
+/// leave this worker, never addresses, traffic destinations, or keys.
+Future<void> observeAwgTraffic(
+  String table,
+  Map<String, String> tracked,
 ) async {
-  Socket? socket;
   try {
-    socket = await Socket.connect(
-      InternetAddress(
-        '/run/amneziawg/$name.sock',
-        type: InternetAddressType.unix,
-      ),
-      0,
-      timeout: const Duration(seconds: 1),
-    );
-    final connection = socket;
-    final reply = await (() async {
-      connection.write('get=1\n\n');
-      await connection.flush();
-      final bytes = <int>[];
-      await for (final chunk in connection) {
-        if (bytes.length + chunk.length > 512 * 1024)
-          throw const FormatException();
-        bytes.addAll(chunk);
-        if (bytes.length >= 2 &&
-            bytes[bytes.length - 1] == 10 &&
-            bytes[bytes.length - 2] == 10)
-          break;
-      }
-      return utf8.decode(bytes);
-    })().timeout(const Duration(seconds: 1));
-    if (!reply.endsWith('errno=0\n\n')) return;
-    String? peer;
-    for (final line in const LineSplitter().convert(reply)) {
-      if (line.startsWith('public_key=')) {
-        final key = line.substring('public_key='.length);
-        peer = peers.contains(key) ? key : null;
-      } else if (peer != null && line.startsWith('last_handshake_time_sec=')) {
-        final timestamp = int.tryParse(
-          line.substring('last_handshake_time_sec='.length),
-        );
-        final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
-        if (timestamp == null ||
-            timestamp > now ||
-            now - timestamp > 180 ||
-            timestamp <= (previous[peer] ?? 0))
-          continue;
-        previous[peer] = timestamp;
-        stdout.writeln(
-          'sky-ui-peer-handshake ${digest(utf8.encode('$name/$peer'))} $timestamp',
-        );
-      }
-    }
+    final output = await run([
+      'nft',
+      '-j',
+      'list',
+      'set',
+      'ip',
+      table,
+      awgActiveSet,
+    ], timeout: const Duration(seconds: 1));
+    final active = awgActivePeers(jsonDecode(output), tracked);
+    final payload = {
+      'time': DateTime.now().millisecondsSinceEpoch,
+      'active': active.take(120).toList(),
+      'complete': active.length <= 120,
+    };
+    print('sky-ui-peer-traffic ${jsonEncode(payload)}');
   } on Exception {
-    // Presence is optional and must never affect the tunnel lifecycle.
-  } finally {
-    socket?.destroy();
+    // Observation failure is independent of tunnel lifecycle.
   }
 }

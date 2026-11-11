@@ -57,7 +57,8 @@ class AppSidebar extends StatelessComponent {
         txt(t('nav.workspace'), classes: 'nav-label'),
         for (final key in ['overview', 'connections', 'users']) navItem(key),
         txt(t('nav.system'), classes: 'nav-label second-label'),
-        for (final key in ['servers', 'core', 'logs', 'settings']) navItem(key),
+        for (final key in ['servers', 'routing', 'core', 'logs', 'settings'])
+          navItem(key),
       ], classes: 'navigation'),
       div([
         panelUpdateCard(),

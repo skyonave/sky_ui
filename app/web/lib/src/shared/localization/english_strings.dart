@@ -7,15 +7,21 @@ const englishStrings = <String, String>{
   'builder.routeTransit': 'Transit',
   'builder.routeEgress': 'Egress',
   'builder.routeHelp':
-      'The first node accepts connections. By default, traffic passes through every node and exits from the last one.',
+      'The first node accepts connections. By default, traffic passes through every node. For remote mihomo ingress with TLS, supply a custom certificate.',
   'routing.title': 'Routing rules',
+  'nav.routing': 'Routing',
+  'routing.noConnections': 'This node has no connections yet.',
+  'routing.connection': 'Connection',
+  'routing.link': 'From {from} via {to}, port {port}',
+  'routing.packetHelp':
+      'AmneziaWG applies rules to IPv4 packets. Match by IP, port, or TCP/UDP. The first matching rule wins.',
   'routing.help':
       'The first matching rule wins. If nothing matches, the node uses the default action. Direct traffic exits from the current node’s IP. On ingress, the core-wide access rules are checked first.',
   'routing.local': 'This server',
   'routing.direct': 'Direct from this node',
   'routing.block': 'Block',
   'routing.forward': 'Via {node}',
-  'routing.next': 'Follow route → {node}',
+  'routing.next': 'Follow route via {node}',
   'routing.fallback': 'Default action',
   'routing.add': 'Add rule',
   'routing.type': 'Match',
@@ -34,6 +40,8 @@ const englishStrings = <String, String>{
   'routing.links': 'Additional relay ports (TCP and UDP)',
   'runtime.error.route_policy_invalid':
       'Check the rule conditions and actions. Traffic can only be forwarded to a later node.',
+  'runtime.error.route_policy_conflict':
+      'This connection already uses a custom native rule or outbound. Reset it to use panel routing rules.',
   'servers.bootstrap': 'Install over SSH',
   'servers.bootstrapUser': 'SSH username',
   'servers.bootstrapAuth': 'SSH authentication',
@@ -56,7 +64,7 @@ const englishStrings = <String, String>{
   'runtime.error.route_address_unavailable':
       'Could not resolve the address for the link between nodes.',
   'runtime.error.route_protocol_unsupported':
-      'Choose mihomo, VLESS, TCP and REALITY for cascades and routing rules.',
+      'Choose this server as the first node, or use mihomo for remote ingress. Remote TLS ingress requires a custom certificate.',
   'runtime.error.route_node_protocol':
       'Update the node using Install over SSH.',
   'runtime.error.route_requires_rule_mode':
@@ -1409,9 +1417,8 @@ const englishStrings = <String, String>{
       "This name is only visible in the panel. The user does not need an account and cannot sign in to the panel.",
   "users.noAccess": "No connections assigned",
   "users.none": "No users yet",
-  "users.presence.help.offline": "No open connections were detected.",
-  "users.presence.help.online":
-      "The core reports an open connection for this user.",
+  "users.presence.help.offline": "No traffic detected in the last 10 seconds.",
+  "users.presence.help.online": "Activity detected in the last 10 seconds.",
   "users.presence.help.recent":
       "The core recently accepted a request or handshake from this user.",
   "users.presence.help.unavailable":

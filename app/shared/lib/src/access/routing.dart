@@ -40,6 +40,14 @@ class NodeRouting {
   static const nodePrefix = 'node:';
   static const maxRules = 32;
   static const maxTotalRules = 128;
+  static const matches = ['domain', 'suffix', 'cidr', 'port', 'network'];
+  static const packetMatches = ['cidr', 'port', 'network'];
+
+  static List<String> matchesFor(String coreId) =>
+      coreId == 'amneziawg' ? packetMatches : matches;
+
+  static bool supportsProxyCascade(String? coreId) =>
+      const {'mihomo', 'sing-box', 'xray'}.contains(coreId);
 
   final String fallback;
   final List<RoutingRule> rules;

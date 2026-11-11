@@ -17,6 +17,15 @@ abstract interface class CoreSettingsCodec {
   );
 }
 
+/// Codecs which share a native baseline between engine and connection routing.
+abstract interface class RoutingBaselineCodec {
+  Map<String, String> initialRoutingSettings(String native);
+}
+
+abstract interface class RelayBindingsCodec {
+  ({Set<int> tcp, Set<int> udp}) relayIngressBindings(PanelData data);
+}
+
 /// Protocols with per-recipient address/resource allocation opt in explicitly.
 abstract interface class DeviceGrantPolicy {
   bool requiresDeviceGrant(StoredConnection connection);

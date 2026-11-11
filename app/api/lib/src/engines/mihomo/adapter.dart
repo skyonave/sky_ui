@@ -9,10 +9,14 @@ import '../../infrastructure/process/command_runner.dart';
 import '../../shared/api_exception.dart';
 import '../contracts.dart';
 import '../managed_core.dart';
+import '../traffic_presence.dart';
 
 class MihomoAdapter implements CoreAdapter, CorePresenceSource {
-  MihomoAdapter(this.runner);
+  MihomoAdapter(this.runner, {DateTime Function()? now})
+    : _now = now ?? DateTime.now;
   final CommandRunner runner;
+  final DateTime Function() _now;
+  final _traffic = <String, TrafficPresence>{};
   String? _version;
   DateTime? _binaryModified;
   String? _binaryPath;
@@ -64,7 +68,11 @@ class MihomoAdapter implements CoreAdapter, CorePresenceSource {
         if (entries is! List) throw const FormatException();
         return entries;
       })().timeout(const Duration(seconds: 2));
-      return _matchConnections(data, entries);
+      return _matchConnections(
+        data,
+        entries,
+        _traffic.putIfAbsent(core.id, TrafficPresence.new),
+      );
     } on Exception {
       return {};
     } finally {
@@ -72,9 +80,10 @@ class MihomoAdapter implements CoreAdapter, CorePresenceSource {
     }
   }
 
-  static Map<String, RecipientPresence> _matchConnections(
+  Map<String, RecipientPresence> _matchConnections(
     PanelData data,
     List entries,
+    TrafficPresence traffic,
   ) {
     final users = <String, Map<String, String>>{};
     final isolated = <String, String>{};
@@ -106,21 +115,40 @@ class MihomoAdapter implements CoreAdapter, CorePresenceSource {
         result[grant.id] = RecipientPresence.offline;
       }
     }
+    final samples = <String, TrafficSample>{};
     for (final entry in entries) {
       if (entry is! Map || entry['metadata'] is! Map) return {};
       final metadata = entry['metadata'] as Map;
       final name = metadata['inboundName'];
       if (name is! String) return {};
       final inboundUsers = users[name];
-      final grant = isolated[name] ?? inboundUsers?[metadata['inboundUser']];
+      final inboundUser = metadata['inboundUser'];
+      final grant = isolated[name] ?? inboundUsers?[inboundUser];
       if (grant != null) {
-        result[grant] = RecipientPresence.online;
-      } else if (inboundUsers != null) {
+        final flow = entry['id'],
+            upload = entry['upload'],
+            download = entry['download'];
+        if (flow is! String || upload is! int || download is! int) {
+          result[grant] = RecipientPresence.unavailable;
+          continue;
+        }
+        samples[flow] = (
+          grant: grant,
+          upload: upload,
+          download: download,
+          start: DateTime.tryParse(entry['start']?.toString() ?? ''),
+        );
+      } else if (inboundUsers != null &&
+          (inboundUser is! String || inboundUser.isEmpty)) {
         for (final id in inboundUsers.values) {
           if (result[id] == RecipientPresence.offline)
             result[id] = RecipientPresence.unavailable;
         }
       }
+    }
+    traffic.observe(samples, _now());
+    for (final grant in result.keys) {
+      if (traffic.online(grant)) result[grant] = RecipientPresence.online;
     }
     return result;
   }
