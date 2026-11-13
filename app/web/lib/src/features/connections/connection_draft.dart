@@ -4,16 +4,21 @@ import '../../shared/state/panel_store.dart';
 
 /// Constructor decisions and validation have no browser or component lifecycle.
 class ConnectionDraft {
-  ConnectionDraft({required this.store, required this.coreInstalled});
+  ConnectionDraft({
+    required this.store,
+    required this.coreInstalled,
+    this.engineAllowed,
+  });
   final PanelStore store;
   final bool Function(String) coreInstalled;
+  final bool Function(String)? engineAllowed;
   String? editingId, selectedCore, selectedProtocol, error;
   String connectionStep = 'protocol';
   Map<String, String> draft = {}, connectionErrors = {};
   final advancedGroups = <String>{};
   List<String> candidateEngines(String protocol) => [
     for (final id in productProtocol(protocol)?.engines ?? <String>[])
-      if (store.supports(id, protocol)) id,
+      if (store.supports(id, protocol) && (engineAllowed?.call(id) ?? true)) id,
   ];
 
   List<String> get connectionSteps {

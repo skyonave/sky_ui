@@ -1,5 +1,85 @@
 // English text for keys whose Russian catalog entries need translation.
 const englishStrings = <String, String>{
+  'servers.working': 'Working…',
+  'servers.state.unknown': 'Not checked',
+  'servers.clientAddress': 'Client address',
+  'servers.relayAddressShort': 'Inter-server IP',
+  'servers.usedRoutes': 'Routes',
+  'routes.resetConfirm':
+      'Reset all rules in this route editor? Changes take effect only after saving.',
+  'routes.moveUp': 'Move server up',
+  'routes.moveDown': 'Move server down',
+  'routes.add': 'Add route',
+  'routes.edit': 'Edit route',
+  'routes.empty': 'Create a route, then select it in a connection.',
+  'routes.both': 'Ingress and egress',
+  'routes.unused': 'Not assigned',
+  'routes.assigned': 'Connections: {count}',
+  'routes.panelParticipates': 'The panel server handles traffic on this route.',
+  'routes.remoteOnly':
+      'Traffic uses remote servers. The panel only manages configuration.',
+  'routes.ruleCount': 'Rules: {count}',
+  'routes.connections': 'Assigned connections',
+  'routes.removeConfirm': 'Delete this route?',
+  'routes.detachBeforeDelete':
+      'Select another route in the assigned connections before deleting.',
+  'routes.entryAddress': 'Ingress server and port',
+  'routes.ports': 'Inter-server ports',
+  'routes.noRelay': 'No relay links',
+  'routes.name': 'Route name',
+  'routes.nameExample': 'Via DE',
+  'routes.path': 'Route servers',
+  'routes.pathHelp':
+      'The first server accepts clients; the last sends traffic to the internet. A route may use a single server.',
+  'routes.remoteCapabilities':
+      'Remote ingress currently supports mihomo. For TLS, provide a custom certificate and key in the connection parameters.',
+  'routes.policyConflict':
+      'The server order changed. Some rules refer to removed or earlier nodes. Correct them before saving.',
+  'routes.resetPolicies': 'Reset route rules',
+  'routes.nodeRules': 'Server rules',
+  'routes.applyAll':
+      'Changes apply to all assigned connections ({count}). If activation fails, the previous configuration will be restored.',
+  'routes.saving': 'Applying…',
+  'routes.saveFailed': 'Route was not saved. See the notification for details.',
+  'routes.localDefault': 'Panel server, no assigned route',
+  'routes.chooseHelp': 'Edit servers and rules in Routing.',
+  'servers.hostHelp':
+      'IP or hostname only, without root@ or https://. Enter the SSH user during installation.',
+  'servers.keyHelp':
+      'The complete server public key, starting with ssh-ed25519. This is not a password or private key.',
+  'servers.endpointHelp':
+      'Client IP or hostname, without https:// or port. The domain DNS must point to this server. Leave empty to use the SSH host.',
+  'servers.relayHelp':
+      'IP for inter-server traffic. Leave empty unless you use a separate network.',
+  'servers.saveHelp':
+      'Saving registers the server. Then install its service over SSH and check its status.',
+  'servers.validation.name': 'Enter a name up to 80 characters.',
+  'servers.validation.host':
+      'Enter an IP or hostname without a user, scheme or port.',
+  'servers.validation.ip': 'Enter a valid IP address.',
+  'servers.validation.port': 'Enter a port number from 1 to 65535.',
+  'servers.validation.hostKey':
+      'Paste the complete Ed25519 public key: ssh-ed25519 AAAAC3…',
+  'servers.lastCheck': 'Last checked: {time}',
+  'servers.installProgress': 'Installing the service over SSH…',
+  'servers.operationProgress': 'Waiting for the server…',
+  'servers.notCheckedHelp':
+      'Select Check to read the service status. For a new server, install it over SSH first.',
+  'servers.endpointChangeHelp':
+      'Links and subscriptions will use this address. Refresh device subscriptions. This action does not issue TLS certificates.',
+  'servers.editAddress': 'Client address',
+  'servers.manualInstall': 'Manual installation',
+  'servers.unknown': 'Not checked',
+  'servers.checkFailed': 'Unreachable',
+  'servers.routes': 'Routes',
+  'runtime.error.route_name_duplicate':
+      'A route with this name already exists.',
+  'runtime.error.route_limit': 'The route limit (128) has been reached.',
+  'runtime.error.route_not_found':
+      'The selected route was deleted. Refresh the page and select another route.',
+  'runtime.error.route_in_use':
+      'Connections use this route. Reassign them first.',
+  'runtime.error.route_shared_edit_required': 'Edit these rules in Routing.',
   'builder.route': 'Route',
   'builder.routeAdd': 'Add node',
   'builder.routeRemove': 'Remove node',

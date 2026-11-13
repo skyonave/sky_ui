@@ -127,6 +127,97 @@ void main() {
         ),
       )).connections.last;
 
+  test('shared named route deploys across engines atomically', () async {
+    final route = (await panel.saveNamedRoute(
+      repository.revision,
+      const NamedRoute(id: '', name: 'Shared', nodes: ['local']),
+    )).routes.single;
+    final a = await connection('xray', 35517),
+        b = await connection('sing-box', 35518);
+    for (final c in [a, b]) {
+      await panel.saveConnection(
+        repository.revision,
+        c.copyWith(routeId: route.id),
+        id: c.id,
+      );
+    }
+    await panel.saveRecipient(
+      repository.revision,
+      Recipient(id: '', name: 'User', connectionIds: [a.id, b.id]),
+    );
+    final credentials = repository
+        .read()
+        .grants
+        .map((g) => g.credentials)
+        .toList();
+    Future<void> update(String domain) async {
+      await panel.saveNamedRoute(
+        repository.revision,
+        NamedRoute(
+          id: route.id,
+          name: 'Shared',
+          nodes: ['local'],
+          policies: {
+            'local': NodeRouting(
+              rules: [RoutingRule('domain', domain, 'block')],
+            ),
+          },
+        ),
+        id: route.id,
+      );
+    }
+
+    await update('ads.example.com');
+    final before = {
+      for (final m in managers.values)
+        m.core.id: await File(m.core.configuration).readAsString(),
+    };
+    for (final configuration in before.values) {
+      expect(configuration, contains('ads.example.com'));
+    }
+    expect(
+      repository.read().grants.map((g) => g.credentials).toList(),
+      credentials,
+    );
+    final revision = repository.revision;
+    supervisors['xray']!.failOnce = true;
+    await expectLater(update('new.example.com'), throwsA(isA<ApiException>()));
+    expect(repository.revision, revision);
+    expect(
+      repository
+          .read()
+          .namedRoutes
+          .single
+          .policies['local']!
+          .rules
+          .single
+          .target,
+      'ads.example.com',
+    );
+    for (final m in managers.values) {
+      expect(
+        await File(m.core.configuration).readAsString(),
+        before[m.core.id],
+      );
+    }
+    expect(await panel.isSynchronized(), true);
+    await expectLater(
+      panel.saveRouting(
+        repository.revision,
+        a.id,
+        'local',
+        const NodeRouting(),
+      ),
+      throwsA(
+        isA<ApiException>().having(
+          (e) => e.code,
+          'code',
+          'route_shared_edit_required',
+        ),
+      ),
+    );
+  });
+
   test(
     'first enabled grant starts only its engine and respects manual stop',
     () async {

@@ -19,6 +19,7 @@ import '../logs/panel_log.dart';
 import '../subscriptions/client_exporter.dart';
 import '../subscriptions/subscription_service.dart';
 import 'connection_commands.dart';
+import 'named_routes.dart';
 import 'recipient_commands.dart';
 import 'recipient_presence.dart';
 import 'records.dart';
@@ -238,6 +239,7 @@ class PanelService {
       ],
       revision: repository.revision,
       routeNodes: routes?.names(data) ?? const {},
+      routes: data.namedRoutes,
       connections: data.connections
           .map(
             (c) => c.value.copyWith(
@@ -321,10 +323,30 @@ class PanelService {
     String id,
     String node,
     NodeRouting policy,
-  ) => _change(
-    revision,
-    (data) => connectionCommands.saveRouting(data, id, node, policy),
-  );
+  ) => _change(revision, (data) async {
+    final connection = data.connections
+        .where((c) => c.value.id == id)
+        .firstOrNull;
+    final routeId = connection?.value.routeId ?? '';
+    if (routeId.isEmpty) {
+      return connectionCommands.saveRouting(data, id, node, policy);
+    }
+    // Preserve the legacy endpoint for an unshared migrated route only.
+    if (data.connections.where((c) => c.value.routeId == routeId).length > 1) {
+      throw const ApiException('route_shared_edit_required', status: 409);
+    }
+    final route = data.namedRoutes.firstWhere((r) => r.id == routeId);
+    await NamedRouteCommands(connectionCommands).save(
+      data,
+      NamedRoute(
+        id: route.id,
+        name: route.name,
+        nodes: route.nodes,
+        policies: {...route.policies, node: policy},
+      ),
+      id: route.id,
+    );
+  });
   Future<PanelSnapshot> deleteConnection(int revision, String id) =>
       _change(revision, (data) async {
         if (!data.connections.any((c) => c.value.id == id))
@@ -332,6 +354,18 @@ class PanelService {
         data.grants.removeWhere((g) => g.connectionId == id);
         data.connections.removeWhere((c) => c.value.id == id);
       });
+  Future<PanelSnapshot> saveNamedRoute(
+    int revision,
+    NamedRoute value, {
+    String? id,
+  }) => _change(
+    revision,
+    (data) => NamedRouteCommands(connectionCommands).save(data, value, id: id),
+  );
+  Future<PanelSnapshot> deleteNamedRoute(int revision, String id) => _change(
+    revision,
+    (data) async => NamedRouteCommands(connectionCommands).remove(data, id),
+  );
   Future<PanelSnapshot> saveRecipient(
     int revision,
     Recipient input, {

@@ -90,3 +90,33 @@ class NodeRouting {
     'rules': [for (final rule in rules) rule.toJson()],
   };
 }
+
+/// A reusable route definition. Credentials and allocated ports remain per connection.
+class NamedRoute {
+  const NamedRoute({
+    required this.id,
+    required this.name,
+    required this.nodes,
+    this.policies = const {},
+  });
+  final String id, name;
+  final List<String> nodes;
+  final Map<String, NodeRouting> policies;
+  Map<String, Object?> toJson() => {
+    'id': id,
+    'name': name,
+    'nodes': nodes,
+    'policies': {for (final e in policies.entries) e.key: e.value.toJson()},
+  };
+  factory NamedRoute.fromJson(Map<String, dynamic> json) => NamedRoute(
+    id: json['id'] as String,
+    name: json['name'] as String,
+    nodes: List<String>.from(json['nodes'] as List),
+    policies: {
+      for (final e in (json['policies'] as Map? ?? {}).entries)
+        e.key as String: NodeRouting.fromJson(
+          Map<String, dynamic>.from(e.value as Map),
+        ),
+    },
+  );
+}

@@ -66,6 +66,24 @@ void registerServerRoutes(
     }
     return Response.json(body: {'data': await service.execute(id, operation)});
   });
+  router.put('/api/v1/servers/<id>/endpoint', (
+    RequestContext context,
+    String id,
+  ) async {
+    final value = await _body(context);
+    final endpoint = value['endpoint'];
+    if (endpoint is! String)
+      throw const ApiException('request_invalid', status: 400);
+    if (panel == null)
+      throw const ApiException('servers_disabled', status: 409);
+    await panel.registry.exclusive((_) async {
+      if (panel.repository.pending != null) {
+        throw const ApiException('configuration_rollback_failed', status: 409);
+      }
+      await enabled().updateEndpoint(id, endpoint);
+    });
+    return Response.json(body: {'data': true});
+  });
   router.post('/api/v1/servers/<id>/bootstrap', (
     RequestContext context,
     String id,
@@ -91,6 +109,9 @@ void registerServerRoutes(
     } else {
       await panel.registry.exclusive((_) async {
         if (panel.repository.pending != null ||
+            panel.repository.read().namedRoutes.any(
+              (r) => r.nodes.contains(id),
+            ) ||
             panel.repository.read().connections.any(
               (c) => c.value.route.contains(id),
             )) {

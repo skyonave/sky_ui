@@ -110,4 +110,52 @@ void main() {
       ),
     );
   });
+
+  test(
+    'reports invalid fields and accepts the full public host key line',
+    () async {
+      await expectLater(
+        servers.add(
+          name: 'DE',
+          host: 'root@192.0.2.4',
+          port: 22,
+          hostKey: hostKey.split(' ').last,
+        ),
+        throwsA(
+          isA<ApiException>().having((e) => e.fields, 'fields', {
+            'host': 'host',
+            'hostKey': 'hostKey',
+          }),
+        ),
+      );
+      expect(runner.command, isEmpty);
+      final node = await servers.add(
+        name: 'DE',
+        host: '192.0.2.4',
+        port: 22,
+        hostKey: '$hostKey root@test\n',
+        endpoint: 'VPN.Example.com',
+      );
+      expect(node.endpoint, 'vpn.example.com');
+      final path = '${data.path}/remote-servers/${node.id}';
+      final pin = File('$path/known_hosts').readAsStringSync();
+      final key = File('$path/identity').readAsStringSync();
+      await servers.updateEndpoint(node.id, 'New.Example.com');
+      expect(servers.list().single.endpoint, 'new.example.com');
+      expect(servers.list().single.host, '192.0.2.4');
+      expect(File('$path/known_hosts').readAsStringSync(), pin);
+      expect(File('$path/identity').readAsStringSync(), key);
+      await expectLater(
+        servers.updateEndpoint(node.id, 'https://bad.example/'),
+        throwsA(
+          isA<ApiException>().having((e) => e.fields, 'fields', {
+            'endpoint': 'host',
+          }),
+        ),
+      );
+      expect(servers.list().single.endpoint, 'new.example.com');
+      await servers.updateEndpoint(node.id, '');
+      expect(servers.list().single.endpoint, isNull);
+    },
+  );
 }

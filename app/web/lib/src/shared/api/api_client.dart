@@ -12,6 +12,22 @@ class ApiClientException implements Exception {
 }
 
 class ApiClient {
+  Future<void> updateServerEndpoint(String id, String endpoint) async {
+    await _request(
+      '/api/v1/servers/$id/endpoint',
+      method: 'PUT',
+      payload: {'endpoint': endpoint},
+    );
+  }
+
+  Future<PanelSnapshot> saveNamedRoute(int revision, NamedRoute route) =>
+      _mutate(
+        route.id.isEmpty ? '/api/v1/routes' : '/api/v1/routes/${route.id}',
+        route.id.isEmpty ? 'POST' : 'PUT',
+        {'revision': revision, 'route': route.toJson()},
+      );
+  Future<PanelSnapshot> deleteNamedRoute(int revision, String id) =>
+      _mutate('/api/v1/routes/$id', 'DELETE', {'revision': revision});
   Future<({bool enabled, List<ServerNode> nodes})> servers() async {
     final response = await _request('/api/v1/servers');
     return (

@@ -10,6 +10,7 @@ class PanelStore {
   Map<String, String> instanceIds = {};
   Map<String, bool> instanceReadiness = {};
   Map<String, String> routeNodes = {};
+  List<NamedRoute> routes = [];
   String serverName = 'Sky UI';
   String address = '';
   Map<String, List<ProtocolDefinition>> protocols = {};
@@ -23,6 +24,7 @@ class PanelStore {
     instanceIds = snapshot.instanceIds;
     instanceReadiness = snapshot.instanceReadiness;
     routeNodes = snapshot.routeNodes;
+    routes = snapshot.routes;
   }
 
   bool ready(Connection c) => c.ingress != Connection.localNode

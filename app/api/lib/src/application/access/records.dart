@@ -81,10 +81,12 @@ class PanelData {
     List<AccessGrant>? grants,
     Map<String, Map<String, String>>? coreSettings,
     this.relays = const [],
+    List<NamedRoute>? namedRoutes,
   }) : connections = connections ?? [],
        recipients = recipients ?? [],
        grants = grants ?? [],
-       coreSettings = coreSettings ?? {};
+       coreSettings = coreSettings ?? {},
+       namedRoutes = namedRoutes ?? [];
   String serverName;
   String address;
   final List<StoredConnection> connections;
@@ -92,10 +94,48 @@ class PanelData {
   final List<AccessGrant> grants;
   final Map<String, Map<String, String>> coreSettings;
   final List<RelayLink> relays;
+  final List<NamedRoute> namedRoutes;
+
+  /// Promote legacy policies without changing effective engine configuration.
+  PanelData migrateRoutes() {
+    for (var i = 0; i < connections.length; i++) {
+      final record = connections[i], c = connections[i].value;
+      if (c.routeId.isNotEmpty || c.route.isEmpty && c.routing.isEmpty)
+        continue;
+      final id = 'route_${c.id}';
+      if (!namedRoutes.any((r) => r.id == id)) {
+        var name = c.name;
+        var suffix = 2;
+        while (namedRoutes.any(
+          (r) => r.name.toLowerCase() == name.toLowerCase(),
+        )) {
+          final tail = ' ($suffix)';
+          name =
+              '${c.name.substring(0, min(c.name.length, 80 - tail.length))}$tail';
+          suffix++;
+        }
+        namedRoutes.add(
+          NamedRoute(
+            id: id,
+            name: name,
+            nodes: c.route.isEmpty ? [Connection.localNode] : [...c.route],
+            policies: {...c.routing},
+          ),
+        );
+      }
+      connections[i] = StoredConnection(
+        c.copyWith(routeId: id),
+        record.secrets,
+      );
+    }
+    return this;
+  }
+
   PanelData copy() => PanelData(
     serverName: serverName,
     address: address,
     connections: [...connections],
+    namedRoutes: [...namedRoutes],
     recipients: [...recipients],
     grants: [...grants],
     coreSettings: {

@@ -58,6 +58,8 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
   late final model = ConnectionDraft(
     store: store,
     coreInstalled: coreInstalled,
+    engineAllowed: (id) =>
+        route.first == Connection.localNode || id == 'mihomo',
   );
   void changeField(ProtocolField field, String value) =>
       setState(() => model.changeField(field, value));
@@ -68,7 +70,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
   bool get dataBusy => component.dataBusy;
   bool get maintenanceBusy => component.maintenanceBusy;
   bool get canChooseRoute =>
-      component.routeNodes.length > 1 &&
+      store.routes.isNotEmpty &&
       model.selectedProtocol != null &&
       NodeRouting.supportsProxyCascade(model.selectedCore) &&
       store.definition(model.selectedCore!, model.selectedProtocol!).shareable;
@@ -78,10 +80,10 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
           model.draft['certificateSource'] == 'custom');
   List<String> route = [Connection.localNode];
   Map<String, NodeRouting> routing = {};
-  bool forceLocalInstall = false;
+  String routeId = '';
   bool coreInstalled(String id) =>
       component.coreInstalled(id) ||
-      id == 'mihomo' && canChooseRoute && !forceLocalInstall;
+      id == 'mihomo' && !route.contains(Connection.localNode);
   MaintenanceJob? maintenanceJob;
   String runtimeMessage(String code) {
     final key = 'runtime.error.$code';
@@ -117,6 +119,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
         ? [...connection!.route]
         : [Connection.localNode];
     routing = {...?connection?.routing};
+    routeId = connection?.routeId ?? '';
     dependencyGeneration++;
     model.connectionStep = connection == null ? 'protocol' : 'parameters';
     dependencyMessage = null;
@@ -210,9 +213,6 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
     if (candidates.isEmpty) return;
     setState(() {
       model.selectedProtocol = protocol.id;
-      route = [Connection.localNode];
-      routing.clear();
-      forceLocalInstall = false;
       model.selectedCore = null;
       fieldGeneration++;
       generatingFields.clear();
@@ -291,7 +291,6 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
             selectedRoute.contains(Connection.localNode)) &&
         !component.coreInstalled(model.selectedCore!)) {
       setState(() {
-        forceLocalInstall = true;
         model.connectionStep = 'dependency';
       });
       return;
@@ -306,6 +305,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
           old?.instanceId ?? store.instanceIds[model.selectedCore] ?? 'primary',
       enabled: old?.enabled ?? true,
       route: selectedRoute,
+      routeId: routeId,
       routing: routing,
       settings: {
         for (final f in definition.activeFields(model.draft))
@@ -406,6 +406,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
   Component connectionForm() {
     if (model.connectionStep == 'protocol')
       return div([
+        routeFields(),
         div([
           for (final protocol in productProtocols)
             productProtocolCard(protocol),
@@ -413,6 +414,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       ]);
     if (model.connectionStep == 'core')
       return div([
+        routeFields(),
         div([
           for (final id in model.candidateEngines(model.selectedProtocol!))
             button(
@@ -439,6 +441,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       ]);
     if (model.connectionStep == 'dependency')
       return div([
+        routeFields(),
         h3([Component.text(coreName(model.selectedCore!))]),
         p([Component.text(t('builder.installRequired'))]),
         if (dependencyMessage != null) p([Component.text(dependencyMessage!)]),
@@ -513,7 +516,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
             if (canChooseRoute)
               t('builder.route'): route
                   .map((node) => component.routeNodes[node] ?? node)
-                  .join(' → '),
+                  .join(' / '),
             if (routing.isNotEmpty)
               t('routing.title'): t('routing.review', {
                 'nodes': routing.length,
@@ -566,18 +569,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
                 ),
               ),
           ], classes: 'form-grid'),
-          if (canChooseRoute) routeFields(),
-          if (component.initial?.routeShortcuts.isNotEmpty == true)
-            div([
-              h3([txt(t('routing.links'))], classes: 'form-section-title'),
-              for (final link in component.initial!.routeShortcuts)
-                p([
-                  txt(
-                    '${component.routeNodes[link.from] ?? link.from} → '
-                    '${component.routeNodes[link.to] ?? link.to}:${link.port}',
-                  ),
-                ], classes: 'muted small'),
-            ], classes: 'route-rules'),
+          routeFields(),
         ],
         for (final f in fields.where((f) => f.kind == 'choice' && !f.advanced))
           field(f),
@@ -608,64 +600,54 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
     ], classes: 'builder-content');
   }
 
-  Component routeFields() => div([
-    h3([txt(t('builder.route'))], classes: 'form-section-title'),
-    for (var i = 0; i < route.length; i++) routeField(i),
-    if (route.length < 8 && route.length < component.routeNodes.length)
-      action(
-        t('builder.routeAdd'),
-        () => setState(() {
-          route.add(
-            component.routeNodes.keys.firstWhere((id) => !route.contains(id)),
-          );
-        }),
-        glyph: 'plus',
-        disabled: !canEdit,
-      ),
-    p([txt(t('builder.routeHelp'))], classes: 'muted small'),
-  ]);
+  bool routeCompatible(NamedRoute value) {
+    if (model.selectedCore == null) return true;
+    if (value.nodes.length == 1 && value.nodes.single == Connection.localNode)
+      return true;
+    return NodeRouting.supportsProxyCascade(model.selectedCore) &&
+        (value.nodes.first == Connection.localNode ||
+            model.selectedCore == 'mihomo');
+  }
 
-  Component routeField(int index) => div([
+  Component routeFields() => div([
     label([
-      txt(
-        t(
-          index == 0
-              ? 'builder.routeIngress'
-              : index == route.length - 1
-              ? 'builder.routeEgress'
-              : 'builder.routeTransit',
-        ),
-      ),
+      txt(t('builder.route')),
       select(
         [
-          for (final entry in component.routeNodes.entries)
-            if (entry.key == route[index] ||
-                !route.contains(entry.key) &&
-                    (index != 0 ||
-                        canRemoteIngress ||
-                        entry.key == Connection.localNode))
-              option([txt(entry.value)], value: entry.key),
+          option([txt(t('routes.localDefault'))], value: ''),
+          for (final value in store.routes)
+            option(
+              [txt(value.name)],
+              value: value.id,
+              disabled: !routeCompatible(value),
+            ),
         ],
-        value: route[index],
-        disabled: !canEdit,
+        value: routeId,
+        disabled: !canEdit || dependencyBusy || dataBusy,
         onChange: (values) {
-          if (values.isNotEmpty)
-            setState(() {
-              routing.remove(route[index]);
-              route[index] = values.single;
-            });
+          if (values.isEmpty) return;
+          final selected = store.routes
+              .where((r) => r.id == values.single)
+              .firstOrNull;
+          setState(() {
+            routeId = selected?.id ?? '';
+            route = [...?selected?.nodes];
+            if (route.isEmpty) route = [Connection.localNode];
+            routing = {...?selected?.policies};
+            model.error = null;
+            if (model.connectionStep == 'dependency' &&
+                coreInstalled(model.selectedCore!)) {
+              model.connectionStep = 'core';
+              model.advanceConnection();
+            }
+          });
         },
       ),
     ]),
-    if (route.length > 1)
-      iconButton(
-        'trash',
-        t('builder.routeRemove'),
-        () => setState(() => routing.remove(route.removeAt(index))),
-        disabled: !canEdit,
-      ),
-  ], classes: 'route-field');
-
+    p([txt(t('routes.chooseHelp'))], classes: 'muted small'),
+    if (route.first != Connection.localNode)
+      p([txt(t('routes.remoteCapabilities'))], classes: 'muted small'),
+  ], classes: 'route-selector');
   Component productProtocolCard(ProductProtocol protocol) {
     final available = model.candidateEngines(protocol.id).isNotEmpty;
     return div([

@@ -32,6 +32,9 @@ class ConnectionCommands {
     final index = data.connections.indexWhere((c) => c.value.id == id);
     if (index < 0) throw const ApiException('not_found', status: 404);
     final old = data.connections[index];
+    if (old.value.routeId.isNotEmpty) {
+      throw const ApiException('route_shared_edit_required', status: 409);
+    }
     final input = old.value.copyWith(
       routing: {...old.value.routing, node: policy},
     );
@@ -57,6 +60,21 @@ class ConnectionCommands {
   }
 
   Future<void> save(PanelData data, Connection input, {String? id}) async {
+    if (input.routeId.isNotEmpty) {
+      final selected = data.namedRoutes
+          .where((r) => r.id == input.routeId)
+          .firstOrNull;
+      if (selected == null)
+        throw const ApiException('route_not_found', status: 422);
+      input = input.copyWith(
+        route:
+            selected.nodes.length == 1 &&
+                selected.nodes.single == Connection.localNode
+            ? const []
+            : selected.nodes,
+        routing: selected.policies,
+      );
+    }
     final old = data.connections.where((c) => c.value.id == id).firstOrNull;
     registry.owner(input);
     final codec = registry.codec(input.coreId);
@@ -170,6 +188,7 @@ class ConnectionCommands {
       settings: settings,
       shareable: definition.shareable,
       route: input.route,
+      routeId: input.routeId,
       routing: routing,
     );
     final secrets = await codec.connectionSecrets(
@@ -199,6 +218,7 @@ class ConnectionCommands {
           .where((key) => secrets.containsKey('field:$key'))
           .toList(),
       route: value.route,
+      routeId: value.routeId,
       routing: value.routing,
     );
     final record = StoredConnection(safeValue, secrets);

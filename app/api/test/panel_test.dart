@@ -3,10 +3,12 @@ import 'dart:io';
 import 'package:dart_frog/dart_frog.dart';
 import 'package:sky_ui_api/sky_ui_api.dart';
 import 'package:sky_ui_api/src/engines/amnezia/configuration.dart';
+import 'package:sky_ui_api/src/application/configuration/relay_routes.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor;
+import 'relay_routes_test.dart' show RelayFixture;
 
 class Adapter extends FakeAdapter {
   @override
@@ -77,18 +79,21 @@ void main() {
     port: freePort,
     settings: settings,
   );
-  PanelService service({List<CoreManager> additionalManagers = const []}) =>
-      PanelService(
-        configurationStore: ConfigurationFiles(config.dataDirectory),
-        config: config,
-        manager: manager,
-        repository: repository,
-        codecs: {'mihomo': codec, 'amneziawg': AwgCodec()},
-        exporter: ClashExporter(),
-        portProbe: (_) async => true,
-        additionalExporters: [V2RayExporter()],
-        additionalManagers: additionalManagers,
-      );
+  PanelService service({
+    List<CoreManager> additionalManagers = const [],
+    RelayRoutes? routes,
+  }) => PanelService(
+    routes: routes,
+    configurationStore: ConfigurationFiles(config.dataDirectory),
+    config: config,
+    manager: manager,
+    repository: repository,
+    codecs: {'mihomo': codec, 'amneziawg': AwgCodec()},
+    exporter: ClashExporter(),
+    portProbe: (_) async => true,
+    additionalExporters: [V2RayExporter()],
+    additionalManagers: additionalManagers,
+  );
   Future<PanelSnapshot> connection() =>
       panel.saveConnection(repository.revision, input());
   Future<PanelSnapshot> recipient(
@@ -143,6 +148,159 @@ void main() {
     panel = service();
     await panel.initialize();
   });
+  test(
+    'remote-only named route serves clients without a local engine',
+    () async {
+      final transport = RelayFixture();
+      final routes = RelayRoutes(transport, allowNew: true);
+      adapter.available = false;
+      supervisor.state = CoreProcessState.inactive;
+      panel = service(routes: routes);
+      final baselineConfig = await native.readAsString();
+      final route = (await panel.saveNamedRoute(
+        repository.revision,
+        const NamedRoute(id: '', name: 'Remote', nodes: ['entry']),
+      )).routes.single;
+      final c = (await panel.saveConnection(
+        repository.revision,
+        input().copyWith(routeId: route.id),
+      )).connections.single;
+      expect(c.route, ['entry']);
+      final users = await recipient(c.id);
+      expect(transport.configurations['entry'], contains('"port": $freePort'));
+      expect(await native.readAsString(), baselineConfig);
+      expect(supervisor.calls, isEmpty);
+      final share = await panel.share(users.recipients.single.id);
+      expect(share.links.single.uri, contains('192.0.2.11'));
+      final oldGrants = repository.read().grants.single.credentials;
+      await panel.saveNamedRoute(
+        repository.revision,
+        NamedRoute(id: route.id, name: route.name, nodes: ['entry', 'exit']),
+        id: route.id,
+      );
+      final keys = {...repository.read().connections.single.secrets};
+      await panel.saveNamedRoute(
+        repository.revision,
+        NamedRoute(
+          id: route.id,
+          name: 'Renamed',
+          nodes: ['entry', 'exit'],
+          policies: {
+            'entry': const NodeRouting(
+              rules: [RoutingRule('domain', 'ads.example.com', 'block')],
+            ),
+          },
+        ),
+        id: route.id,
+      );
+      expect(repository.read().connections.single.secrets, keys);
+      expect(repository.read().grants.single.credentials, oldGrants);
+      expect(await native.readAsString(), baselineConfig);
+      expect(supervisor.calls, isEmpty);
+    },
+  );
+
+  test(
+    'named route bindings preserve credentials and reject stale revisions',
+    () async {
+      final created = await panel.saveNamedRoute(
+        repository.revision,
+        const NamedRoute(id: '', name: 'Local', nodes: ['local']),
+      );
+      final route = created.routes.single;
+      final first = (await panel.saveConnection(
+        repository.revision,
+        input().copyWith(routeId: route.id),
+      )).connections.single;
+      await recipient(first.id);
+      final oldSecrets = {...repository.read().connections.single.secrets};
+      final oldGrants = {...repository.read().grants.single.credentials};
+      final rev = repository.revision;
+      final changed = await panel.saveNamedRoute(
+        rev,
+        NamedRoute(
+          id: route.id,
+          name: 'Filtered',
+          nodes: ['local'],
+          policies: {
+            'local': const NodeRouting(
+              rules: [RoutingRule('domain', 'ads.example.com', 'block')],
+            ),
+          },
+        ),
+        id: route.id,
+      );
+      expect(changed.connections.single.routeId, route.id);
+      expect(
+        changed.connections.single.routing['local']!.rules.single.target,
+        'ads.example.com',
+      );
+      expect(repository.read().connections.single.secrets, oldSecrets);
+      expect(repository.read().grants.single.credentials, oldGrants);
+      expect(await native.readAsString(), contains('ads.example.com'));
+      await expectLater(
+        panel.saveNamedRoute(rev, route, id: route.id),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'state_changed'),
+        ),
+      );
+      await expectLater(
+        panel.deleteNamedRoute(repository.revision, route.id),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'route_in_use'),
+        ),
+      );
+      repository.close();
+      repository = PanelRepository(
+        '${directory.path}/panel.sqlite',
+        defaultAddress: 'panel.example.net',
+      );
+      panel = service();
+      await panel.initialize();
+      expect((await panel.snapshot()).routes.single.name, 'Filtered');
+      expect(await panel.isSynchronized(), true);
+      await panel.saveConnection(
+        repository.revision,
+        first.copyWith(routeId: '', route: [], routing: {}),
+        id: first.id,
+      );
+      await panel.deleteNamedRoute(repository.revision, route.id);
+      expect((await panel.snapshot()).routes, isEmpty);
+      expect(repository.read().grants.single.credentials, oldGrants);
+    },
+  );
+
+  test(
+    'legacy policies migrate once without rewriting native config or credentials',
+    () async {
+      final c = (await connection()).connections.single;
+      await recipient(c.id);
+      await panel.saveRouting(
+        repository.revision,
+        c.id,
+        'local',
+        const NodeRouting(
+          rules: [RoutingRule('domain', 'ads.example.com', 'block')],
+        ),
+      );
+      final nativeBefore = await native.readAsString();
+      final firstRead = repository.read();
+      final route = firstRead.namedRoutes.single;
+      expect(route.nodes, ['local']);
+      expect(firstRead.connections.single.value.routeId, route.id);
+      final credentials = firstRead.grants.single.credentials;
+      await panel.saveSettings(
+        repository.revision,
+        'New name',
+        firstRead.address,
+      );
+      expect(repository.read().namedRoutes.single.id, route.id);
+      expect(repository.read().grants.single.credentials, credentials);
+      expect(await native.readAsString(), nativeBefore);
+      expect(await panel.isSynchronized(), true);
+    },
+  );
+
   test(
     'core settings persist transactionally and preserve grants across reopen',
     () async {

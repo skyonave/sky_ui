@@ -34,6 +34,90 @@ class AppStrings {
 
   static const _catalogs = {
     'ru': {
+      'servers.working': 'Выполняется…',
+      'servers.state.unknown': 'Не проверен',
+      'servers.clientAddress': 'Адрес для клиентов',
+      'servers.relayAddressShort': 'IP между серверами',
+      'servers.usedRoutes': 'Маршрутов',
+      'routes.resetConfirm':
+          'Сбросить все правила этого маршрута в редакторе? Изменения вступят в силу только после сохранения.',
+      'routes.moveUp': 'Поднять сервер',
+      'routes.moveDown': 'Опустить сервер',
+      'routes.add': 'Добавить маршрут',
+      'routes.edit': 'Изменить маршрут',
+      'routes.empty': 'Создайте маршрут, затем выберите его в подключении.',
+      'routes.both': 'Вход и выход',
+      'routes.unused': 'Не назначен',
+      'routes.assigned': 'Подключений: {count}',
+      'routes.panelParticipates': 'Сервер панели участвует в передаче трафика.',
+      'routes.remoteOnly':
+          'Трафик проходит через удалённые серверы. Панель только управляет настройками.',
+      'routes.ruleCount': 'Правил: {count}',
+      'routes.connections': 'Назначенные подключения',
+      'routes.removeConfirm': 'Удалить этот маршрут?',
+      'routes.detachBeforeDelete':
+          'Для удаления сначала выберите другой маршрут в подключениях.',
+      'routes.entryAddress': 'Входной сервер и порт',
+      'routes.ports': 'Порты между серверами',
+      'routes.noRelay': 'Нет промежуточных узлов',
+      'routes.name': 'Название маршрута',
+      'routes.nameExample': 'Через DE',
+      'routes.path': 'Серверы маршрута',
+      'routes.pathHelp':
+          'Первый сервер принимает клиентов, последний выпускает трафик в интернет. Можно оставить один сервер.',
+      'routes.remoteCapabilities':
+          'Удалённый вход сейчас поддерживает mihomo. Для TLS укажите собственный сертификат и ключ в параметрах подключения.',
+      'routes.policyConflict':
+          'Порядок серверов изменился. Некоторые правила ссылаются на удалённые или предыдущие узлы. Исправьте их перед сохранением.',
+      'routes.resetPolicies': 'Сбросить правила маршрута',
+      'routes.nodeRules': 'Правила на серверах',
+      'routes.applyAll':
+          'Изменения применятся ко всем назначенным подключениям ({count}). При ошибке будет восстановлена предыдущая конфигурация.',
+      'routes.saving': 'Применение…',
+      'routes.saveFailed':
+          'Маршрут не сохранён. Подробности ошибки показаны в уведомлении.',
+      'routes.localDefault': 'Сервер панели, без отдельного маршрута',
+      'routes.chooseHelp':
+          'Состав серверов и правила изменяются в разделе «Маршрутизация».',
+      'servers.hostHelp':
+          'Только IP или домен, без root@ и без https://. Пользователь SSH указывается при установке.',
+      'servers.keyHelp':
+          'Публичный ключ сервера целиком, начиная с ssh-ed25519. Это не пароль и не приватный ключ.',
+      'servers.endpointHelp':
+          'IP или домен для клиентов, без https:// и порта. DNS домена должен указывать на этот сервер. Пустое поле использует адрес SSH.',
+      'servers.relayHelp':
+          'IP для трафика между серверами. Если отдельной сети нет, оставьте пустым.',
+      'servers.saveHelp':
+          'Сохранение добавляет сервер в панель. Затем установите службу по SSH и проверьте её состояние.',
+      'servers.validation.name': 'Введите название длиной до 80 символов.',
+      'servers.validation.host':
+          'Укажите IP или домен без пользователя, протокола и порта.',
+      'servers.validation.ip': 'Укажите корректный IP-адрес.',
+      'servers.validation.port': 'Порт должен быть числом от 1 до 65535.',
+      'servers.validation.hostKey':
+          'Вставьте полный публичный ключ Ed25519: ssh-ed25519 AAAAC3…',
+      'servers.lastCheck': 'Последняя проверка: {time}',
+      'servers.installProgress': 'Установка службы по SSH…',
+      'servers.operationProgress': 'Ожидание ответа сервера…',
+      'servers.notCheckedHelp':
+          'Нажмите «Проверить», чтобы узнать состояние службы. Если сервер новый, сначала выполните установку по SSH.',
+      'servers.endpointChangeHelp':
+          'Адрес изменится в ссылках и подписках. Обновите подписки на устройствах. Сертификаты TLS этим действием не выпускаются.',
+      'servers.editAddress': 'Адрес для клиентов',
+      'servers.manualInstall': 'Ручная установка',
+      'servers.unknown': 'Не проверен',
+      'servers.checkFailed': 'Нет связи',
+      'servers.routes': 'Маршрутов',
+      'runtime.error.route_name_duplicate':
+          'Маршрут с таким названием уже существует.',
+      'runtime.error.route_limit':
+          'Достигнут предел количества маршрутов (128).',
+      'runtime.error.route_not_found':
+          'Выбранный маршрут удалён. Обновите страницу и выберите другой.',
+      'runtime.error.route_in_use':
+          'Маршрут используется подключениями. Сначала смените их маршрут.',
+      'runtime.error.route_shared_edit_required':
+          'Измените правила в разделе «Маршрутизация».',
       'builder.route': 'Маршрут',
       'builder.routeAdd': 'Добавить узел',
       'builder.routeRemove': 'Убрать узел',

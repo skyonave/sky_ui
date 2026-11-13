@@ -111,6 +111,10 @@ class PanelRepository implements AccessRepository {
     address: metadata('addressFollowsOrigin') == '1'
         ? _defaultAddress
         : metadata('address')!,
+    namedRoutes: [
+      for (final r in jsonDecode(metadata('namedRoutes') ?? '[]') as List)
+        NamedRoute.fromJson(Map<String, dynamic>.from(r as Map)),
+    ],
     connections: _db
         .select('SELECT value,secrets FROM connections ORDER BY position')
         .map(
@@ -149,7 +153,7 @@ class PanelRepository implements AccessRepository {
           ),
         )
         .toList(),
-  );
+  ).migrateRoutes();
   String? recipientForToken(String token) =>
       _db.select('SELECT id FROM recipients WHERE token_hash = ?', [
             digest(token),
@@ -203,6 +207,10 @@ class PanelRepository implements AccessRepository {
     }
     _set('serverName', data.serverName);
     _set('coreSettings', jsonEncode(data.coreSettings));
+    _set(
+      'namedRoutes',
+      jsonEncode(data.namedRoutes.map((r) => r.toJson()).toList()),
+    );
     _set('address', data.address);
     _set('addressFollowsOrigin', data.address == _defaultAddress ? '1' : '0');
     _set('revision', '${revision + 1}');

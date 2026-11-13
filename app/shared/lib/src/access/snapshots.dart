@@ -1,5 +1,6 @@
 import '../protocols/schema.dart';
 import 'models.dart';
+import 'routing.dart';
 
 enum RecipientPresence { online, recent, offline, unavailable }
 
@@ -19,6 +20,7 @@ class PanelSnapshot {
     this.instanceReadiness = const {},
     this.settingsInstances = const [],
     this.routeNodes = const {},
+    this.routes = const [],
   });
   final int revision;
   final List<Connection> connections;
@@ -34,8 +36,10 @@ class PanelSnapshot {
   final Map<String, bool> instanceReadiness;
   final List<String> settingsInstances;
   final Map<String, String> routeNodes;
+  final List<NamedRoute> routes;
   Map<String, Object?> toJson() => {
     'revision': revision,
+    'routes': routes.map((r) => r.toJson()).toList(),
     'connections': connections.map((v) => v.toJson()).toList(),
     'recipients': recipients.map((v) => v.toJson()).toList(),
     'serverName': serverName,
@@ -54,6 +58,10 @@ class PanelSnapshot {
   };
   factory PanelSnapshot.fromJson(Map<String, dynamic> json) => PanelSnapshot(
     revision: json['revision'] as int,
+    routes: [
+      for (final r in json['routes'] as List? ?? [])
+        NamedRoute.fromJson(Map<String, dynamic>.from(r as Map)),
+    ],
     routeNodes: Map<String, String>.from(json['routeNodes'] as Map? ?? {}),
     settingsInstances: List<String>.from(
       json['settingsInstances'] as List? ?? [],

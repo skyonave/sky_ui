@@ -74,22 +74,28 @@ class SshServers implements RelayTransport {
     name = name.trim();
     host = host.trim().toLowerCase();
     hostKey = hostKey.trim();
+    // Accept the complete public-key line, including its optional comment.
+    if (!hostKey.contains('\n') && !hostKey.contains('\r')) {
+      hostKey = hostKey.split(RegExp(r'[ \t]+')).take(2).join(' ');
+    }
     endpoint = endpoint?.trim().toLowerCase();
     relayAddress = relayAddress?.trim();
     if (endpoint == '') endpoint = null;
     if (relayAddress == '') relayAddress = null;
     final ip = InternetAddress.tryParse(host);
+    final errors = <String, String>{};
     if (name.isEmpty ||
         name.length > 80 ||
-        RegExp(r'[\x00-\x1f\x7f]').hasMatch(name) ||
-        !_validHost(host) ||
-        (endpoint != null && !_validHost(endpoint)) ||
-        (relayAddress != null &&
-            InternetAddress.tryParse(relayAddress) == null) ||
-        port < 1 ||
-        port > 65535 ||
-        !_ed25519.hasMatch(hostKey)) {
-      throw const ApiException('server_invalid', status: 422);
+        RegExp(r'[\x00-\x1f\x7f]').hasMatch(name))
+      errors['name'] = 'name';
+    if (!_validHost(host)) errors['host'] = 'host';
+    if (endpoint != null && !_validHost(endpoint)) errors['endpoint'] = 'host';
+    if (relayAddress != null && InternetAddress.tryParse(relayAddress) == null)
+      errors['relayAddress'] = 'ip';
+    if (port < 1 || port > 65535) errors['port'] = 'port';
+    if (!_ed25519.hasMatch(hostKey)) errors['hostKey'] = 'hostKey';
+    if (errors.isNotEmpty) {
+      throw ApiException('server_invalid', status: 422, fields: errors);
     }
     if (ip != null) host = ip.address;
     if (_adding) throw const ApiException('server_busy', status: 409);
@@ -165,6 +171,32 @@ class SshServers implements RelayTransport {
       throw const ApiException('server_operation_failed', status: 502);
     }
     return output;
+  }
+
+  /// The advertised address affects subscriptions, not the pinned SSH identity.
+  Future<void> updateEndpoint(String id, String endpoint) async {
+    endpoint = endpoint.trim().toLowerCase();
+    if (endpoint.isNotEmpty && !_validHost(endpoint)) {
+      throw const ApiException(
+        'server_invalid',
+        status: 422,
+        fields: {'endpoint': 'host'},
+      );
+    }
+    final path = _path(id);
+    final previous = _read(path);
+    final value = ServerNode(
+      id: previous.id,
+      name: previous.name,
+      host: previous.host,
+      port: previous.port,
+      publicKey: previous.publicKey,
+      relayAddress: previous.relayAddress,
+      endpoint: endpoint.isEmpty ? null : endpoint,
+    );
+    final staged = File('$path/node.json.tmp');
+    await staged.writeAsString(jsonEncode(value.toJson()), flush: true);
+    await staged.rename('$path/node.json');
   }
 
   @override

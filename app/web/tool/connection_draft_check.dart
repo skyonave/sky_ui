@@ -93,6 +93,35 @@ void main() {
     'Valid parameters must reach review.',
   );
   final other = ConnectionDraft(store: store, coreInstalled: (_) => true);
+  final remote =
+      ConnectionDraft(
+          store: store,
+          coreInstalled: (_) => true,
+          engineAllowed: (id) => id == 'mihomo',
+        )
+        ..selectedProtocol = 'vless'
+        ..selectedCore = 'mihomo'
+        ..draft = {
+          'name': 'Remote',
+          'port': '35002',
+          'transport': 'TCP',
+          'security': 'REALITY',
+        };
+  require(
+    remote.candidateEngines('vless').join(',') == 'mihomo',
+    'Remote ingress must not offer an engine that the node cannot run.',
+  );
+  require(
+    !remote.connectionSteps.contains('dependency') &&
+        !remote.connectionSteps.contains('core'),
+    'A remote-only route must not require a local engine installation.',
+  );
+  remote.connectionStep = 'core';
+  remote.advanceConnection();
+  require(
+    remote.connectionStep == 'transport',
+    'Remote ingress keeps the protocol configuration steps.',
+  );
   require(
     other.draft.isEmpty && other.selectedProtocol == null,
     'A new constructor must not inherit another draft.',

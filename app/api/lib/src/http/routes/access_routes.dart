@@ -157,6 +157,36 @@ void registerAccessRoutes(
   }
 
   router.post('/api/v1/connections', (context) => saveConnection(context));
+  Future<Response> saveNamedRoute(RequestContext context, {String? id}) async {
+    final value = await body(
+      context,
+      limit: 65536 + NodeRouting.maxTotalRules * NodeRouting.maxTargetLength,
+    );
+    final NamedRoute route;
+    try {
+      route = NamedRoute.fromJson(
+        Map<String, dynamic>.from(value['route'] as Map),
+      );
+    } on Object {
+      throw const ApiException('request_invalid', status: 400);
+    }
+    return data(
+      await panel.saveNamedRoute(value['revision'] as int, route, id: id),
+    );
+  }
+
+  router.post('/api/v1/routes', (context) => saveNamedRoute(context));
+  router.put(
+    '/api/v1/routes/<id>',
+    (RequestContext context, String id) => saveNamedRoute(context, id: id),
+  );
+  router.delete('/api/v1/routes/<id>', (
+    RequestContext context,
+    String id,
+  ) async {
+    final value = await body(context);
+    return data(await panel.deleteNamedRoute(value['revision'] as int, id));
+  });
   router.put('/api/v1/connections/<id>/routing', (
     RequestContext context,
     String id,

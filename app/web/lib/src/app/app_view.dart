@@ -114,15 +114,18 @@ class AppView extends StatelessComponent {
               ServersPage(
                 api: controller.api,
                 localName: controller.store.serverName,
+                routes: controller.store.routes,
               ),
             if (controller.page == 'routing')
               if (controller.panelData case final snapshot?)
                 RoutingPage(
                   snapshot: snapshot,
                   editable: controller.canEdit,
-                  save: (revision, id, node, policy) => controller.changePanel(
-                    () =>
-                        controller.api.saveRouting(revision, id, node, policy),
+                  save: (revision, route) => controller.changePanel(
+                    () => controller.api.saveNamedRoute(revision, route),
+                  ),
+                  remove: (revision, id) => controller.changePanel(
+                    () => controller.api.deleteNamedRoute(revision, id),
                   ),
                 )
               else

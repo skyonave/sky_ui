@@ -215,6 +215,29 @@ tbody tr:hover { background: #1d1a21; }
 .settings-panel > h2 { margin-bottom: 24px; }
 .settings-panel > p { margin-top: 11px; }
 .server-panel { background: var(--panel); border: 1px solid var(--line); border-radius: 5px; margin-bottom: 16px; }
+.server-panel { max-width: none; }
+.server-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 16px; }
+.server-heading h2 { margin: 0; font-size: 20px; }
+.server-heading > .button:last-child { margin-left: auto; }
+.server-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; }
+.server-facts dt { color: var(--muted); margin-bottom: 6px; }
+.server-facts dd { margin: 0; overflow-wrap: anywhere; }
+.server-edit, .server-manual { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.server-edit > label { max-width: 520px; }
+.server-public-key { margin: 12px 0; padding: 12px; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+.server-manual summary { cursor: pointer; }
+.server-manual summary:hover { color: var(--accent); }
+.route-card { margin-bottom: 18px; padding: 20px; background: var(--panel); border: 1px solid var(--line); border-radius: 5px; }
+.route-chain { display: flex; flex-wrap: wrap; gap: 12px; list-style: none; padding: 0; margin: 16px 0; counter-reset: route; }
+.route-chain li { display: grid; gap: 6px; min-width: 150px; padding: 12px; border: 1px solid var(--line); border-radius: 4px; }
+.route-card p, .route-card details { margin-top: 12px; }
+.route-card summary { cursor: pointer; padding: 8px 0; }
+.route-card td > span, .routing-editor td > span { display: block; margin-top: 4px; }
+.route-order { color: var(--muted); padding-bottom: 10px; }
+.route-selector { margin: 4px 0 22px; }
+.route-selector p { margin-top: 8px; }
+.routing-editor > label { max-width: 520px; }
+@media (max-width: 900px) { .server-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .server-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .server-public-key { display: block; overflow-wrap: anywhere; }
 .server-logs { max-height: 300px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
