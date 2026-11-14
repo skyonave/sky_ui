@@ -2,11 +2,12 @@
 # Runtime package-manager abstraction; install fixed package names only.
 sky_packages() {
   local purpose="$1"
-  [[ "$purpose" == runtime ]] || return 1
+  [[ "$purpose" == runtime || "$purpose" == node ]] || return 1
   local -a packages
   if command -v apt-get >/dev/null; then
     apt-get update
     packages=(ca-certificates curl tar gzip coreutils findutils mawk util-linux passwd openssl nftables iproute2 acl openssh-client)
+    [[ "$purpose" != node ]] || packages+=(sudo)
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${packages[@]}"
   elif command -v dnf >/dev/null; then
     # Minimal RPM images provide the same commands in conflicting package variants.
@@ -15,12 +16,15 @@ sky_packages() {
     if command -v rpm >/dev/null && rpm -q curl-minimal >/dev/null 2>&1; then curl_package=curl-minimal; fi
     if command -v rpm >/dev/null && rpm -q coreutils-single >/dev/null 2>&1; then coreutils_package=coreutils-single; fi
     packages=(ca-certificates "$curl_package" tar gzip "$coreutils_package" findutils gawk util-linux shadow-utils openssl nftables iproute acl openssh-clients)
+    [[ "$purpose" != node ]] || packages+=(sudo)
     dnf install -y "${packages[@]}"
   elif command -v zypper >/dev/null; then
     packages=(ca-certificates curl tar gzip coreutils findutils gawk util-linux shadow openssl nftables iproute2 acl openssh-clients)
+    [[ "$purpose" != node ]] || packages+=(sudo)
     zypper --non-interactive install --no-recommends "${packages[@]}"
   elif command -v pacman >/dev/null; then
     packages=(ca-certificates curl tar gzip coreutils findutils gawk util-linux shadow openssl nftables iproute2 acl openssh)
+    [[ "$purpose" != node ]] || packages+=(sudo)
     # Use the host's existing repository snapshot; never upgrade the entire host.
     pacman -S --needed --noconfirm "${packages[@]}"
   else

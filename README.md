@@ -8,9 +8,9 @@
 
 | Core | Tested version | Protocols |
 | --- | --- | --- |
-| [mihomo](https://github.com/MetaCubeX/mihomo) | v1.19.33 | VLESS, Hysteria 2, Shadowsocks, TUIC v5, Mieru, TrustTunnel |
+| [mihomo](https://github.com/MetaCubeX/mihomo) | v1.19.34 | VLESS, Hysteria 2, Shadowsocks, TUIC v5, Mieru, TrustTunnel |
 | [sing-box](https://github.com/SagerNet/sing-box) | v1.14.4 | VLESS, NaiveProxy, Hysteria 2, Shadowsocks, TUIC v5 |
-| [Xray](https://github.com/XTLS/Xray-core) | v26.10.31 | VLESS, Shadowsocks |
+| [Xray](https://github.com/XTLS/Xray-core) | v26.11.9 | VLESS, Shadowsocks |
 | [AmneziaWG Go](https://github.com/amnezia-vpn/amneziawg-go) | v3.1.20260828 | AmneziaWG 3.1 |
 
 Linux amd64 and arm64, glibc 2.31+, systemd 245+. Verified versions are listed in the [compatibility catalog](compatibility/cores).
@@ -24,7 +24,9 @@ The panel is available in English and Russian. Switch languages at sign-in or in
 
 ### Windows client
 
-For Windows x64, use [Sky Relink](https://github.com/skyonave/sky_relink). Copy the subscription link from Sky UI and import it under Profiles in Relink. Each device gets its own AmneziaWG peer.
+For Windows x64, use [Sky Relink](https://github.com/skyonave/sky_relink). Copy the subscription link from Sky UI and import it under Profiles in Relink. Each user has one peer per AmneziaWG connection. For another device, create a separate user and use that user's subscription. Several users can share the same connection.
+
+After updating, previously registered devices appear as separate users. Replace the shared subscription on each device with its user's subscription link. Existing imported profiles retain their previous peer until refreshed or reimported.
 
 ### Installation
 
@@ -41,7 +43,7 @@ The installer downloads ready-to-run binaries. Dart SDK and compilers are not re
 
 Core updates use the project's [compatibility catalog](compatibility/cores). Only releases verified for your panel version and server architecture can be installed.
 
-Add remote Linux servers over SSH in Servers. In Routing, create a named route with its servers and per-server rules, then assign it to one or more connections. A remote server can handle both ingress and egress without sending traffic through the panel. Remote nodes currently run mihomo; local ingress can also use sing-box or Xray. Set a client IP or domain on the server card. Remote TLS connections require their own certificate. The release includes `install-server-node.sh` for manual installation.
+Add remote Linux servers over SSH in Servers. They support mihomo, sing-box, Xray and AmneziaWG, including NaiveProxy through sing-box. In Routing, create a route and its rules, then select it when creating a connection. Rules are checked from top to bottom; the first match wins. A remote server can handle both entry and exit. Set the client IP or domain on its server card. Remote TLS requires that server's certificate. AmneziaWG uses a single server, without a proxy cascade. The release includes `install-server-node.sh` for manual installation.
 
 ### Source layout
 
@@ -51,15 +53,15 @@ New panel releases appear in the sidebar. Confirm the update there or run `sudo 
 
 ## Русский
 
-Подключайте удалённые Linux-серверы по SSH в разделе «Серверы». В «Маршрутизации» создайте именованный маршрут с серверами и правилами на каждом из них, затем назначьте его одному или нескольким подключениям. Удалённый сервер может принимать и выпускать трафик без участия сервера панели. Удалённые узлы сейчас работают на mihomo, локальный вход также поддерживает sing-box и Xray. IP или домен для клиентов задаётся в карточке сервера. Для удалённого TLS нужен собственный сертификат. Для ручной установки в релизе есть `install-server-node.sh`.
-
 Панель для управления прокси-ядрами на своём Linux-сервере. Создавайте подключения и делитесь доступом через ссылки, QR-коды и подписки. Подходит для личного сервера, которым пользуются несколько человек.
 
 Панель доступна на русском и английском. Язык можно сменить при входе или в настройках.
 
 ### Клиент для Windows
 
-Для Windows x64 используйте [Sky Relink](https://github.com/skyonave/sky_relink). Скопируйте ссылку на подписку из Sky UI и импортируйте её в разделе «Профили» в Relink. Каждое устройство получит отдельный пир AmneziaWG.
+Для Windows x64 используйте [Sky Relink](https://github.com/skyonave/sky_relink). Скопируйте ссылку на подписку из Sky UI и импортируйте её в разделе «Профили» в Relink. У каждого пользователя один пир на подключение AmneziaWG. Для другого устройства создайте отдельного пользователя и используйте его подписку. Одно подключение можно выдать нескольким пользователям.
+
+После обновления ранее зарегистрированные устройства появятся отдельными пользователями. Замените общую подписку на каждом устройстве ссылкой его пользователя. Уже импортированные профили сохраняют прежний пир до обновления подписки или повторного импорта.
 
 ### Установка
 
@@ -75,6 +77,8 @@ sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/skyonave/sky_ui/mai
 Установщик скачивает готовые бинарники. Dart SDK и компиляторы не нужны. Требуются glibc от 2.31 и systemd от 245. Ядра скачиваются отдельно.
 
 Обновления берутся из [каталога совместимости проекта](compatibility/cores). Устанавливаются только версии, проверенные для вашей версии панели и архитектуры сервера.
+
+Подключайте удалённые Linux-серверы по SSH в разделе «Серверы». На них доступны mihomo, sing-box, Xray и AmneziaWG, включая NaiveProxy через sing-box. Создайте маршрут и правила в «Маршрутизации», затем выберите его при создании подключения. Правила проверяются сверху вниз, применяется первое совпадение. Удалённый сервер может быть одновременно входом и выходом. IP или домен для клиентов задаётся в его карточке. Для удалённого TLS нужен сертификат этого сервера. AmneziaWG работает на одном сервере, без прокси-каскада. Для ручной установки в релизе есть `install-server-node.sh`.
 
 ### Структура проекта
 

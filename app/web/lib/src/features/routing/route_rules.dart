@@ -1,12 +1,14 @@
 import 'package:jaspr/dom.dart';
 import 'package:jaspr/jaspr.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
+import 'package:web/web.dart' as web;
 
 import '../../shared/components/field_help.dart';
 import '../../shared/components/primitives.dart';
 import '../../shared/localization/strings.dart';
+import 'rule_order.dart';
 
-class RouteRules extends StatelessComponent {
+class RouteRules extends StatefulComponent {
   const RouteRules({
     required this.nodes,
     required this.node,
@@ -26,6 +28,14 @@ class RouteRules extends StatelessComponent {
   final int ruleLimit;
   final bool editable;
   final void Function(NodeRouting) onChange;
+  @override
+  State<RouteRules> createState() => _RouteRulesState();
+}
+
+class _RouteRulesState extends State<RouteRules> {
+  int? dragging, dropTarget;
+  String get coreId => component.coreId;
+  bool get editable => component.editable;
   static const _examples = {
     'domain': 'www.example.com',
     'suffix': 'example.com',
@@ -40,6 +50,11 @@ class RouteRules extends StatelessComponent {
 
   @override
   Component build(BuildContext context) {
+    final nodes = component.nodes;
+    final node = component.node;
+    final names = component.names;
+    final policy = component.policy;
+    final onChange = component.onChange;
     final index = nodes.indexOf(node);
     final rows = policy.rules;
     final next = index + 1 < nodes.length ? nodes[index + 1] : null;
@@ -59,25 +74,47 @@ class RouteRules extends StatelessComponent {
     void update(List<RoutingRule> rules) =>
         onChange(NodeRouting(fallback: policy.fallback, rules: rules));
     void move(int from, int to) {
-      final next = [...rows];
-      next.insert(to, next.removeAt(from));
-      update(next);
+      update(reorderRoutingRules(rows, from, to));
     }
 
     return div([
-      p([
-        txt(t(coreId == 'amneziawg' ? 'routing.packetHelp' : 'routing.help')),
-      ], classes: 'muted small'),
-      for (var i = 0; i < rows.length; i++)
-        _row(
-          rows[i],
-          {if (rows[i].action == NodeRouting.next) ...routeAction, ...actions},
-          i,
-          change: (value) => update([...rows]..[i] = value),
-          remove: () => update([...rows]..removeAt(i)),
-          up: i > 0 ? () => move(i, i - 1) : null,
-          down: i + 1 < rows.length ? () => move(i, i + 1) : null,
+      div([
+        txt(t('routing.orderHelp'), classes: 'muted small'),
+        FieldHelp(
+          id: 'route-rules-$node-help',
+          label: t('routing.title'),
+          description: t(
+            coreId == 'amneziawg' ? 'routing.packetHelp' : 'routing.help',
+          ),
+          buttonLabel: t('common.help', {'name': t('routing.title')}),
         ),
+      ], classes: 'route-rule-help'),
+      if (rows.isEmpty)
+        p([txt(t('routing.empty'))], classes: 'route-rules-empty muted'),
+      el('ol', [
+        for (var i = 0; i < rows.length; i++)
+          _row(
+            rows[i],
+            {
+              if (rows[i].action == NodeRouting.next) ...routeAction,
+              ...actions,
+            },
+            i,
+            change: (value) => update([...rows]..[i] = value),
+            remove: () => update([...rows]..removeAt(i)),
+            up: i > 0 ? () => move(i, i - 1) : null,
+            down: i + 1 < rows.length ? () => move(i, i + 1) : null,
+            drop: () {
+              final from = dragging;
+              setState(() {
+                dragging = null;
+                dropTarget = null;
+              });
+              if (editable && from != null && from != i && from < rows.length)
+                move(from, i);
+            },
+          ),
+      ], classes: 'route-rules-list'),
       action(
         t('routing.add'),
         () => update([
@@ -89,21 +126,24 @@ class RouteRules extends StatelessComponent {
           ),
         ]),
         glyph: 'plus',
-        disabled: !editable || rows.length >= ruleLimit,
+        disabled: !editable || rows.length >= component.ruleLimit,
       ),
-      _select(
-        'routing.fallback',
-        next == null && policy.fallback == NodeRouting.direct
-            ? NodeRouting.next
-            : policy.fallback,
-        {
-          ...routeAction,
-          for (final entry in actions.entries)
-            if (next != null || entry.key != NodeRouting.direct)
-              entry.key: entry.value,
-        },
-        (value) => onChange(NodeRouting(fallback: value, rules: rows)),
-      ),
+      div([
+        _select(
+          'routing.fallback',
+          next == null && policy.fallback == NodeRouting.direct
+              ? NodeRouting.next
+              : policy.fallback,
+          {
+            ...routeAction,
+            for (final entry in actions.entries)
+              if (next != null || entry.key != NodeRouting.direct)
+                entry.key: entry.value,
+          },
+          (value) => onChange(NodeRouting(fallback: value, rules: rows)),
+        ),
+        txt(t('routing.fallbackHelp'), classes: 'muted small'),
+      ], classes: 'route-rule-fallback'),
     ], classes: 'route-rule-body');
   }
 
@@ -115,54 +155,110 @@ class RouteRules extends StatelessComponent {
     required void Function() remove,
     required void Function()? up,
     required void Function()? down,
-  }) => div([
-    _select(
-      'routing.type',
-      rule.type,
-      {
-        for (final type in NodeRouting.matchesFor(coreId))
-          type: t('routing.$type'),
+    required void Function() drop,
+  }) => el(
+    'li',
+    [
+      div([
+        txt('${index + 1}', classes: 'route-rule-number'),
+        el(
+          'button',
+          [icon('menu')],
+          classes: 'icon-button route-rule-grip',
+          attributes: {
+            'type': 'button',
+            'draggable': '$editable',
+            'tabindex': '-1',
+            'aria-label': t('routing.drag'),
+            'title': t('routing.drag'),
+            if (!editable) 'disabled': '',
+          },
+          events: {
+            'dragstart': (event) {
+              if (!editable) return;
+              final data = (event as web.DragEvent).dataTransfer;
+              data?.setData('text/plain', '$index');
+              if (data != null) data.effectAllowed = 'move';
+              setState(() {
+                dragging = index;
+                dropTarget = null;
+              });
+            },
+            'dragend': (_) => setState(() {
+              dragging = null;
+              dropTarget = null;
+            }),
+          },
+        ),
+      ], classes: 'route-rule-priority'),
+      _select(
+        'routing.type',
+        rule.type,
+        {
+          for (final type in NodeRouting.matchesFor(coreId))
+            type: t('routing.$type'),
+        },
+        (type) => change(
+          RoutingRule(type, type == 'network' ? 'tcp' : '', rule.action),
+        ),
+        classes: 'route-rule-match',
+      ),
+      if (rule.type == 'network')
+        _select(
+          'routing.target',
+          rule.target,
+          const {'tcp': 'TCP', 'udp': 'UDP'},
+          (value) => change(RoutingRule(rule.type, value, rule.action)),
+          classes: 'route-rule-target',
+        )
+      else
+        _target(rule, index, change),
+      _select(
+        'routing.action',
+        rule.action,
+        actions,
+        (value) => change(RoutingRule(rule.type, rule.target, value)),
+        classes: 'route-rule-action',
+      ),
+      div([
+        iconButton(
+          'up',
+          t('routing.up'),
+          up ?? () {},
+          disabled: !editable || up == null,
+        ),
+        iconButton(
+          'down',
+          t('routing.down'),
+          down ?? () {},
+          disabled: !editable || down == null,
+        ),
+        iconButton('trash', t('routing.remove'), remove, disabled: !editable),
+      ], classes: 'route-rule-actions'),
+    ],
+    classes:
+        'route-rule-row ${dragging == index ? 'is-dragging' : ''} ${dropTarget == index && dragging != index ? (dragging! < index ? 'drop-after' : 'drop-before') : ''}',
+    attributes: {'data-rule-order': '$index'},
+    events: {
+      'dragover': (event) {
+        if (!editable || dragging == null) return;
+        (event as web.DragEvent).preventDefault();
+        if (dropTarget != index) setState(() => dropTarget = index);
       },
-      (type) => change(
-        RoutingRule(type, type == 'network' ? 'tcp' : '', rule.action),
-      ),
-    ),
-    if (rule.type == 'network')
-      _select('routing.target', rule.target, const {
-        'tcp': 'TCP',
-        'udp': 'UDP',
-      }, (value) => change(RoutingRule(rule.type, value, rule.action)))
-    else
-      _target(rule, index, change),
-    _select(
-      'routing.action',
-      rule.action,
-      actions,
-      (value) => change(RoutingRule(rule.type, rule.target, value)),
-    ),
-    div([
-      iconButton(
-        'up',
-        t('routing.up'),
-        up ?? () {},
-        disabled: !editable || up == null,
-      ),
-      iconButton(
-        'down',
-        t('routing.down'),
-        down ?? () {},
-        disabled: !editable || down == null,
-      ),
-      iconButton('trash', t('routing.remove'), remove, disabled: !editable),
-    ], classes: 'route-rule-actions'),
-  ], classes: 'route-rule-row');
+      'drop': (event) {
+        if (dragging == null) return;
+        (event as web.DragEvent).preventDefault();
+        drop();
+      },
+    },
+  );
 
   Component _target(
     RoutingRule rule,
     int index,
     void Function(RoutingRule) change,
   ) {
-    final id = 'routing-target-$index';
+    final id = 'routing-${component.node}-target-$index';
     final label = t('routing.target');
     final multiple = NodeRouting.allowsTargetList(coreId, rule.type);
     final help = [
@@ -201,8 +297,9 @@ class RouteRules extends StatelessComponent {
     String labelKey,
     String value,
     Map<String, String> options,
-    void Function(String) change,
-  ) => label([
+    void Function(String) change, {
+    String? classes,
+  }) => label([
     txt(t(labelKey)),
     select(
       [
@@ -217,5 +314,5 @@ class RouteRules extends StatelessComponent {
         if (values.isNotEmpty) change(values.single);
       },
     ),
-  ]);
+  ], classes: classes);
 }

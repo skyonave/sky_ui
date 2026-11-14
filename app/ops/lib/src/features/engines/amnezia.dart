@@ -6,7 +6,9 @@ import 'dart:typed_data';
 import '../../platform/host.dart';
 import 'amnezia_presence.dart';
 
-const awgTable = 'sky_ui_awg';
+final awgTable = Platform.environment['SKY_UI_NODE_MODE'] == '1'
+    ? 'sky_ui_node_awg'
+    : 'sky_ui_awg';
 
 // iproute2 emits host routes without /32, including DHCP-provided DNS routes.
 ({int ip, int prefix, int network, int broadcast})? awgRoute(
@@ -342,14 +344,28 @@ Future<void> cleanupAwgTable() async {
   ], check: false);
   if (result.exitCode == 0) {
     final value = object(jsonDecode(result.stdout as String));
-    awgRequire(
-      (value['nftables'] as List).any(
-        (v) => v['table']?['comment'] == 'Managed by Sky UI',
-      ),
+    var owned = (value['nftables'] as List).any(
+      (v) =>
+          v['table']?['family'] == 'ip' &&
+          v['table']?['name'] == awgTable &&
+          v['table']?['comment'] == 'Managed by Sky UI',
     );
+    // nftables 0.9.x omits table comments from JSON but retains them in text.
+    if (!owned)
+      owned = awgTableOwnershipText(
+        await run(['nft', 'list', 'table', 'ip', awgTable]),
+        awgTable,
+      );
+    awgRequire(owned);
     await run(['nft', 'delete', 'table', 'ip', awgTable]);
   }
 }
+
+bool awgTableOwnershipText(String text, String table) =>
+    {'sky_ui_awg', 'sky_ui_node_awg'}.contains(table) &&
+    RegExp(
+      '^table ip ${RegExp.escape(table)} \\{\\r?\\n[ \\t]+comment "Managed by Sky UI";?\\r?\\n',
+    ).hasMatch(text);
 
 Future<void> runAwg(String configuration, String binary) async {
   awgRequire(host.uid() == 0);
@@ -420,7 +436,9 @@ Future<void> runAwg(String configuration, String binary) async {
       await run(['ip', 'link', 'set', 'dev', name, 'mtu', '${i['mtu']}', 'up']);
     }
     if (owned.isNotEmpty) {
-      const root = '/var/lib/sky-ui-amneziawg-network';
+      final root = Platform.environment['SKY_UI_NODE_MODE'] == '1'
+          ? '/var/lib/sky-ui-node/amneziawg-network'
+          : '/var/lib/sky-ui-amneziawg-network';
       host.mkdir(root, mode: 0x1c0);
       host.trusted(root, directory: true);
       if (!exists('$root/ip_forward'))

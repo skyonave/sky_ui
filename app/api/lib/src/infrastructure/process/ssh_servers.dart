@@ -8,9 +8,11 @@ import '../../application/access/records.dart';
 import '../../application/configuration/relay_routes.dart';
 import '../../shared/api_exception.dart';
 import 'command_runner.dart';
+import 'node_bootstrap_catalog.dart';
+import 'node_readiness_cache.dart';
 
 /// Each host has its own private identity and explicitly pinned SSH host key.
-class SshServers implements RelayTransport {
+class SshServers implements EngineRelayTransport, CachedRelayReadiness {
   SshServers(String dataDirectory, this.runner, {this.bundle})
     : directory = Directory('$dataDirectory/remote-servers');
 
@@ -18,6 +20,17 @@ class SshServers implements RelayTransport {
   final CommandRunner runner;
   final Directory? bundle;
   final _busy = <String>{};
+  final _legacyNodes = <String>{};
+  final _inventories = <String, Future<List<Map<String, Object?>>>>{};
+  late final _readiness = NodeReadinessCache(
+    fetch: _readEngineInventory,
+    available: (node) => !_busy.contains(node),
+  );
+
+  @override
+  Map<String, String> cachedReadiness(
+    Iterable<({String node, String engine})> engines,
+  ) => _readiness.read(engines);
   bool _adding = false;
   static const maximumNodes = 32;
   static final _id = RegExp(r'^node_[A-Za-z0-9_-]{22}$');
@@ -155,8 +168,20 @@ class SshServers implements RelayTransport {
     }
   }
 
-  Future<String> execute(String id, ServerOperation operation) async {
-    final output = await _ssh(id, operation.name);
+  Future<String> execute(
+    String id,
+    ServerOperation operation, {
+    String engine = 'mihomo',
+  }) async {
+    _engine(engine);
+    String output;
+    try {
+      output = await _ssh(id, 'v3:${operation.name}:$engine');
+    } on ApiException catch (error) {
+      if (engine != 'mihomo' || error.code != 'server_upgrade_required')
+        rethrow;
+      output = await _ssh(id, operation.name);
+    }
     if (operation != ServerOperation.logs &&
         !{
           'active',
@@ -173,21 +198,226 @@ class SshServers implements RelayTransport {
     return output;
   }
 
+  static void _engine(String value) {
+    if (!{'mihomo', 'sing-box', 'xray', 'amneziawg'}.contains(value))
+      throw const ApiException('core_unsupported', status: 422);
+  }
+
+  Future<List<Map<String, Object?>>> engineInventory(String node) async {
+    final values = await _readEngineInventory(node);
+    if (!_busy.contains(node)) _readiness.observe(node, values);
+    return values;
+  }
+
+  Future<List<Map<String, Object?>>> _readEngineInventory(String node) {
+    final existing = _inventories[node];
+    if (existing != null) return existing;
+    late final Future<List<Map<String, Object?>>> pending;
+    pending = _loadEngineInventory(node).whenComplete(() {
+      if (identical(_inventories[node], pending)) _inventories.remove(node);
+    });
+    _inventories[node] = pending;
+    return pending;
+  }
+
+  Future<List<Map<String, Object?>>> _loadEngineInventory(String node) async {
+    final output = await _ssh(node, 'v3:inventory');
+    try {
+      final values = jsonDecode(output) as List;
+      if (values.length != 4) throw const FormatException();
+      _legacyNodes.remove(node);
+      return [
+        for (final value in values) Map<String, Object?>.from(value as Map),
+      ];
+    } on Object {
+      throw const ApiException('route_node_protocol', status: 502);
+    }
+  }
+
+  Future<void> installEngine(String node, String engine) async {
+    _engine(engine);
+    await _ssh(node, 'v3:install:$engine');
+  }
+
+  Future<void> updateEngine(String node, String engine) async {
+    _engine(engine);
+    await _ssh(node, 'v3:update:$engine');
+  }
+
+  Future<void> removeEngine(String node, String engine) async {
+    _engine(engine);
+    await _ssh(node, 'v3:remove:$engine');
+  }
+
+  @override
+  Future<Set<int>> occupiedPorts(String node) async {
+    try {
+      final result = jsonDecode(await _ssh(node, 'v3:ports'));
+      if (result is! List ||
+          result.length > 65535 ||
+          result.any((p) => p is! int || p < 1 || p > 65535))
+        throw const FormatException();
+      return result.cast<int>().toSet();
+    } on ApiException {
+      rethrow;
+    } on Object {
+      throw const ApiException('route_node_protocol', status: 502);
+    }
+  }
+
+  Future<Map<String, dynamic>> diagnose(
+    String node,
+    String engine, {
+    Future<void>? cancellation,
+  }) async {
+    _engine(engine);
+    return _nodeJson(
+      await _ssh(node, 'v3:diagnose:$engine', cancellation: cancellation),
+    );
+  }
+
+  Future<Map<String, dynamic>> diagnosticNetwork(
+    String node,
+    String engine,
+    Map<String, Object?> request, {
+    Future<void>? cancellation,
+  }) async {
+    _engine(engine);
+    return _nodeJson(
+      await _ssh(
+        node,
+        'v3:probe:$engine',
+        input: jsonEncode(request),
+        cancellation: cancellation,
+      ),
+    );
+  }
+
+  Map<String, dynamic> _nodeJson(String value) {
+    try {
+      return Map<String, dynamic>.from(jsonDecode(value) as Map);
+    } on Object {
+      throw const ApiException('route_node_protocol', status: 502);
+    }
+  }
+
+  @override
+  Future<RelayState> inspectEngine(String node, String engine) async {
+    _engine(engine);
+    Map<String, dynamic> value;
+    try {
+      value = _nodeJson(await _ssh(node, 'v3:inspect:$engine'));
+    } on ApiException catch (error) {
+      if (engine != 'mihomo' || error.code != 'server_upgrade_required')
+        rethrow;
+      _legacyNodes.add(node);
+      return inspect(node);
+    }
+    _legacyNodes.remove(node);
+    final hash = value['hash'];
+    if (hash is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(hash) ||
+        value['protocol'] != 3)
+      throw const ApiException('route_node_protocol', status: 502);
+    return RelayState(
+      hash,
+      value['state'] == 'active',
+      extendedUdp: true,
+      installed: value['installed'] == true,
+      engineScoped: true,
+    );
+  }
+
+  @override
+  Future<void> validateEngine(
+    String node,
+    String engine,
+    String configuration,
+  ) async {
+    _engine(engine);
+    if (engine == 'mihomo' && _legacyNodes.contains(node))
+      return validate(node, configuration);
+    await _ssh(node, 'v3:validate:$engine', input: configuration);
+  }
+
+  @override
+  Future<void> publishEngine(
+    String node,
+    String engine,
+    String transaction,
+    String previous,
+    String configuration,
+    Set<int> ports,
+    Set<int> udpPorts,
+  ) async {
+    _engine(engine);
+    if (engine == 'mihomo' && _legacyNodes.contains(node))
+      return publish(
+        node,
+        transaction,
+        previous,
+        configuration,
+        ports,
+        udpPorts,
+      );
+    await _ssh(
+      node,
+      'v3:deploy:$engine',
+      input: jsonEncode({
+        'transaction': transaction,
+        'previous': previous,
+        'configuration': configuration,
+        'tcp': ports.toList(),
+        'udp': udpPorts.toList(),
+      }),
+    );
+  }
+
+  @override
+  Future<void> rollbackEngine(
+    String node,
+    String engine,
+    String transaction,
+  ) async {
+    _engine(engine);
+    try {
+      await _ssh(node, 'v3:rollback:$engine', input: '$transaction\n');
+    } on ApiException catch (error) {
+      if (engine != 'mihomo' || error.code != 'server_upgrade_required')
+        rethrow;
+      await rollback(node, transaction);
+    }
+  }
+
   /// The advertised address affects subscriptions, not the pinned SSH identity.
   Future<void> updateEndpoint(String id, String endpoint) async {
-    endpoint = endpoint.trim().toLowerCase();
-    if (endpoint.isNotEmpty && !_validHost(endpoint)) {
-      throw const ApiException(
-        'server_invalid',
-        status: 422,
-        fields: {'endpoint': 'host'},
-      );
-    }
+    await updateDetails(id, endpoint: endpoint);
+  }
+
+  /// Metadata edits retain the pinned SSH identity and existing route references.
+  Future<void> updateDetails(
+    String id, {
+    String? name,
+    String? endpoint,
+  }) async {
     final path = _path(id);
     final previous = _read(path);
+    name = (name ?? previous.name).trim();
+    endpoint = endpoint ?? previous.endpoint ?? '';
+    endpoint = endpoint.trim().toLowerCase();
+    final errors = <String, String>{
+      if (name.isEmpty ||
+          name.length > 80 ||
+          name.contains(RegExp(r'[\x00-\x1f\x7f]')))
+        'name': 'name',
+      if (endpoint.isNotEmpty && !_validHost(endpoint)) 'endpoint': 'host',
+    };
+    if (errors.isNotEmpty) {
+      throw ApiException('server_invalid', status: 422, fields: errors);
+    }
     final value = ServerNode(
       id: previous.id,
-      name: previous.name,
+      name: name,
       host: previous.host,
       port: previous.port,
       publicKey: previous.publicKey,
@@ -238,6 +468,7 @@ class SshServers implements RelayTransport {
 
   @override
   Future<void> rollback(String node, String transaction) async {
+    // Legacy intents keep their original undo location after a node upgrade.
     await _ssh(node, 'rollback', input: '$transaction\n');
   }
 
@@ -322,33 +553,19 @@ class SshServers implements RelayTransport {
     if (!await script.exists() || !await compatibility.exists()) {
       throw const ApiException('server_bootstrap_unavailable', status: 501);
     }
-    final catalog = jsonDecode(await compatibility.readAsString()) as Map;
-    final targets = <String, String>{};
-    for (final release
-        in (catalog['releases'] as List).reversed.whereType<Map>()) {
-      final version = release['version'];
-      if (release['verified'] != true ||
-          version is! String ||
-          !RegExp(r'^v[0-9]+\.[0-9]+\.[0-9]+$').hasMatch(version))
-        continue;
-      for (final entry in {
-        'x86_64': 'linux-amd64',
-        'aarch64': 'linux-arm64',
-      }.entries) {
-        if (targets.containsKey(entry.key)) continue;
-        final platform = (release['platforms'] as Map? ?? {})[entry.value];
-        if (platform is! Map || platform['verified'] != true) continue;
-        final asset = platform['asset'];
-        final hash = platform['sha256'];
-        if (asset is String &&
-            RegExp(r'^[A-Za-z0-9._-]+\.gz$').hasMatch(asset) &&
-            hash is String &&
-            RegExp(r'^[a-f0-9]{64}$').hasMatch(hash)) {
-          targets[entry.key] =
-              "${entry.key}) url='https://github.com/MetaCubeX/mihomo/releases/download/$version/$asset'; hash='$hash' ;;";
-        }
-      }
-    }
+    final version = (await File('$root/VERSION').readAsString()).trim();
+    if (!RegExp(
+      r'^[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?$',
+    ).hasMatch(version))
+      throw const ApiException('server_bootstrap_unavailable', status: 501);
+    final catalog = Map<String, dynamic>.from(
+      jsonDecode(await compatibility.readAsString()) as Map,
+    );
+    final targets = {
+      for (final entry in selectNodeBootstrapAssets(catalog, version).entries)
+        entry.key:
+            "${entry.key}) url='https://github.com/MetaCubeX/mihomo/releases/download/${entry.value.version}/${entry.value.asset}'; hash='${entry.value.sha256}' ;;",
+    };
     final publicKey = key.split(' ').take(2).join(' ');
     if (targets.isEmpty || !_ed25519.hasMatch(publicKey)) {
       throw const ApiException('server_bootstrap_unavailable', status: 501);
@@ -362,7 +579,18 @@ ${targets.values.join('\n')}
 *) exit 7 ;;
 esac
 tmp=\$(mktemp -d)
-trap 'rm -f -- "\$tmp/"{installer,core.gz,mihomo,panel.pub}; rmdir -- "\$tmp"' EXIT
+trap 'rm -rf -- "\$tmp"' EXIT
+case "\$(uname -m)" in x86_64) arch=amd64 ;; aarch64) arch=arm64 ;; *) exit 7 ;; esac
+asset="sky-ui-linux-\$arch.tar.gz"
+base='https://github.com/skyonave/sky_ui/releases/download/v$version'
+curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 --max-filesize 4096 -o "\$tmp/panel.sha256" "\$base/\$asset.sha256"
+expected=\$(awk -v name="\$asset" '\$2 == name || \$2 == "*"name {print \$1}' "\$tmp/panel.sha256")
+[[ "\$expected" =~ ^[a-fA-F0-9]{64}\$ ]]
+curl -fsSL --proto '=https' --tlsv1.2 --max-time 120 --max-filesize 150000000 -o "\$tmp/panel.tar.gz" "\$base/\$asset"
+printf '%s  %s\\n' "\$expected" "\$tmp/panel.tar.gz" | sha256sum -c - >/dev/null
+mkdir "\$tmp/bundle"
+tar -xzf "\$tmp/panel.tar.gz" -C "\$tmp/bundle" ./bin/sky-ops ./lib ./VERSION ./LICENSE ./licenses ./deploy/host_packages.sh
+[[ "\$(cat "\$tmp/bundle/VERSION")" == '$version' ]]
 curl -fsSL --proto '=https' --tlsv1.2 --max-time 90 --max-filesize 100000000 -o "\$tmp/core.gz" "\$url"
 printf '%s  %s\\n' "\$hash" "\$tmp/core.gz" | sha256sum -c - >/dev/null
 gzip -dc -- "\$tmp/core.gz" > "\$tmp/mihomo"
@@ -372,9 +600,9 @@ cat > "\$tmp/installer" <<'SKY_UI_NODE_INSTALLER'
 ${await script.readAsString()}
 SKY_UI_NODE_INSTALLER
 if (( EUID == 0 )); then
-  /bin/bash "\$tmp/installer" "\$tmp/mihomo" "\$tmp/panel.pub"
+  /bin/bash "\$tmp/installer" "\$tmp/mihomo" "\$tmp/panel.pub" "\$tmp/bundle"
 else
-  sudo -n /bin/bash "\$tmp/installer" "\$tmp/mihomo" "\$tmp/panel.pub"
+  sudo -n /bin/bash "\$tmp/installer" "\$tmp/mihomo" "\$tmp/panel.pub" "\$tmp/bundle"
 fi
 ''';
   }
@@ -386,9 +614,32 @@ fi
     String user = 'sky-ui-node',
     String? identity,
     NativeCommandRunner? passwordRunner,
+    Future<void>? cancellation,
   }) async {
     final path = _path(id);
+    // An automatic bounded inventory must not make an explicit action fail busy.
+    final inventory = _inventories[id];
+    if (operation != 'v3:inventory' && inventory != null) {
+      try {
+        await inventory;
+      } on Object {
+        /* The explicit operation retries the host. */
+      }
+    }
     if (!_busy.add(id)) throw const ApiException('server_busy', status: 409);
+    final changesState =
+        operation == '/bin/bash -s' ||
+        {
+          'start',
+          'stop',
+          'restart',
+          'deploy',
+          'rollback',
+        }.contains(operation) ||
+        RegExp(
+          r'^v3:(start|stop|restart|deploy|rollback|install|update|remove):',
+        ).hasMatch(operation);
+    if (changesState) _readiness.invalidate(id);
     try {
       final node = _read(path);
       final arguments = [
@@ -437,23 +688,57 @@ fi
         operation,
       ];
       final transport = passwordRunner ?? runner;
-      final result = input != null && transport is NativeCommandRunner
+      final result =
+          (input != null || cancellation != null) &&
+              transport is NativeCommandRunner
           ? await transport.runWithInput(
               '/usr/bin/ssh',
               arguments,
-              input: input,
+              input: input ?? '',
+              cancellation: cancellation,
               timeout: operation == '/bin/bash -s'
-                  ? const Duration(minutes: 3)
+                  ? const Duration(minutes: 5)
+                  : operation.startsWith('v3:validate:') ||
+                        operation.startsWith('v3:deploy:')
+                  ? const Duration(seconds: 90)
                   : const Duration(seconds: 65),
             )
           : await transport.run(
               '/usr/bin/ssh',
               arguments,
-              timeout: const Duration(seconds: 40),
+              timeout:
+                  operation.startsWith('v3:install:') ||
+                      operation.startsWith('v3:update:')
+                  ? const Duration(minutes: 10)
+                  : operation == 'v3:inventory'
+                  ? const Duration(seconds: 8)
+                  : const Duration(seconds: 40),
             );
       if (result.exitCode != 0) {
+        final reported = RegExp(
+          r'(?:^|\n)Sky UI: ([a-z_]+)(?:\r?\n|$)',
+        ).firstMatch(result.output)?.group(1);
+        const safeErrors = {
+          'binary_missing',
+          'core_release_unverified',
+          'catalog_unavailable',
+          'release_checksum_failed',
+          'core_build_space_required',
+          'core_build_failed',
+          'core_dependencies_missing',
+          'listener_not_ready',
+          'route_configuration_out_of_sync',
+          'transaction_aborted',
+          'route_geo_unknown',
+          'route_geo_unavailable',
+          'route_policy_invalid',
+        };
         throw ApiException(
-          operation == '/bin/bash -s' && result.exitCode == 7
+          reported != null && safeErrors.contains(reported)
+              ? reported
+              : operation.startsWith('v3:') && result.exitCode == 2
+              ? 'server_upgrade_required'
+              : operation == '/bin/bash -s' && result.exitCode == 7
               ? 'server_bootstrap_arch'
               : result.exitCode == 255
               ? 'server_ssh_failed'
@@ -463,6 +748,7 @@ fi
       }
       return result.output.trim();
     } finally {
+      if (changesState) _readiness.invalidate(id);
       _busy.remove(id);
     }
   }
@@ -476,6 +762,7 @@ fi
       ).rename('${directory.path}/${newId('.removed')}');
       await retired.delete(recursive: true);
     } finally {
+      _readiness.invalidate(id);
       _busy.remove(id);
     }
   }

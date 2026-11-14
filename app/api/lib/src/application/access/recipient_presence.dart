@@ -58,12 +58,9 @@ class RecipientPresenceService {
       };
     }
     final byRecipient = <String, List<RecipientPresence>>{};
-    final parents = {
-      for (final user in data.recipients) user.id: user.parentId,
-    };
     for (final c in data.listeningConnections) {
       for (final g in data.activeGrants(c.value.id)) {
-        (byRecipient[parents[g.recipientId] ?? g.recipientId] ??= []).add(
+        (byRecipient[g.recipientId] ??= []).add(
           observed[g.id] ?? RecipientPresence.unavailable,
         );
       }
@@ -72,8 +69,7 @@ class RecipientPresenceService {
       'revision': revision,
       'recipients': {
         for (final user in data.recipients)
-          if (user.parentId == null)
-            user.id: combinePresence(byRecipient[user.id] ?? const []).name,
+          user.id: combinePresence(byRecipient[user.id] ?? const []).name,
       },
     };
   }

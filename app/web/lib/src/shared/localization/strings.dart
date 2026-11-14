@@ -34,6 +34,51 @@ class AppStrings {
 
   static const _catalogs = {
     'ru': {
+      'servers.error.core_dependencies_missing':
+          'На сервере нужны iproute2 и nftables. Установите недостающие пакеты и повторите.',
+      'runtime.error.core_dependencies_missing':
+          'На сервере нужны iproute2 и nftables. Установите недостающие пакеты и повторите.',
+      'servers.installingCore': 'Установка {core}…',
+      'servers.updatingCore': 'Обновление {core}…',
+      'servers.operationFailed': 'Ошибка операции',
+      'servers.removeCoreConfirm':
+          'Удалить {core} с этого сервера? Его подключения перестанут работать. Настройки и доступ пользователей сохранятся.',
+      'servers.error.catalog_unavailable':
+          'Не удалось получить список проверенных сборок. Повторите проверку позже.',
+      'servers.error.core_release_unverified':
+          'Для этой версии панели и архитектуры сервера пока нет проверенной сборки ядра.',
+      'servers.error.binary_missing': 'Ядро не установлено на этом сервере.',
+      'servers.error.route_node_protocol':
+          'Обновите службу удалённого сервера через «Установить по SSH».',
+      'servers.error.core_install_failed':
+          'Установка ядра завершилась с ошибкой. Проверьте логи службы на удалённом сервере.',
+      'builder.route.checking': 'Проверяем ядра сервера…',
+      'common.retry': 'Повторить',
+      'builder.route.remoteCertificate':
+          'Для удалённого сервера нужен его собственный сертификат.',
+      'servers.error.server_upgrade_required':
+          'Обновите службу через «Подготовить сервер», затем повторите действие.',
+      'runtime.error.server_upgrade_required':
+          'Обновите службу удалённого сервера во вкладке «Серверы».',
+      'diagnostics.detail.node': 'Server',
+      'servers.edit': 'Изменить сервер',
+      'servers.engines': 'Ядра',
+      'servers.installCore': 'Установить',
+      'servers.refresh': 'Проверить',
+      'error.server_upgrade_required':
+          'Обновите службу удалённого сервера через «Подготовить сервер», затем повторите действие.',
+      'routing.drag': 'Перетащить правило',
+      'routing.orderHelp':
+          'Правила проверяются сверху вниз. Выполняется первое совпадение.',
+      'routing.empty': 'Правил пока нет',
+      'routing.fallbackHelp': 'Если ни одно правило не совпало',
+      'builder.step.route': 'Маршрут',
+      'builder.route.local': 'Текущий сервер',
+      'builder.route.localDescription': 'Вход и выход на этом сервере.',
+      'builder.route.ingress': 'Вход',
+      'builder.route.egress': 'Выход',
+      'builder.route.addressUnavailable': 'Адрес не задан',
+      'builder.route.incompatible': 'Недоступно для выбранного ядра',
       'servers.working': 'Выполняется…',
       'servers.state.unknown': 'Не проверен',
       'servers.clientAddress': 'Адрес для клиентов',
@@ -224,6 +269,9 @@ class AppStrings {
       'runtime.error.route_link_unreachable':
           'Переход между узлами недоступен. Проверьте IP и правила firewall для порта каскада.',
       'status.deployed': 'Применено',
+      'status.remoteFailed': 'Ошибка ядра',
+      'status.remoteUnreachable': 'Сервер недоступен',
+      'status.remoteUnknown': 'Статус уточняется',
       'nav.servers': 'Серверы',
       'servers.title': 'Серверы',
       'servers.local': 'Сервер панели',
@@ -1171,7 +1219,6 @@ class AppStrings {
       'overview.readyHint':
           'Создавайте подключения и выдавайте доступ в пару шагов.',
       'logs.title': 'Логи',
-      'users.devices': 'Устройства',
       'logs.description': 'События панели и демонстрационные сообщения ядра.',
       'logs.empty': 'В логах пока нет событий',
       'logs.started': 'Макет панели запущен',

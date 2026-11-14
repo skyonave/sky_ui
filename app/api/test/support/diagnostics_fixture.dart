@@ -116,7 +116,7 @@ class DiagnosticProbe implements DiagnosticNetworkProbe {
 }
 
 class DiagnosticsFixture {
-  DiagnosticsFixture() {
+  DiagnosticsFixture({RemoteConnectionDiagnostics? remote}) {
     work = Directory.systemTemp.createTempSync('sky-ui-diagnostics-');
     repository = PanelRepository(
       '${work.path}/panel.sqlite',
@@ -177,6 +177,7 @@ class DiagnosticsFixture {
       repository: repository,
       isSynchronized: () async => synchronized,
       probe: probe,
+      remote: remote,
       cooldown: Duration.zero,
       now: () => clock,
     );

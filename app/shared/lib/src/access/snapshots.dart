@@ -20,6 +20,8 @@ class PanelSnapshot {
     this.instanceReadiness = const {},
     this.settingsInstances = const [],
     this.routeNodes = const {},
+    this.routeAddresses = const {},
+    this.remoteInstanceStates = const {},
     this.routes = const [],
   });
   final int revision;
@@ -36,6 +38,8 @@ class PanelSnapshot {
   final Map<String, bool> instanceReadiness;
   final List<String> settingsInstances;
   final Map<String, String> routeNodes;
+  final Map<String, String> routeAddresses;
+  final Map<String, String> remoteInstanceStates;
   final List<NamedRoute> routes;
   Map<String, Object?> toJson() => {
     'revision': revision,
@@ -52,6 +56,9 @@ class PanelSnapshot {
     'instanceReadiness': instanceReadiness,
     'settingsInstances': settingsInstances,
     if (routeNodes.isNotEmpty) 'routeNodes': routeNodes,
+    if (routeAddresses.isNotEmpty) 'routeAddresses': routeAddresses,
+    if (remoteInstanceStates.isNotEmpty)
+      'remoteInstanceStates': remoteInstanceStates,
     'protocols': protocols.map(
       (k, v) => MapEntry(k, v.map((p) => p.toJson()).toList()),
     ),
@@ -63,6 +70,12 @@ class PanelSnapshot {
         NamedRoute.fromJson(Map<String, dynamic>.from(r as Map)),
     ],
     routeNodes: Map<String, String>.from(json['routeNodes'] as Map? ?? {}),
+    routeAddresses: Map<String, String>.from(
+      json['routeAddresses'] as Map? ?? {},
+    ),
+    remoteInstanceStates: Map<String, String>.from(
+      json['remoteInstanceStates'] as Map? ?? {},
+    ),
     settingsInstances: List<String>.from(
       json['settingsInstances'] as List? ?? [],
     ),

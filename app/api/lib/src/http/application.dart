@@ -15,6 +15,7 @@ import '../features/updates/panel_updates.dart';
 import '../infrastructure/process/command_runner.dart';
 import '../infrastructure/process/ssh_servers.dart';
 import '../infrastructure/network/diagnostic_probe.dart';
+import '../infrastructure/network/remote_diagnostics.dart';
 import 'responses.dart';
 import 'routes/access_routes.dart';
 import 'routes/asset_routes.dart';
@@ -99,6 +100,7 @@ Handler createApplication(
             repository: panel.repository,
             isSynchronized: panel.isSynchronized,
             probe: NativeDiagnosticProbe(),
+            remote: servers == null ? null : SshConnectionDiagnostics(servers),
           ),
     );
   }

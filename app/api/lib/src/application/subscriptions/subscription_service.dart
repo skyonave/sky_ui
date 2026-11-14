@@ -42,13 +42,10 @@ class SubscriptionService {
     if (recipient == null || !data.recipientEnabled(recipient))
       throw const ApiException('not_found', status: 404);
     for (final connection in data.connections.where((c) => c.value.enabled)) {
-      final codec = _codec(connection.value.coreId);
-      final useDevice =
-          codec is DeviceGrantPolicy &&
-          (codec as DeviceGrantPolicy).requiresDeviceGrant(connection);
-      final owner = useDevice ? recipientId : recipient.parentId ?? recipientId;
       yield* data.grants.where(
-        (g) => g.recipientId == owner && g.connectionId == connection.value.id,
+        (g) =>
+            g.recipientId == recipientId &&
+            g.connectionId == connection.value.id,
       );
     }
   }
@@ -109,13 +106,34 @@ class SubscriptionService {
         owner.core,
       );
     }
+    final remote = <(String, String)>{
+      for (final connection in data.connections)
+        if (connection.value.enabled &&
+            connection.value.ingress != Connection.localNode &&
+            granted.contains(connection.value.id) &&
+            (connectionIds == null ||
+                connectionIds.contains(connection.value.id)))
+          (connection.value.ingress, connection.value.coreId),
+    };
+    for (final (node, engine) in remote) {
+      final transport = routes?.transport;
+      if (transport == null)
+        throw const ApiException('route_node_missing', status: 503);
+      final observed = transport is EngineRelayTransport
+          ? await transport.inspectEngine(node, engine)
+          : engine == 'mihomo'
+          ? await transport.inspect(node)
+          : throw const ApiException('server_upgrade_required', status: 503);
+      if (!observed.installed)
+        throw const ApiException('binary_missing', status: 503);
+      if (!observed.running)
+        throw const ApiException('core_not_ready', status: 503);
+    }
   }
 
   Future<RecipientShare> share(String id) => _exclusive((_) async {
     final data = repository.read();
-    final user = data.recipients
-        .where((u) => u.id == id && u.parentId == null)
-        .firstOrNull;
+    final user = data.recipients.where((u) => u.id == id).firstOrNull;
     if (user == null || !user.enabled)
       throw const ApiException('not_found', status: 404);
     await _canExport(id);
@@ -150,7 +168,7 @@ class SubscriptionService {
         'profiles': [
           for (final endpoint in endpoints)
             {
-              'id': _relinkProfileId(data, endpoint.id),
+              'id': endpoint.id,
               'name': endpoint.name,
               'protocol': endpoint.protocolId,
               'server': endpoint.server,
@@ -190,20 +208,4 @@ class SubscriptionService {
       _ => throw const ApiException('export_unavailable', status: 422),
     };
   });
-
-  String _relinkProfileId(PanelData data, String grantId) {
-    final grant = data.grants.where((g) => g.id == grantId).firstOrNull;
-    if (grant == null) return grantId;
-    final recipient = data.recipients.firstWhere(
-      (u) => u.id == grant.recipientId,
-    );
-    if (recipient.parentId == null) return grantId;
-    return data.grants
-        .firstWhere(
-          (g) =>
-              g.recipientId == recipient.parentId &&
-              g.connectionId == grant.connectionId,
-        )
-        .id;
-  }
 }

@@ -21,6 +21,8 @@ jobs:
           persist-credentials: false
       - name: Check installer archive compatibility
         run: bash tool/test_installer.sh
+      - name: Check installer database rollback
+        run: sudo bash tool/test_installer_rollback.sh
       - name: Install release environment tools
         run: sudo apt-get update && sudo apt-get install -y debootstrap debian-archive-keyring
       - name: Build and audit native bundle

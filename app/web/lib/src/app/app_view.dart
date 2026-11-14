@@ -114,6 +114,7 @@ class AppView extends StatelessComponent {
               ServersPage(
                 api: controller.api,
                 localName: controller.store.serverName,
+                onChanged: controller.refreshPanel,
                 routes: controller.store.routes,
               ),
             if (controller.page == 'routing')
@@ -793,12 +794,6 @@ class AppView extends StatelessComponent {
     store: controller.store,
     draft: controller.recipientDraft,
     grants: controller.recipientGrants,
-    devices:
-        controller.store.recipients
-            .where((user) => user.id == controller.editingRecipientId)
-            .firstOrNull
-            ?.devices ??
-        const [],
     busy:
         controller.dataBusy ||
         controller.clearingLogs ||

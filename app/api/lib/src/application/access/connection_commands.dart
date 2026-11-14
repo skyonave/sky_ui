@@ -7,6 +7,7 @@ import '../contracts/access_environment.dart';
 import '../engines/core_manager.dart';
 import '../engines/registry.dart';
 import 'records.dart';
+import 'port_reservations.dart';
 import 'validation.dart';
 
 /// Mutates a draft only; ConfigurationTransaction owns all persistence/activation.
@@ -101,35 +102,33 @@ class ConnectionCommands {
     }
     if (definition.usesPort && (port == null || port < 1 || port > 65535))
       throw const ApiException('port_invalid', status: 422);
-    if (port != null &&
-        {
-          22,
-          80,
-          443,
-          config.port,
-          for (final m in managers.values) m.core.controller.port,
-        }.contains(port))
-      throw const ApiException('port_reserved', status: 422);
-    if (port != null &&
-        (data.connections.any(
-              (c) =>
-                  c.value.id != id &&
-                  c.value.ingress == input.ingress &&
-                  c.value.port == port,
-            ) ||
-            data.grants.any(
-              (g) => g.connectionId != id && g.credentials['port'] == '$port',
-            ) ||
-            data.connections.any(
-              (c) => c.secrets.entries.any(
-                (e) => e.key.startsWith('relay:port:') && e.value == '$port',
-              ),
-            )))
-      throw const ApiException('port_in_use', status: 422);
+    if (port != null) {
+      final local = input.ingress == Connection.localNode;
+      final remote = local ? null : routes?.transport.nodes()[input.ingress];
+      if (!local && remote == null)
+        throw const ApiException('route_node_missing', status: 409);
+      final reserved = local
+          ? localServicePorts(
+              config.port,
+              managers.values.map((m) => m.core.controller.port),
+            )
+          : {remote!.port};
+      if (reserved.contains(port))
+        throw const ApiException('port_reserved', status: 422);
+      if (allocatedPortsOnNode(
+        data,
+        input.ingress,
+        exceptConnection: id,
+        exceptOwnGrants: true,
+      ).contains(port))
+        throw const ApiException('port_in_use', status: 422);
+    }
     if (definition.isolatedBindings &&
         old != null &&
         old.value.port != port &&
-        data.grants.any((g) => g.credentials['port'] == '$port'))
+        data.grants.any(
+          (g) => g.connectionId == id && g.credentials['port'] == '$port',
+        ))
       throw const ApiException('port_in_use', status: 422);
     if (port != null &&
         input.ingress == Connection.localNode &&
@@ -161,12 +160,12 @@ class ConnectionCommands {
       ),
     );
     if (input.route.isNotEmpty &&
-        (!NodeRouting.supportsProxyCascade(input.coreId) ||
+        (input.route.length > 1 &&
+                !NodeRouting.supportsProxyCascade(input.coreId) ||
             !definition.shareable ||
             input.ingress != Connection.localNode &&
-                (input.coreId != 'mihomo' ||
-                    settings['security'] == 'TLS' &&
-                        settings['certificateSource'] != 'custom') ||
+                settings['security'] == 'TLS' &&
+                settings['certificateSource'] != 'custom' ||
             (settings['routingRule'] ?? '').isNotEmpty ||
             !{'', 'DIRECT'}.contains(settings['routingProxy'] ?? ''))) {
       throw const ApiException('route_protocol_unsupported', status: 422);

@@ -26,11 +26,43 @@ abstract interface class RelayTransport {
   Future<void> probe(String node, String destination, int port);
 }
 
+/// Versioned node workers keep each engine's configuration and undo slot separate.
+abstract interface class EngineRelayTransport implements RelayTransport {
+  Future<Set<int>> occupiedPorts(String node);
+  Future<RelayState> inspectEngine(String node, String engine);
+  Future<void> validateEngine(String node, String engine, String configuration);
+  Future<void> publishEngine(
+    String node,
+    String engine,
+    String transaction,
+    String previous,
+    String configuration,
+    Set<int> ports,
+    Set<int> udpPorts,
+  );
+  Future<void> rollbackEngine(String node, String engine, String transaction);
+}
+
+/// Last bounded observations, refreshed asynchronously without blocking snapshots.
+abstract interface class CachedRelayReadiness {
+  Map<String, String> cachedReadiness(
+    Iterable<({String node, String engine})> engines,
+  );
+}
+
 class RelayState {
-  const RelayState(this.hash, this.running, {this.extendedUdp = false});
+  const RelayState(
+    this.hash,
+    this.running, {
+    this.extendedUdp = false,
+    this.installed = true,
+    this.engineScoped = false,
+  });
   final String hash;
   final bool running;
   final bool extendedUdp;
+  final bool installed;
+  final bool engineScoped;
 }
 
 class RelayChange {
@@ -39,10 +71,14 @@ class RelayChange {
     this.previous,
     this.configuration,
     this.ports,
-    this.udpPorts,
-  );
+    this.udpPorts, {
+    this.engine = 'mihomo',
+    this.engineScoped = false,
+  });
   final String node, previous, configuration;
   final Set<int> ports, udpPorts;
+  final String engine;
+  final bool engineScoped;
 }
 
 class RelayRoutes {
@@ -95,8 +131,7 @@ class RelayRoutes {
     if ((!allowNew && jsonEncode(old?.value.route) != jsonEncode(nodes)) ||
         nodes.length > 8 ||
         nodes.toSet().length != nodes.length ||
-        !NodeRouting.supportsProxyCascade(input.coreId) ||
-        input.ingress != _local && input.coreId != 'mihomo' ||
+        nodes.length > 1 && !NodeRouting.supportsProxyCascade(input.coreId) ||
         nodes.length == 1 && nodes.single == _local) {
       throw const ApiException('route_invalid', status: 422);
     }
@@ -172,9 +207,24 @@ class RelayRoutes {
     String node,
     String instance, {
     bool validationOnly = false,
+    String? engine,
   }) {
     final connections = data.connections
         .where((c) => c.value.ingress == node && c.value.instanceId == instance)
+        .map(
+          (c) => node == _local
+              ? c
+              : StoredConnection(
+                  c.value.copyWith(
+                    routing: {
+                      ...c.value.routing,
+                      if (c.value.routing[node] case final policy?)
+                        _local: policy,
+                    },
+                  ),
+                  c.secrets,
+                ),
+        )
         .toList();
     final ids = connections.map((c) => c.value.id).toSet();
     return PanelData(
@@ -188,7 +238,8 @@ class RelayRoutes {
               if (data.coreSettings.containsKey(instance))
                 instance: data.coreSettings[instance]!,
             }
-          : {
+          : (engine == null || engine == 'mihomo')
+          ? {
               instance: {
                 '_baseline': '{"mode":"rule","log-level":"info"}',
                 'logLevel': 'info',
@@ -196,11 +247,14 @@ class RelayRoutes {
                 'accessRules': '[]',
                 'dnsMode': 'existing',
               },
-            },
+            }
+          : {},
       relays: [
         for (final c
             in validationOnly ? data.connections : data.listeningConnections)
-          if ((node == _local ? c.value.instanceId : relayInstanceId) ==
+          if ((c.value.ingress == node
+                  ? c.value.instanceId
+                  : relayInstanceId) ==
               instance)
             for (final edge in RoutePolicy.edges(c.value))
               if (c.value.route[edge.from] == node ||
@@ -229,46 +283,150 @@ class RelayRoutes {
     PanelData before,
     PanelData after,
     ConfigurationCodec codec,
-    ManagedCore core,
-  ) async {
+    ManagedCore core, {
+    Map<String, ConfigurationCodec> codecs = const {},
+    Iterable<ManagedCore> cores = const [],
+  }) async {
     final nodes = <String>{
       for (final c in [...after.connections, ...before.connections])
         ...c.value.route.reversed.where((node) => node != _local),
     };
     final result = <RelayChange>[];
     for (final node in nodes) {
-      final old = project(before, node, core.id);
-      final next = project(after, node, core.id);
-      String compile(PanelData data) =>
-          data.listeningConnections.isEmpty && data.relays.isEmpty
-          ? _base
-          : codec.compile(data, core, _base);
-      final previous = compile(old);
-      final candidate = compile(next);
-      if (candidate == previous) continue;
-      if (candidate.length > 512 * 1024) {
-        throw const ApiException('route_configuration_too_large', status: 422);
-      }
-      final state = await transport.inspect(node);
-      if (state.hash != digest(previous)) {
-        throw const ApiException(
-          'route_configuration_out_of_sync',
-          status: 409,
+      for (final localCore in {
+        core.id: core,
+        for (final c in cores) c.id: c,
+      }.values) {
+        final engine = localCore.coreId;
+        final native = codecs[engine] ?? (engine == core.coreId ? codec : null);
+        if (native == null) continue;
+        final directory = '/var/lib/sky-ui-node/engines/$engine';
+        final remoteCore = ManagedCore(
+          id: localCore.id,
+          coreId: engine,
+          service: 'sky-ui-node-$engine.service',
+          binary:
+              '/usr/local/libexec/sky-ui-node/cores/$engine/current/$engine',
+          directory: engine == 'mihomo'
+              ? '/var/lib/sky-ui-node/runtime'
+              : '$directory/runtime',
+          configuration: engine == 'mihomo'
+              ? '/var/lib/sky-ui-node/config.json'
+              : '$directory/config.json',
+          controller: localCore.controller,
+          secret: localCore.secret,
+        );
+        final old = project(before, node, localCore.id, engine: engine);
+        final next = project(after, node, localCore.id, engine: engine);
+        final base = switch (engine) {
+          'mihomo' => _base,
+          'amneziawg' => '{"version":"3.1","interfaces":[]}\n',
+          _ => '{}\n',
+        };
+        void settings(PanelData data) {
+          if (native is RoutingBaselineCodec && engine != 'mihomo')
+            data.coreSettings[remoteCore.id] = (native as RoutingBaselineCodec)
+                .initialRoutingSettings(base);
+        }
+
+        settings(old);
+        settings(next);
+        String compile(PanelData data) =>
+            (engine == 'amneziawg'
+                    ? data.connections.isEmpty
+                    : data.listeningConnections.isEmpty) &&
+                data.relays.isEmpty
+            ? base
+            : native.compile(data, remoteCore, base);
+        final previous = compile(old);
+        final candidate = compile(next);
+        if (candidate == previous) continue;
+        if (candidate.length > 512 * 1024) {
+          throw const ApiException(
+            'route_configuration_too_large',
+            status: 422,
+          );
+        }
+        final scoped = transport is EngineRelayTransport
+            ? transport as EngineRelayTransport
+            : null;
+        if (scoped == null && engine != 'mihomo')
+          throw const ApiException('server_upgrade_required', status: 409);
+        final state =
+            await (scoped?.inspectEngine(node, engine) ??
+                transport.inspect(node));
+        if (!state.installed)
+          throw const ApiException('binary_missing', status: 409);
+        if (state.hash != digest(previous)) {
+          throw const ApiException(
+            'route_configuration_out_of_sync',
+            status: 409,
+          );
+        }
+        final ports = native is RelayBindingsCodec
+            ? (native as RelayBindingsCodec).relayIngressBindings(next)
+            : _bindings(next, engine);
+        if (!state.extendedUdp &&
+            ports.udp.isNotEmpty &&
+            (ports.tcp.isEmpty ||
+                ports.udp.any((p) => p < 40000 || p >= 60000))) {
+          throw const ApiException('route_node_protocol', status: 409);
+        }
+        // Validate enabled drafts too, before the first recipient is granted.
+        final validationData = project(
+          after,
+          node,
+          localCore.id,
+          engine: engine,
+          validationOnly: true,
+        );
+        settings(validationData);
+        final validation = native.compile(
+          validationData,
+          remoteCore,
+          base,
+          validationOnly: true,
+        );
+        await (scoped?.validateEngine(node, engine, validation) ??
+            transport.validate(node, validation));
+        if (validation != candidate)
+          await (scoped?.validateEngine(node, engine, candidate) ??
+              transport.validate(node, candidate));
+        result.add(
+          RelayChange(
+            node,
+            state.hash,
+            candidate,
+            ports.tcp,
+            ports.udp,
+            engine: engine,
+            engineScoped: engine != 'mihomo' || state.engineScoped,
+          ),
         );
       }
-      final ports = (codec as RelayBindingsCodec).relayIngressBindings(next);
-      if (!state.extendedUdp &&
-          ports.udp.isNotEmpty &&
-          (ports.tcp.isEmpty ||
-              ports.udp.any((p) => p < 40000 || p >= 60000))) {
-        throw const ApiException('route_node_protocol', status: 409);
-      }
-      await transport.validate(node, candidate);
-      result.add(
-        RelayChange(node, state.hash, candidate, ports.tcp, ports.udp),
-      );
     }
     return result;
+  }
+
+  ({Set<int> tcp, Set<int> udp}) _bindings(PanelData data, String engine) {
+    final tcp = <int>{}, udp = <int>{};
+    for (final c
+        in engine == 'amneziawg'
+            ? data.connections.where((c) => c.value.enabled)
+            : data.listeningConnections) {
+      final ports = {
+        for (final g in data.activeGrants(c.value.id))
+          int.tryParse(g.credentials['port'] ?? '') ?? c.value.port!,
+        if (engine == 'amneziawg') c.value.port!,
+      };
+      final datagrams =
+          engine == 'amneziawg' ||
+          {'tuic', 'hysteria2'}.contains(c.value.protocolId) ||
+          c.value.settings['transport'] == 'HTTP/3';
+      (datagrams ? udp : tcp).addAll(ports);
+      if (c.value.protocolId == 'shadowsocks') udp.addAll(ports);
+    }
+    return (tcp: tcp, udp: udp);
   }
 
   Future<void> verifyNewLinks(PanelData before, PanelData after) async {

@@ -33,6 +33,7 @@ class NativeCommandRunner implements CommandRunner {
     List<String> arguments, {
     String? input,
     Duration timeout = const Duration(seconds: 15),
+    Future<void>? cancellation,
   }) async {
     final Process process;
     try {
@@ -53,6 +54,15 @@ class NativeCommandRunner implements CommandRunner {
 
     final output = process.stdout.listen(collect);
     final errors = process.stderr.listen(collect);
+    var finished = false, cancelled = false;
+    Future<void> terminate() async {
+      process.kill();
+      try {
+        await process.exitCode.timeout(const Duration(seconds: 1));
+      } on TimeoutException {
+        if (!Platform.isWindows) process.kill(ProcessSignal.sigkill);
+      }
+    }
     try {
       Future<void> write() async {
         if (input == null) return;
@@ -64,23 +74,30 @@ class NativeCommandRunner implements CommandRunner {
         }
       }
 
-      final completed = await Future.wait<Object?>([
+      final running = Future.wait<Object?>([
         process.exitCode,
         output.asFuture<void>(),
         errors.asFuture<void>(),
         write(),
+      ]);
+      final completed = await Future.any<List<Object?>>([
+        running,
+        if (cancellation != null)
+          cancellation.then((_) async {
+            if (finished) return running;
+            cancelled = true;
+            await terminate();
+            throw const ApiException('command_cancelled', status: 409);
+          }),
       ]).timeout(timeout);
+      if (cancelled) throw const ApiException('command_cancelled', status: 409);
       final code = completed.first as int;
       return CommandResult(code, utf8.decode(bytes, allowMalformed: true));
     } on TimeoutException {
-      process.kill();
-      try {
-        await process.exitCode.timeout(const Duration(seconds: 1));
-      } on TimeoutException {
-        if (!Platform.isWindows) process.kill(ProcessSignal.sigkill);
-      }
+      await terminate();
       throw const ApiException('command_timeout', status: 504);
     } finally {
+      finished = true;
       await output.cancel();
       await errors.cancel();
     }

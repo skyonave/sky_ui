@@ -9,9 +9,18 @@ state=/var/lib/sky-ui-node
 program=/usr/local/libexec/sky-ui-node
 unit=sky-ui-node-mihomo.service
 
-if (( EUID != 0 || $# != 2 )); then
-  echo 'Usage: sudo bash install-server-node.sh /path/to/mihomo /path/to/panel.pub' >&2
+if (( EUID != 0 || $# < 2 || $# > 3 )); then
+  echo 'Usage: sudo bash install-server-node.sh /path/to/mihomo /path/to/panel.pub [/path/to/verified-panel-bundle]' >&2
   exit 2
+fi
+command -v systemctl >/dev/null
+if (( $# == 3 )) && [[ -f "$3/deploy/host_packages.sh" ]]; then
+  source "$3/deploy/host_packages.sh"
+  missing=false
+  for tool in sudo visudo ssh-keygen flock runuser ss ip nft timeout sha256sum openssl; do
+    command -v "$tool" >/dev/null || missing=true
+  done
+  if [[ "$missing" == true ]]; then sky_packages node; fi
 fi
 for tool in sudo visudo ssh-keygen flock systemctl runuser ss timeout sha256sum; do
   command -v "$tool" >/dev/null
@@ -49,14 +58,36 @@ candidate=$(mktemp "$program/.mihomo.XXXXXX")
 sudoers=
 key_file=
 trap 'rm -f -- "$candidate" "${sudoers:-$candidate}" "${key_file:-$candidate}"' EXIT
-install -o root -g root -m 0755 "$1" "$candidate"
-runuser -u sky-ui-relay -- "$candidate" -t -d "$state/runtime" -f "$state/config.json"
-mv -fT "$candidate" "$program/mihomo"
+if [[ -x "$program/cores/mihomo/current/mihomo" ]]; then
+  slot=$(readlink -f "$program/cores/mihomo/current")
+  [[ "$(dirname "$slot")" == "$program/cores/mihomo" ]]
+  runuser -u sky-ui-relay -- "$slot/mihomo" -t -d "$state/runtime" -f "$state/config.json"
+  rm -f -- "$candidate"
+  ln -s "$program/cores/mihomo/current/mihomo" "$candidate"
+  mv -fT "$candidate" "$program/mihomo"
+elif [[ -x "$program/mihomo" ]]; then
+  runuser -u sky-ui-relay -- "$program/mihomo" -t -d "$state/runtime" -f "$state/config.json"
+elif [[ ! -f "$program/cores/mihomo/removed.json" ]]; then
+  install -o root -g root -m 0755 "$1" "$candidate"
+  runuser -u sky-ui-relay -- "$candidate" -t -d "$state/runtime" -f "$state/config.json"
+  mv -fT "$candidate" "$program/mihomo"
+fi
 
 cat > "$program/dispatch" <<'SH'
 #!/bin/sh
 set -eu
 case "${SSH_ORIGINAL_COMMAND:-}" in
+  v3:inventory|v3:ports)
+    exec /usr/bin/sudo -n /usr/local/libexec/sky-ui-node/bundle/bin/sky-ops node "${SSH_ORIGINAL_COMMAND#v3:}"
+    ;;
+  v3:*:*)
+    command=${SSH_ORIGINAL_COMMAND#v3:}
+    verb=${command%%:*}
+    engine=${command#*:}
+    case "$engine" in mihomo|sing-box|xray|amneziawg) ;; *) exit 2 ;; esac
+    case "$verb" in status|start|stop|restart|logs|inspect|diagnose|probe|validate|deploy|rollback|install|update|remove) ;; *) exit 2 ;; esac
+    exec /usr/bin/sudo -n /usr/local/libexec/sky-ui-node/bundle/bin/sky-ops node "$verb" "$engine"
+    ;;
   status|start|stop|restart|logs|inspect|validate|deploy|rollback|probe)
     exec /usr/bin/sudo -n /usr/local/libexec/sky-ui-node/control "$SSH_ORIGINAL_COMMAND"
     ;;
@@ -228,9 +259,19 @@ SH
 chmod 0755 "$program/dispatch" "$program/control"
 
 sudoers=$(mktemp /etc/sudoers.d/.sky-ui-node.XXXXXX)
-for verb in status start stop restart logs inspect validate deploy rollback probe; do
+{ for verb in status start stop restart logs inspect validate deploy rollback probe; do
   printf '%s ALL=(root) NOPASSWD: %s/control %s\n' "$account" "$program" "$verb"
-done > "$sudoers"
+done
+if (( $# == 3 )); then
+  printf '%s ALL=(root) NOPASSWD: %s/bundle/bin/sky-ops node inventory\n' "$account" "$program"
+  printf '%s ALL=(root) NOPASSWD: %s/bundle/bin/sky-ops node ports\n' "$account" "$program"
+  for engine in mihomo sing-box xray amneziawg; do
+    for verb in status start stop restart logs inspect diagnose probe validate deploy rollback install update remove; do
+      printf '%s ALL=(root) NOPASSWD: %s/bundle/bin/sky-ops node %s %s\n' "$account" "$program" "$verb" "$engine"
+    done
+  done
+fi
+} > "$sudoers"
 visudo -cf "$sudoers" >/dev/null
 chmod 0440 "$sudoers"
 mv -fT "$sudoers" /etc/sudoers.d/sky-ui-node
@@ -263,10 +304,109 @@ CapabilityBoundingSet=
 WantedBy=multi-user.target
 UNIT
 chmod 0644 "/etc/systemd/system/$unit"
+if (( $# == 3 )); then
+  test -x "$3/bin/sky-ops"
+  test -f "$3/lib/libsky_posix.so"
+  test -f "$3/VERSION"
+  install -d -o root -g root -m 0755 "$program/bundle" "$program/bundle/bin" "$program/bundle/lib" "$state/engines"
+  install -o root -g root -m 0755 "$3/bin/sky-ops" "$program/bundle/bin/.sky-ops.new"
+  mv -fT "$program/bundle/bin/.sky-ops.new" "$program/bundle/bin/sky-ops"
+  # Native assets are loaded relative to the executable, without an SDK.
+  test -z "$(find "$3/lib" -type l -print -quit)"
+  while IFS= read -r -d '' source; do
+    relative=${source#"$3/lib/"}
+    destination="$program/bundle/lib/$relative"
+    install -d -o root -g root -m 0755 "$(dirname "$destination")"
+    install -o root -g root -m 0644 "$source" "$destination.new"
+    mv -fT "$destination.new" "$destination"
+  done < <(find "$3/lib" -type f -print0)
+  if [[ -d "$3/licenses" ]]; then cp -a -- "$3/licenses" "$program/bundle/"; fi
+  if [[ -f "$3/LICENSE" ]]; then install -m 0644 "$3/LICENSE" "$program/bundle/LICENSE"; fi
+  chown -R root:root "$program/bundle"
+  chmod -R go-w "$program/bundle"
+  install -o root -g root -m 0644 "$3/VERSION" "$program/bundle/VERSION"
+  if declare -F sky_builder >/dev/null; then
+    sky_builder
+  elif ! getent passwd sky-ui-build >/dev/null; then
+    useradd --system --user-group --home-dir /nonexistent --shell /usr/sbin/nologin sky-ui-build
+  fi
+  install -d -o root -g root -m 0700 "$state/amneziawg-network"
+  for engine in sing-box xray amneziawg; do
+    install -d -o root -g root -m 0755 "$state/engines/$engine"
+    install -d -o sky-ui-relay -g sky-ui-relay -m 0750 "$state/engines/$engine/runtime"
+    binary="$program/cores/$engine/current/$engine"
+    config="$state/engines/$engine/config.json"
+    if [[ ! -f "$config" ]]; then
+      if [[ "$engine" == amneziawg ]]; then printf '%s\n' '{"version":"3.1","interfaces":[]}' > "$config";
+      else printf '%s\n' '{}' > "$config"; fi
+      chgrp sky-ui-relay "$config"
+      chmod 0640 "$config"
+    fi
+    if [[ "$engine" == sing-box ]]; then
+      start="$binary run -c $config"
+      check="$binary check -c $config"
+    elif [[ "$engine" == xray ]]; then
+      start="$binary run -config $config"
+      check="$binary run -test -config $config"
+    else
+      start="$program/bundle/bin/sky-ops amnezia run $config $binary"
+      check="$program/bundle/bin/sky-ops amnezia check $config"
+    fi
+    cat > "/etc/systemd/system/sky-ui-node-$engine.service" <<UNIT
+[Unit]
+Description=Sky UI managed node $engine
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=$([[ "$engine" == amneziawg ]] && echo root || echo sky-ui-relay)
+Group=sky-ui-relay
+WorkingDirectory=$state/engines/$engine/runtime
+Environment=XRAY_LOCATION_ASSET=$state/engines/$engine/runtime
+Environment=SKY_UI_NODE_MODE=1
+ExecStartPre=$check
+ExecStart=$start
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=15
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=$state/engines/$engine/runtime
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+UNIT
+    if [[ "$engine" == amneziawg ]]; then
+      cat >> "/etc/systemd/system/sky-ui-node-$engine.service" <<UNIT
+ExecStopPost=$program/bundle/bin/sky-ops amnezia cleanup
+ReadWritePaths=$state/amneziawg-network /run/amneziawg
+RuntimeDirectory=sky-ui-node-amneziawg
+RuntimeDirectoryMode=0700
+TemporaryFileSystem=/run:rw,nosuid,nodev,noexec,mode=0755
+BindPaths=/run/sky-ui-node-amneziawg:/run/amneziawg
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_BIND_SERVICE
+UNIT
+    else
+      printf '%s\n' 'PrivateDevices=yes' 'CapabilityBoundingSet=' >> "/etc/systemd/system/sky-ui-node-$engine.service"
+    fi
+    printf '\n[Install]\nWantedBy=multi-user.target\n' >> "/etc/systemd/system/sky-ui-node-$engine.service"
+    chmod 0644 "/etc/systemd/system/sky-ui-node-$engine.service"
+  done
+fi
 systemctl daemon-reload
 
 key_file=$(mktemp "$state/.ssh/.authorized.XXXXXX")
 printf 'restrict,command="%s/dispatch" %s %s sky-ui-node\n' "$program" "$key_type" "$key_blob" > "$key_file"
 chmod 0644 "$key_file"
 mv -fT "$key_file" "$state/.ssh/authorized_keys"
+if (( $# == 3 )); then
+  flock -u 9
+  exec 9>&-
+  "$program/bundle/bin/sky-ops" node inventory >/dev/null
+fi
 printf '%s\n' 'Sky UI node installed. Check the connection in the panel.'

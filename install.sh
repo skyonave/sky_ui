@@ -94,9 +94,61 @@ edge_was_running=0
 core_previous=
 core_link_changed=0
 worker_locked=0
-cleanup() { rm -rf -- "$temp"; }
+databases_saved=0
+keep_recovery_files=0
+cleanup() {
+  if (( ! keep_recovery_files )); then rm -rf -- "$temp"; fi
+}
 unlock_worker() {
   if (( worker_locked )); then flock -u 8; worker_locked=0; fi
+}
+stop_installed_unit() {
+  local loaded
+  loaded="$(systemctl show "$1" --property=LoadState --value)" || [[ "$loaded" == not-found ]] || return 1
+  [[ "$loaded" == not-found ]] && return 0
+  systemctl stop "$1"
+}
+panel_stopped() {
+  local loaded state pid
+  loaded="$(systemctl show sky-ui.service --property=LoadState --value)" || [[ "$loaded" == not-found ]] || return 1
+  [[ "$loaded" == not-found ]] && return 0
+  state="$(systemctl show sky-ui.service --property=ActiveState --value)" || return 1
+  pid="$(systemctl show sky-ui.service --property=MainPID --value)" || return 1
+  [[ ( "$state" == inactive || "$state" == failed ) && "$pid" == 0 ]]
+}
+snapshot_databases() {
+  local name path
+  panel_stopped || { printf 'Cannot snapshot databases while the panel is running.\n' >&2; return 1; }
+  [[ "$(realpath -e /var/lib/sky-ui)" == /var/lib/sky-ui ]] || return 1
+  # A stopped writer makes the database and any uncheckpointed WAL one coherent
+  # snapshot. Keep sidecar presence, modes and owners, including absent files.
+  install -d -m 0700 -o root -g root "$temp/databases"
+  for name in panel.sqlite owner.sqlite; do
+    for path in "/var/lib/sky-ui/$name" "/var/lib/sky-ui/$name-wal" "/var/lib/sky-ui/$name-shm" "/var/lib/sky-ui/$name-journal"; do
+      if [[ -e "$path" || -L "$path" ]]; then
+        [[ -f "$path" && ! -L "$path" && "$(stat -c %h -- "$path")" == 1 ]] || return 1
+        cp --preserve=mode,ownership,timestamps -- "$path" "$temp/databases/${path##*/}" || return 1
+      fi
+    done
+  done
+  databases_saved=1
+}
+restore_databases() {
+  local name path
+  (( databases_saved )) || return 0
+  panel_stopped || return 1
+  [[ "$(realpath -e /var/lib/sky-ui)" == /var/lib/sky-ui ]] || return 1
+  # Remove new sidecars even when none existed before the upgrade. Leaving a
+  # migrated WAL beside a restored database can replay the failed migration.
+  for name in panel.sqlite owner.sqlite; do
+    for path in "/var/lib/sky-ui/$name" "/var/lib/sky-ui/$name-wal" "/var/lib/sky-ui/$name-shm" "/var/lib/sky-ui/$name-journal"; do
+      [[ ! -d "$path" || -L "$path" ]] || return 1
+      rm -f -- "$path" || return 1
+      if [[ -f "$temp/databases/${path##*/}" ]]; then
+        cp --preserve=mode,ownership,timestamps -- "$temp/databases/${path##*/}" "$path" || return 1
+      fi
+    done
+  done
 }
 apply_systemd_control() {
   local tree="$1" unit
@@ -127,8 +179,19 @@ rollback() {
         rm -f -- /opt/sky-ui/cores/mihomo/current
       fi
     fi
-    systemctl stop sky-ui-edge.service
-    systemctl stop sky-ui.service
+    if ! stop_installed_unit sky-ui-edge.service ||
+       ! stop_installed_unit sky-ui.service || ! panel_stopped; then
+      keep_recovery_files=1
+      printf 'Rollback stopped: services could not be stopped. Recovery files retained at %s.\n' "$temp" >&2
+      unlock_worker
+      exit "$status"
+    fi
+    if ! restore_databases; then
+      keep_recovery_files=1
+      printf 'Rollback stopped: databases could not be restored. Panel remains stopped; recovery files retained at %s.\n' "$temp" >&2
+      unlock_worker
+      exit "$status"
+    fi
     if [[ -n "$previous" && -d "$previous" ]]; then
       ln -s "$previous" /opt/sky-ui/.rollback-link
       mv -Tf /opt/sky-ui/.rollback-link /opt/sky-ui/current
@@ -169,10 +232,20 @@ rollback() {
       systemctl daemon-reload
       if (( api_was_running )) && [[ "${SKY_UI_DEFER_ROLLBACK_START:-0}" != 1 ]]; then
         systemctl reset-failed sky-ui.service
-        systemctl restart sky-ui.service
+        if ! systemctl restart sky-ui.service; then
+          keep_recovery_files=1
+          printf 'Previous release and databases restored, but the panel did not start. Recovery files retained at %s.\n' "$temp" >&2
+          exit "$status"
+        fi
       fi
-      if (( edge_was_running )) && [[ "${SKY_UI_DEFER_ROLLBACK_START:-0}" != 1 ]]; then systemctl restart sky-ui-edge.service; fi
-      printf 'Previous release restored; configuration and data were retained.\n' >&2
+      if (( edge_was_running )) && [[ "${SKY_UI_DEFER_ROLLBACK_START:-0}" != 1 ]]; then
+        if ! systemctl restart sky-ui-edge.service; then
+          keep_recovery_files=1
+          printf 'Previous release and databases restored, but the gateway did not start. Recovery files retained at %s.\n' "$temp" >&2
+          exit "$status"
+        fi
+      fi
+      printf 'Previous release and pre-upgrade databases restored.\n' >&2
     fi
   fi
   unlock_worker
@@ -439,7 +512,10 @@ if [[ -d "$temp/core" ]]; then core_link_changed=1; fi
 if [[ "$validation_binary" != - ]]; then "$release/bin/sky-ops" core-bootstrap activate --prepared "$temp/core"; fi
 sed -i 's#^SKY_UI_CORE_BINARY=.*#SKY_UI_CORE_BINARY=/opt/sky-ui/cores/mihomo/current/mihomo#' /etc/sky-ui/server.env
 if (( edge_was_running )); then systemctl stop sky-ui-edge.service; fi
-if (( api_was_running )); then systemctl stop sky-ui.service; fi
+# Stop unconditionally: a previously inactive unit may have restarted while
+# the package was prepared. Never take a raw copy of an active SQLite writer.
+stop_installed_unit sky-ui.service
+snapshot_databases
 install -m 0644 "$release/deploy/systemd/sky-ui.service" /etc/systemd/system/sky-ui.service
 apply_systemd_control "$release"
 install -m 0644 "$release/deploy/systemd/sky-ui-mihomo.service" /etc/systemd/system/sky-ui-mihomo.service

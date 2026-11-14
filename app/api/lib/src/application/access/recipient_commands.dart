@@ -9,19 +9,23 @@ import '../contracts/configuration_codec.dart';
 import '../engines/core_manager.dart';
 import '../engines/registry.dart';
 import 'records.dart';
+import 'port_reservations.dart';
 import 'validation.dart';
 
 /// Recipient identity, grants and isolated ports change in one application draft.
 class RecipientCommands {
-  RecipientCommands({required this.config, required this.registry});
+  RecipientCommands({
+    required this.config,
+    required this.registry,
+    required this.remoteReservedPorts,
+  });
   final AccessEnvironment config;
   final EngineRegistry registry;
+  final Future<Set<int>> Function(String node) remoteReservedPorts;
   final _portRandom = Random.secure();
   Map<String, CoreManager> get managers => registry.managers;
   Future<void> save(PanelData data, Recipient input, {String? id}) async {
-    final old = data.recipients
-        .where((u) => u.id == id && u.parentId == null)
-        .firstOrNull;
+    final old = data.recipients.where((u) => u.id == id).firstOrNull;
     if (id != null && old == null)
       throw const ApiException('not_found', status: 404);
     final selected = input.connectionIds.toSet();
@@ -45,35 +49,6 @@ class RecipientCommands {
       data.recipients[data.recipients.indexOf(old)] = user;
     }
     await _syncGrants(data, user, selected);
-    final deviceConnections = selected
-        .where((id) => _requiresDeviceGrant(data, id))
-        .toSet();
-    for (final device in data.recipients.where((u) => u.parentId == user.id)) {
-      await _syncGrants(data, device, deviceConnections);
-    }
-  }
-
-  bool _requiresDeviceGrant(PanelData data, String connectionId) {
-    final connection = data.connections.firstWhere(
-      (c) => c.value.id == connectionId,
-    );
-    final codec = registry.codec(connection.value.coreId);
-    return codec is DeviceGrantPolicy &&
-        (codec as DeviceGrantPolicy).requiresDeviceGrant(connection);
-  }
-
-  Future<void> enroll(
-    PanelData data,
-    StoredRecipient parent,
-    StoredRecipient device,
-  ) async {
-    data.recipients.add(device);
-    await _syncGrants(data, device, {
-      for (final grant in data.grants)
-        if (grant.recipientId == parent.id &&
-            _requiresDeviceGrant(data, grant.connectionId))
-          grant.connectionId,
-    });
   }
 
   Future<void> _syncGrants(
@@ -118,23 +93,30 @@ class RecipientCommands {
     PanelData data,
     StoredConnection connection,
   ) async {
-    final reserved = {
-      22,
-      80,
-      443,
-      config.port,
-      for (final owner in managers.values) owner.core.controller.port,
-      for (final c in data.connections)
-        if (c.value.id != connection.value.id && c.value.port != null)
-          c.value.port!,
-      for (final g in data.grants)
-        if (g.credentials['port'] != null) int.parse(g.credentials['port']!),
+    final ingress = connection.value.ingress;
+    final local = ingress == Connection.localNode;
+    final reserved = <int>{
+      if (local)
+        ...localServicePorts(
+          config.port,
+          managers.values.map((m) => m.core.controller.port),
+        )
+      else
+        ...await remoteReservedPorts(ingress),
+      ...allocatedPortsOnNode(
+        data,
+        ingress,
+        exceptConnection: connection.value.id,
+      ),
     };
     for (var attempt = 0; attempt < 200; attempt++) {
       final candidate = attempt == 0
           ? connection.value.port!
           : 20000 + _portRandom.nextInt(40000);
       if (reserved.contains(candidate)) continue;
+      // A remote listen address does not belong to the panel host. The node
+      // observes its sockets and verifies the final bindings before publish.
+      if (!local) return candidate;
       ServerSocket? tcp;
       RawDatagramSocket? udp;
       try {

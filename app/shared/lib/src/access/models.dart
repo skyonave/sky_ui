@@ -116,18 +116,6 @@ class Connection {
   );
 }
 
-class RecipientDevice {
-  const RecipientDevice({required this.id, required this.name});
-
-  final String id;
-  final String name;
-
-  factory RecipientDevice.fromJson(Map<String, dynamic> json) =>
-      RecipientDevice(id: json['id'] as String, name: json['name'] as String);
-
-  Map<String, Object?> toJson() => {'id': id, 'name': name};
-}
-
 class Recipient {
   const Recipient({
     required this.id,
@@ -135,14 +123,12 @@ class Recipient {
     this.enabled = true,
     this.connectionIds = const [],
     this.connectionPorts = const {},
-    this.devices = const [],
   });
   final String id;
   final String name;
   final bool enabled;
   final List<String> connectionIds;
   final Map<String, int> connectionPorts;
-  final List<RecipientDevice> devices;
 
   Recipient copyWith({bool? enabled}) => Recipient(
     id: id,
@@ -150,7 +136,6 @@ class Recipient {
     enabled: enabled ?? this.enabled,
     connectionIds: connectionIds,
     connectionPorts: connectionPorts,
-    devices: devices,
   );
   Map<String, Object?> toJson() => {
     'id': id,
@@ -158,7 +143,6 @@ class Recipient {
     'enabled': enabled,
     'connectionIds': connectionIds,
     'connectionPorts': connectionPorts,
-    'devices': devices.map((device) => device.toJson()).toList(),
   };
   factory Recipient.fromJson(Map<String, dynamic> json) => Recipient(
     id: json['id'] as String,
@@ -168,10 +152,6 @@ class Recipient {
     connectionPorts: Map<String, int>.from(
       json['connectionPorts'] as Map? ?? {},
     ),
-    devices: [
-      for (final device in json['devices'] as List? ?? const [])
-        RecipientDevice.fromJson(Map<String, dynamic>.from(device as Map)),
-    ],
   );
 }
 

@@ -1,5 +1,56 @@
 // English text for keys whose Russian catalog entries need translation.
 const englishStrings = <String, String>{
+  'servers.error.core_dependencies_missing':
+      'The server requires iproute2 and nftables. Install the missing packages and try again.',
+  'runtime.error.core_dependencies_missing':
+      'The server requires iproute2 and nftables. Install the missing packages and try again.',
+  'servers.installingCore': 'Installing {core}…',
+  'servers.updatingCore': 'Updating {core}…',
+  'servers.operationFailed': 'Operation failed',
+  'diagnostics.code.remote_unreachable':
+      'SSH cannot reach the remote server. Check its address and status.',
+  'diagnostics.code.remote_update_required':
+      'Update the remote service in Servers, then check again.',
+  'diagnostics.code.remote_busy':
+      'Another operation is running on the remote server. Check again when it finishes.',
+  'servers.removeCoreConfirm':
+      'Remove {core} from this server? Its connections will stop working. Settings and user access will be retained.',
+  'servers.error.catalog_unavailable':
+      'Could not retrieve verified builds. Please check again later.',
+  'servers.error.core_release_unverified':
+      'No verified core build is available for this panel version and server architecture.',
+  'servers.error.binary_missing': 'The core is not installed on this server.',
+  'servers.error.route_node_protocol':
+      'Update the remote service using Install over SSH.',
+  'servers.error.core_install_failed':
+      'Core installation failed. Check the remote service logs.',
+  'builder.route.checking': 'Checking server cores…',
+  'common.retry': 'Retry',
+  'builder.route.remoteCertificate':
+      'The remote server needs its own certificate.',
+  'servers.error.server_upgrade_required':
+      'Update the service using Prepare server, then try again.',
+  'runtime.error.server_upgrade_required':
+      'Update the remote service in Servers.',
+  'diagnostics.detail.node': 'Server',
+  'servers.edit': 'Edit server',
+  'servers.engines': 'Cores',
+  'servers.installCore': 'Install',
+  'servers.refresh': 'Check',
+  'error.server_upgrade_required':
+      'Update the remote service using Prepare server, then try again.',
+  'routing.drag': 'Drag rule',
+  'routing.orderHelp':
+      'Rules are checked from top to bottom. The first match wins.',
+  'routing.empty': 'No rules yet',
+  'routing.fallbackHelp': 'When no rule matches',
+  'builder.step.route': 'Route',
+  'builder.route.local': 'Current server',
+  'builder.route.localDescription': 'Entry and exit on this server.',
+  'builder.route.ingress': 'Entry',
+  'builder.route.egress': 'Exit',
+  'builder.route.addressUnavailable': 'Address not set',
+  'builder.route.incompatible': 'Unavailable for the selected core',
   'servers.working': 'Working…',
   'servers.state.unknown': 'Not checked',
   'servers.clientAddress': 'Client address',
@@ -185,6 +236,9 @@ const englishStrings = <String, String>{
   'runtime.error.route_link_unreachable':
       'A link is unreachable. Check the IP addresses and firewall rules for the cascade port.',
   'status.deployed': 'Deployed',
+  'status.remoteFailed': 'Core error',
+  'status.remoteUnreachable': 'Server unavailable',
+  'status.remoteUnknown': 'Checking status',
   'nav.servers': 'Servers',
   'servers.title': 'Servers',
   'servers.local': 'Panel server',
@@ -887,7 +941,6 @@ const englishStrings = <String, String>{
   "logs.reconnecting": "Connecting to logs…",
   "logs.started": "Panel preview started",
   "logs.title": "Logs",
-  "users.devices": "Devices",
   "logs.toggled": "Status changed: {name}",
   "logs.userSaved": "User saved: {name}",
   "maintenance.backupHint":

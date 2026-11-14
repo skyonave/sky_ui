@@ -17,6 +17,7 @@ class ConnectionDiagnosticsService {
     required this.repository,
     required this.isSynchronized,
     required this.probe,
+    this.remote,
     this.cooldown = const Duration(seconds: 2),
     this.deadline = const Duration(seconds: 60),
     DateTime Function()? now,
@@ -25,6 +26,7 @@ class ConnectionDiagnosticsService {
   final AccessRepository repository;
   final Future<bool> Function() isSynchronized;
   final DiagnosticNetworkProbe probe;
+  final RemoteConnectionDiagnostics? remote;
   final Duration cooldown, deadline;
   final DateTime Function() now;
   final _runs = <String, _Run>{};
@@ -71,7 +73,7 @@ class ConnectionDiagnosticsService {
             .where((c) => c.value.id == connectionId)
             .firstOrNull;
         if (stored == null) throw const ApiException('not_found', status: 404);
-        if (stored.value.ingress != Connection.localNode)
+        if (stored.value.ingress != Connection.localNode && remote == null)
           throw const ApiException(
             'route_diagnostics_unavailable',
             status: 422,
@@ -198,6 +200,18 @@ class ConnectionDiagnosticsService {
         result = await action();
       } on DiagnosticCancelled {
         rethrow;
+      } on ApiException catch (error) {
+        result = DiagnosticProbeResult(
+          DiagnosticState.failed,
+          switch (error.code) {
+            'server_ssh_failed' => 'remote_unreachable',
+            'server_upgrade_required' ||
+            'route_node_protocol' => 'remote_update_required',
+            'server_busy' => 'remote_busy',
+            'command_timeout' => 'diagnostic_timeout',
+            _ => 'check_failed',
+          },
+        );
       } on Object {
         result = const DiagnosticProbeResult(
           DiagnosticState.warning,
@@ -219,6 +233,13 @@ class ConnectionDiagnosticsService {
       () async => DiagnosticProbeResult(DiagnosticState.skipped, code),
     );
     ServiceObservation? observation;
+    RemoteDiagnosticSnapshot? remoteObservation;
+    final remoteNode = context.connection.ingress == Connection.localNode
+        ? null
+        : context.connection.ingress;
+    final network = remoteNode == null
+        ? probe
+        : remote!.probe(remoteNode, context.connection.coreId);
     try {
       final config = await check('configuration', () async {
         if (!await isSynchronized())
@@ -255,92 +276,146 @@ class ConnectionDiagnosticsService {
               }),
       );
       CoreSnapshot? core;
-      await context.owner.exclusive((_) async {
+      if (remoteNode != null) {
         await check('engine', () async {
-          core = await context.owner.snapshot();
-          observation = await context.owner.supervisor.inspect(
-            context.owner.core,
+          final observed = remoteObservation = await remote!.inspect(
+            remoteNode,
+            context.connection.coreId,
+            run.cancellation,
           );
-          final details = {
-            'service': context.owner.core.service,
-            'version': core!.version ?? '—',
-            'state': core!.processState.name,
-            if (observation!.processId != null)
-              'pid': '${observation!.processId}',
-          };
-          if (!core!.binaryAvailable)
-            return DiagnosticProbeResult(
-              DiagnosticState.failed,
-              'binary_missing',
-              details,
-            );
-          if (!core!.platformSupported)
-            return DiagnosticProbeResult(
-              DiagnosticState.warning,
-              'platform_unsupported',
-              details,
-            );
-          if (!observation!.loaded)
-            return DiagnosticProbeResult(
-              DiagnosticState.failed,
-              'service_missing',
-              details,
-            );
-          if (core!.processState != CoreProcessState.active)
-            return DiagnosticProbeResult(
-              DiagnosticState.failed,
-              core!.processState == CoreProcessState.failed
-                  ? 'core_failed'
-                  : 'core_stopped',
-              details,
-            );
-          if (!core!.controllerReady)
-            return DiagnosticProbeResult(
-              DiagnosticState.failed,
-              'controller_not_ready',
-              details,
-            );
           return DiagnosticProbeResult(
-            DiagnosticState.passed,
-            'engine_ready',
-            details,
+            observed.installed && observed.state == 'active'
+                ? DiagnosticState.passed
+                : DiagnosticState.failed,
+            !observed.installed
+                ? 'binary_missing'
+                : observed.state == 'active'
+                ? 'engine_ready'
+                : observed.state == 'failed'
+                ? 'core_failed'
+                : 'core_stopped',
+            {
+              'node': remoteNode,
+              'state': observed.state,
+              'version': observed.version,
+              if (observed.processId != null) 'pid': '${observed.processId}',
+            },
           );
         });
-        if (core?.binaryAvailable != true) {
-          await skip('native', 'binary_missing');
-          return;
-        }
-        await check('native', () async {
-          try {
-            await context.owner.adapter.validate(context.owner.core);
-            return const DiagnosticProbeResult(
-              DiagnosticState.passed,
-              'native_ready',
+        await check(
+          'native',
+          () async =>
+              remoteObservation?.native ??
+              const DiagnosticProbeResult(DiagnosticState.skipped, 'blocked'),
+        );
+      } else {
+        await context.owner.exclusive((_) async {
+          await check('engine', () async {
+            core = await context.owner.snapshot();
+            observation = await context.owner.supervisor.inspect(
+              context.owner.core,
             );
-          } on ApiException catch (e) {
+            final details = {
+              'service': context.owner.core.service,
+              'version': core!.version ?? '—',
+              'state': core!.processState.name,
+              if (observation!.processId != null)
+                'pid': '${observation!.processId}',
+            };
+            if (!core!.binaryAvailable)
+              return DiagnosticProbeResult(
+                DiagnosticState.failed,
+                'binary_missing',
+                details,
+              );
+            if (!core!.platformSupported)
+              return DiagnosticProbeResult(
+                DiagnosticState.warning,
+                'platform_unsupported',
+                details,
+              );
+            if (!observation!.loaded)
+              return DiagnosticProbeResult(
+                DiagnosticState.failed,
+                'service_missing',
+                details,
+              );
+            if (core!.processState != CoreProcessState.active)
+              return DiagnosticProbeResult(
+                DiagnosticState.failed,
+                core!.processState == CoreProcessState.failed
+                    ? 'core_failed'
+                    : 'core_stopped',
+                details,
+              );
+            if (!core!.controllerReady)
+              return DiagnosticProbeResult(
+                DiagnosticState.failed,
+                'controller_not_ready',
+                details,
+              );
             return DiagnosticProbeResult(
-              e.code == 'command_unavailable' || e.code == 'command_timeout'
-                  ? DiagnosticState.warning
-                  : DiagnosticState.failed,
-              switch (e.code) {
-                'command_unavailable' => 'validator_missing',
-                'command_timeout' => 'validator_timeout',
-                _ => 'native_invalid',
-              },
+              DiagnosticState.passed,
+              'engine_ready',
+              details,
             );
+          });
+          if (core?.binaryAvailable != true) {
+            await skip('native', 'binary_missing');
+            return;
           }
+          await check('native', () async {
+            try {
+              await context.owner.adapter.validate(context.owner.core);
+              return const DiagnosticProbeResult(
+                DiagnosticState.passed,
+                'native_ready',
+              );
+            } on ApiException catch (e) {
+              return DiagnosticProbeResult(
+                e.code == 'command_unavailable' || e.code == 'command_timeout'
+                    ? DiagnosticState.warning
+                    : DiagnosticState.failed,
+                switch (e.code) {
+                  'command_unavailable' => 'validator_missing',
+                  'command_timeout' => 'validator_timeout',
+                  _ => 'native_invalid',
+                },
+              );
+            }
+          });
         });
-      });
+      }
       var listenersReady = context.plan.listeners.isNotEmpty;
       for (var i = 0; i < context.plan.listeners.take(16).length; i++) {
         final listener = context.plan.listeners[i];
         final result = await check('listener.$i', () async {
-          if (!config.passed || observation?.state != CoreProcessState.active)
+          if (!config.passed ||
+              (remoteNode == null
+                  ? observation?.state != CoreProcessState.active
+                  : remoteObservation?.state != 'active'))
             return const DiagnosticProbeResult(
               DiagnosticState.skipped,
               'blocked',
             );
-          return probe.listener(
+          if (remoteNode != null) {
+            final found = remoteObservation!.listeners.any(
+              (actual) =>
+                  actual.port == listener.port &&
+                  actual.udp == listener.udp &&
+                  (listener.interfaceName == null ||
+                      actual.interfaceName == listener.interfaceName) &&
+                  (actual.host == listener.host ||
+                      actual.host == '::' ||
+                      actual.host == '0.0.0.0'),
+            );
+            return DiagnosticProbeResult(
+              found ? DiagnosticState.passed : DiagnosticState.failed,
+              found ? 'listener_ready' : 'listener_missing',
+              {'node': remoteNode},
+            );
+          }
+          return network.listener(
             listener,
             observation?.processId,
             run.cancellation,
@@ -391,13 +466,13 @@ class ConnectionDiagnosticsService {
       } else {
         DiagnosticResolution? resolution;
         await check('dns', () async {
-          resolution = await probe.resolve(target, run.cancellation);
+          resolution = await network.resolve(target, run.cancellation);
           return resolution!.result;
         });
         if (resolution?.result.passed == true) {
           final tcp = await check(
             'tcp',
-            () => probe.tcp(target, resolution!.addresses, run.cancellation),
+            () => network.tcp(target, resolution!.addresses, run.cancellation),
           );
           final address = tcp.details['address'];
           if (tcp.passed &&
@@ -405,7 +480,7 @@ class ConnectionDiagnosticsService {
               resolution!.addresses.contains(address)) {
             await check(
               'tls',
-              () => probe.tls(target, address, run.cancellation),
+              () => network.tls(target, address, run.cancellation),
             );
           } else {
             await skip('tls', 'blocked');
@@ -423,6 +498,25 @@ class ConnectionDiagnosticsService {
             DiagnosticState.warning,
             'state_changed',
           );
+        if (remoteNode != null) {
+          final latest = await remote!.inspect(
+            remoteNode,
+            context.connection.coreId,
+            run.cancellation,
+          );
+          if (remoteObservation == null ||
+              latest.hash != remoteObservation!.hash ||
+              latest.state != remoteObservation!.state ||
+              latest.processId != remoteObservation!.processId)
+            return const DiagnosticProbeResult(
+              DiagnosticState.warning,
+              'state_changed',
+            );
+          return const DiagnosticProbeResult(
+            DiagnosticState.passed,
+            'snapshot_current',
+          );
+        }
         final latest = await context.owner.supervisor.inspect(
           context.owner.core,
         );

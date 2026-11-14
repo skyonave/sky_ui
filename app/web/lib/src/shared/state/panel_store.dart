@@ -10,6 +10,8 @@ class PanelStore {
   Map<String, String> instanceIds = {};
   Map<String, bool> instanceReadiness = {};
   Map<String, String> routeNodes = {};
+  Map<String, String> routeAddresses = {};
+  Map<String, String> remoteInstanceStates = {};
   List<NamedRoute> routes = [];
   String serverName = 'Sky UI';
   String address = '';
@@ -24,12 +26,49 @@ class PanelStore {
     instanceIds = snapshot.instanceIds;
     instanceReadiness = snapshot.instanceReadiness;
     routeNodes = snapshot.routeNodes;
+    routeAddresses = snapshot.routeAddresses;
+    remoteInstanceStates = snapshot.remoteInstanceStates;
     routes = snapshot.routes;
   }
 
-  bool ready(Connection c) => c.ingress != Connection.localNode
-      ? deliveryReady
-      : instanceReadiness[c.instanceId] ?? deliveryReady;
+  String addressForNode(String node) =>
+      node == Connection.localNode ? address : routeAddresses[node] ?? '';
+
+  String endpointForNode(String node, int? port) {
+    final host = addressForNode(node);
+    if (host.isEmpty || port == null) return host;
+    final formatted = host.contains(':') && !host.startsWith('[')
+        ? '[$host]'
+        : host;
+    return '$formatted:$port';
+  }
+
+  String connectionEndpoint(Connection connection) => endpointForNode(
+    connection.ingress,
+    connection.assignedPorts.firstOrNull ?? connection.port,
+  );
+
+  String remoteState(Connection c) {
+    for (var i = 0; i < c.route.length; i++) {
+      final node = c.route[i];
+      if (node == Connection.localNode) continue;
+      final core = i == 0 ? c.coreId : 'mihomo';
+      final state = remoteInstanceStates['$node/$core'] ?? 'unknown';
+      if (state != 'ready') return state;
+    }
+    return 'ready';
+  }
+
+  bool ready(Connection c) {
+    if (!deliveryReady || remoteState(c) != 'ready') return false;
+    if (c.ingress == Connection.localNode &&
+        !(instanceReadiness[c.instanceId] ?? deliveryReady))
+      return false;
+    if (c.route.skip(1).contains(Connection.localNode) &&
+        instanceReadiness[instanceIds['mihomo'] ?? 'primary'] != true)
+      return false;
+    return true;
+  }
 
   bool supports(String? core, String? protocol) =>
       protocols[core]?.any((p) => p.id == protocol && p.available) ?? false;

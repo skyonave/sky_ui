@@ -39,7 +39,7 @@ Future<Map<String, dynamic>> restoreBackup(String id, int gid) async {
         );
         final version = db.select('PRAGMA user_version').first.values.first;
         require(
-          version == 1 || name == 'panel' && version == 2,
+          version == 1 || name == 'panel' && (version == 2 || version == 3),
           'database_version_invalid',
         );
         if (name == 'owner') db.execute('DELETE FROM sessions');

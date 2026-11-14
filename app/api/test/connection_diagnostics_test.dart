@@ -7,12 +7,116 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:test/test.dart';
 import 'support/diagnostics_fixture.dart';
 
+class _RemoteDiagnostics implements RemoteConnectionDiagnostics {
+  final inspections = <String>[];
+  final network = DiagnosticProbe();
+  bool changePid = false;
+  bool waitForCancellation = false;
+  bool cancelled = false;
+  final inspecting = Completer<void>();
+  @override
+  Future<RemoteDiagnosticSnapshot> inspect(
+    String node,
+    String core,
+    DiagnosticCancellation cancellation,
+  ) async {
+    inspections.add('$node:$core');
+    if (!inspecting.isCompleted) inspecting.complete();
+    if (waitForCancellation) {
+      await cancellation.whenCancelled;
+      cancelled = true;
+      cancellation.check();
+    }
+    return RemoteDiagnosticSnapshot(
+      installed: true,
+      state: 'active',
+      hash: 'same',
+      native: const DiagnosticProbeResult(
+        DiagnosticState.passed,
+        'native_ready',
+      ),
+      processId: changePid && inspections.length > 1 ? 22 : 21,
+      listeners: const [
+        DiagnosticListener(host: '::', port: 35001, udp: false),
+      ],
+    );
+  }
+
+  @override
+  DiagnosticNetworkProbe probe(String node, String core) => network;
+}
+
 void main() {
   late DiagnosticsFixture fixture;
   setUp(() => fixture = DiagnosticsFixture());
   tearDown(() => fixture.close());
   DiagnosticCheck step(ConnectionDiagnostics report, String id) =>
       report.checks.singleWhere((check) => check.id == id);
+  test(
+    'remote ingress diagnostics observe that host without touching the panel engine',
+    () async {
+      await fixture.close();
+      final remote = _RemoteDiagnostics();
+      fixture = DiagnosticsFixture(remote: remote);
+      final data = fixture.repository.read();
+      final previous = data.connections.single;
+      data.connections[0] = StoredConnection(
+        previous.value.copyWith(route: ['node_remote']),
+        previous.secrets,
+      );
+      fixture.repository.commit(data, 'native-fixture');
+      fixture.adapter.available = false;
+      fixture.supervisor.state = CoreProcessState.inactive;
+      final report = await fixture.finish((await fixture.start()).id);
+      expect(report.outcome, 'passed');
+      expect(remote.inspections, [
+        'node_remote:test-core',
+        'node_remote:test-core',
+      ]);
+      expect(remote.network.calls, ['dns', 'tcp', 'tls']);
+      expect(fixture.probe.calls, isEmpty);
+      expect(fixture.adapter.calls, isEmpty);
+      expect(fixture.supervisor.calls, isEmpty);
+      expect(step(report, 'engine').details['node'], 'node_remote');
+      expect(step(report, 'listener.0').state, DiagnosticState.passed);
+    },
+  );
+  test('remote diagnostic freshness detects a remote restart', () async {
+    await fixture.close();
+    final remote = _RemoteDiagnostics()..changePid = true;
+    fixture = DiagnosticsFixture(remote: remote);
+    final data = fixture.repository.read(),
+        previous = fixture.repository.read().connections.single;
+    data.connections[0] = StoredConnection(
+      previous.value.copyWith(route: ['node_remote']),
+      previous.secrets,
+    );
+    fixture.repository.commit(data, 'native-fixture');
+    final report = await fixture.finish((await fixture.start()).id);
+    expect(step(report, 'freshness').code, 'state_changed');
+  });
+  test('cancelling a remote inspection releases the owned operation', () async {
+    await fixture.close();
+    final remote = _RemoteDiagnostics()..waitForCancellation = true;
+    fixture = DiagnosticsFixture(remote: remote);
+    final data = fixture.repository.read(),
+        previous = fixture.repository.read().connections.single;
+    data.connections[0] = StoredConnection(
+      previous.value.copyWith(route: ['node_remote']),
+      previous.secrets,
+    );
+    fixture.repository.commit(data, 'native-fixture');
+    final report = await fixture.start();
+    await remote.inspecting.future.timeout(const Duration(seconds: 2));
+    fixture.service.cancel(previous.value.id, report.id);
+    await Future<void>.delayed(Duration.zero);
+    expect(remote.cancelled, isTrue);
+    expect(remote.network.calls, isEmpty);
+    expect(
+      fixture.service.get(previous.value.id, report.id).status,
+      'cancelled',
+    );
+  });
   test(
     'reports scoped stages without writes, lifecycle changes or credential disclosure',
     () async {

@@ -12,6 +12,52 @@ class ApiClientException implements Exception {
 }
 
 class ApiClient {
+  Future<void> updateServerEngine(String id, String core) async {
+    await _request(
+      '/api/v1/servers/$id/engines/$core/update',
+      post: true,
+      timeout: const Duration(minutes: 15),
+      payload: {},
+    );
+  }
+
+  Future<void> removeServerEngine(String id, String core) async {
+    await _request('/api/v1/servers/$id/engines/$core', method: 'DELETE');
+  }
+
+  Future<void> updateServerDetails(
+    String id,
+    String name,
+    String endpoint,
+  ) async {
+    await _request(
+      '/api/v1/servers/$id',
+      method: 'PUT',
+      payload: {'name': name, 'endpoint': endpoint},
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> serverEngines(
+    String id, {
+    bool updates = false,
+  }) async => [
+    for (final value
+        in (await _request(
+              '/api/v1/servers/$id/engines${updates ? '?updates=true' : ''}',
+            ))['data']
+            as List)
+      Map<String, dynamic>.from(value as Map),
+  ];
+
+  Future<void> installServerEngine(String id, String core) async {
+    await _request(
+      '/api/v1/servers/$id/engines/$core/install',
+      post: true,
+      timeout: const Duration(minutes: 15),
+      payload: {},
+    );
+  }
+
   Future<void> updateServerEndpoint(String id, String endpoint) async {
     await _request(
       '/api/v1/servers/$id/endpoint',
@@ -64,11 +110,15 @@ class ApiClient {
     ),
   );
 
-  Future<String> serverOperation(String id, ServerOperation operation) async =>
+  Future<String> serverOperation(
+    String id,
+    ServerOperation operation, {
+    String engine = 'mihomo',
+  }) async =>
       (await _request(
             '/api/v1/servers/$id/operation',
             post: true,
-            payload: {'operation': operation.name},
+            payload: {'operation': operation.name, 'engine': engine},
           ))['data']
           as String;
 
@@ -408,8 +458,9 @@ class ApiClient {
     String core,
     String protocol,
     String field,
-    Map<String, String> values,
-  ) async => Map<String, String>.from(
+    Map<String, String> values, {
+    String routeId = '',
+  }) async => Map<String, String>.from(
     (await _request(
           '/api/v1/connection-tools/generate',
           post: true,
@@ -419,6 +470,7 @@ class ApiClient {
             'protocol': protocol,
             'field': field,
             'values': values,
+            if (routeId.isNotEmpty) 'routeId': routeId,
           },
         ))['data']
         as Map,

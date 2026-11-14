@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:sqlite3/sqlite3.dart';
@@ -18,7 +19,7 @@ class PanelRepository implements AccessRepository {
     _db.execute('PRAGMA synchronous = FULL');
     _db.execute('PRAGMA busy_timeout = 5000');
     final schema = _db.select('PRAGMA user_version').first.values.first as int;
-    if (schema != 0 && schema != 1 && schema != 2) {
+    if (schema < 0 || schema > 3) {
       _db.close();
       throw StateError('Unsupported panel database version.');
     }
@@ -33,15 +34,11 @@ class PanelRepository implements AccessRepository {
         'CREATE TABLE IF NOT EXISTS recipients (id TEXT PRIMARY KEY, position INTEGER NOT NULL, name TEXT NOT NULL, enabled INTEGER NOT NULL, token TEXT NOT NULL, token_hash TEXT NOT NULL UNIQUE)',
       );
       _db.execute(
-        'CREATE TABLE IF NOT EXISTS recipient_devices (id TEXT PRIMARY KEY REFERENCES recipients(id) ON DELETE CASCADE, parent_id TEXT NOT NULL REFERENCES recipients(id) ON DELETE CASCADE)',
-      );
-      _db.execute(
         'CREATE TABLE IF NOT EXISTS grants (id TEXT PRIMARY KEY, recipient_id TEXT NOT NULL REFERENCES recipients(id), connection_id TEXT NOT NULL REFERENCES connections(id), credentials TEXT NOT NULL, UNIQUE(recipient_id,connection_id))',
       );
       _db.execute(
         'CREATE TABLE IF NOT EXISTS deployment (id INTEGER PRIMARY KEY CHECK(id = 1), previous TEXT NOT NULL, candidate TEXT NOT NULL, was_running INTEGER NOT NULL)',
       );
-      _db.execute('PRAGMA user_version = 2');
       _db.execute('INSERT OR IGNORE INTO metadata VALUES (?,?)', [
         'revision',
         '0',
@@ -58,10 +55,66 @@ class PanelRepository implements AccessRepository {
         'addressFollowsOrigin',
         metadata('address') == defaultAddress ? '1' : '0',
       ]);
+      if (schema < 3) _promoteDeviceRecipients();
+      _db.execute('PRAGMA user_version = 3');
     });
   }
   final Database _db;
   final String _defaultAddress;
+
+  /// Retire device relationships without changing native credentials or grants.
+  void _promoteDeviceRecipients() {
+    if (_db
+        .select(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'recipient_devices'",
+        )
+        .isEmpty)
+      return;
+    final recipients = {
+      for (final row in _db.select(
+        'SELECT * FROM recipients ORDER BY position',
+      ))
+        row['id'] as String: row,
+    };
+    final parents = {
+      for (final row in _db.select('SELECT * FROM recipient_devices'))
+        row['id'] as String: row['parent_id'] as String,
+    };
+    final names = {
+      for (final row in recipients.values)
+        if (!parents.containsKey(row['id']))
+          (row['name'] as String).toLowerCase(),
+    };
+    bool enabled(String id, Set<String> visited) {
+      final row = recipients[id];
+      if (row == null || row['enabled'] != 1 || !visited.add(id)) return false;
+      final parent = parents[id];
+      return parent == null || enabled(parent, visited);
+    }
+
+    for (final entry in parents.entries) {
+      final row = recipients[entry.key], parent = recipients[entry.value];
+      if (row == null) continue;
+      final base = parent == null
+          ? row['name'] as String
+          : '${parent['name']} / ${row['name']}';
+      var name = base.substring(0, min(base.length, 80));
+      var suffix = 2;
+      while (!names.add(name.toLowerCase())) {
+        final tail = ' ($suffix)';
+        name = '${base.substring(0, min(base.length, 80 - tail.length))}$tail';
+        suffix++;
+      }
+      _db.execute('UPDATE recipients SET name = ?, enabled = ? WHERE id = ?', [
+        name,
+        enabled(entry.key, {}) ? 1 : 0,
+        entry.key,
+      ]);
+    }
+    _db.execute('DROP TABLE recipient_devices');
+    if (parents.isNotEmpty) _set('revision', '${revision + 1}');
+  }
+
   T transaction<T>(T Function() operation) {
     _db.execute('BEGIN IMMEDIATE');
     try {
@@ -127,16 +180,13 @@ class PanelRepository implements AccessRepository {
         )
         .toList(),
     recipients: _db
-        .select(
-          'SELECT recipients.*, recipient_devices.parent_id FROM recipients LEFT JOIN recipient_devices USING (id) ORDER BY position',
-        )
+        .select('SELECT * FROM recipients ORDER BY position')
         .map(
           (r) => StoredRecipient(
             id: r['id'] as String,
             name: r['name'] as String,
             enabled: r['enabled'] == 1,
             token: r['token'] as String,
-            parentId: r['parent_id'] as String?,
           ),
         )
         .toList(),
@@ -197,12 +247,6 @@ class PanelRepository implements AccessRepository {
         g.recipientId,
         g.connectionId,
         jsonEncode(g.credentials),
-      ]);
-    }
-    for (final device in data.recipients.where((u) => u.parentId != null)) {
-      _db.execute('INSERT INTO recipient_devices VALUES (?,?)', [
-        device.id,
-        device.parentId,
       ]);
     }
     _set('serverName', data.serverName);

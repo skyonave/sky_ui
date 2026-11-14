@@ -9,6 +9,7 @@ import 'package:sqlite3/sqlite3.dart';
 import 'package:test/test.dart';
 import 'core_manager_test.dart' show FakeAdapter, FakeSupervisor;
 import 'relay_routes_test.dart' show RelayFixture;
+import 'remote_engines_test.dart' show EnginesTransport;
 
 class Adapter extends FakeAdapter {
   @override
@@ -55,6 +56,79 @@ class AwgCodec extends AmneziaConfiguration {
   Future<void> verifyRunning(PanelData data, ManagedCore core) async {}
 }
 
+class AdvertisedRelayFixture extends RelayFixture {
+  @override
+  Map<String, ServerNode> nodes() => {
+    ...super.nodes(),
+    'entry': const ServerNode(
+      id: 'entry',
+      name: 'DE',
+      host: '192.0.2.11',
+      port: 22,
+      publicKey: '',
+      endpoint: 'de.example.net',
+    ),
+  };
+}
+
+class PortRelayFixture extends RelayFixture implements EngineRelayTransport {
+  final portQueries = <String>[];
+  bool failPortQuery = false;
+  bool missingEntry = false;
+  final occupied = Set<int>.from(Iterable.generate(20000, (i) => 20000 + i));
+
+  @override
+  Map<String, ServerNode> nodes() =>
+      super.nodes()..removeWhere((key, _) => missingEntry && key == 'entry');
+
+  @override
+  Future<Set<int>> occupiedPorts(String node) async {
+    portQueries.add(node);
+    if (failPortQuery)
+      throw const ApiException('server_operation_failed', status: 502);
+    return occupied;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      throw StateError('Unexpected remote mutation during field generation.');
+}
+
+class GrantPortRelayFixture extends EnginesTransport {
+  final occupied = <int>{};
+  final queries = <String>[];
+  bool failQuery = false;
+  int sshPort = 32222;
+
+  @override
+  Map<String, ServerNode> nodes() => {
+    ...super.nodes(),
+    'entry': ServerNode(
+      id: 'entry',
+      name: 'Remote',
+      host: '192.0.2.11',
+      port: sshPort,
+      publicKey: '',
+    ),
+  };
+
+  @override
+  Future<Set<int>> occupiedPorts(String node) async {
+    queries.add(node);
+    if (failQuery)
+      throw const ApiException('server_operation_failed', status: 502);
+    return occupied;
+  }
+}
+
+class GenerationRequestContext implements RequestContext {
+  GenerationRequestContext(this.request);
+  @override
+  final Request request;
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
 void main() {
   late Directory directory;
   late PanelRepository repository;
@@ -82,6 +156,7 @@ void main() {
   PanelService service({
     List<CoreManager> additionalManagers = const [],
     RelayRoutes? routes,
+    Future<bool> Function(int)? portProbe,
   }) => PanelService(
     routes: routes,
     configurationStore: ConfigurationFiles(config.dataDirectory),
@@ -90,7 +165,7 @@ void main() {
     repository: repository,
     codecs: {'mihomo': codec, 'amneziawg': AwgCodec()},
     exporter: ClashExporter(),
-    portProbe: (_) async => true,
+    portProbe: portProbe ?? (_) async => true,
     additionalExporters: [V2RayExporter()],
     additionalManagers: additionalManagers,
   );
@@ -151,7 +226,7 @@ void main() {
   test(
     'remote-only named route serves clients without a local engine',
     () async {
-      final transport = RelayFixture();
+      final transport = AdvertisedRelayFixture();
       final routes = RelayRoutes(transport, allowNew: true);
       adapter.available = false;
       supervisor.state = CoreProcessState.inactive;
@@ -171,7 +246,11 @@ void main() {
       expect(await native.readAsString(), baselineConfig);
       expect(supervisor.calls, isEmpty);
       final share = await panel.share(users.recipients.single.id);
-      expect(share.links.single.uri, contains('192.0.2.11'));
+      expect(share.links.single.uri, contains('de.example.net'));
+      expect(share.links.single.uri, isNot(contains('192.0.2.11')));
+      final endpointSnapshot = await panel.snapshot();
+      expect(endpointSnapshot.routeNodes['entry'], 'DE');
+      expect(endpointSnapshot.routeAddresses['entry'], 'de.example.net');
       final oldGrants = repository.read().grants.single.credentials;
       await panel.saveNamedRoute(
         repository.revision,
@@ -586,6 +665,382 @@ void main() {
     repository.close();
     await directory.delete(recursive: true);
   });
+  test(
+    'remote field generation probes only the registered route entry',
+    () async {
+      final remote = PortRelayFixture();
+      adapter.available = false;
+      supervisor.state = CoreProcessState.inactive;
+      panel = service(
+        routes: RelayRoutes(remote, allowNew: true),
+        portProbe: (_) async =>
+            throw StateError('Panel ports must not be probed.'),
+      );
+      final route = (await panel.saveNamedRoute(
+        repository.revision,
+        const NamedRoute(id: '', name: 'Remote', nodes: ['entry']),
+      )).routes.single;
+      final before = repository.read();
+      final revision = repository.revision;
+      for (var i = 0; i < 5; i++) {
+        final generated = await panel.generateConnectionFields(
+          revision,
+          'mihomo',
+          'vless',
+          'defaults',
+          {},
+          routeId: route.id,
+        );
+        final port = int.parse(generated['port']!);
+        expect(port, inInclusiveRange(40000, 59999));
+        expect(remote.occupied, isNot(contains(port)));
+      }
+      expect(remote.portQueries, List.filled(5, 'entry'));
+      expect(repository.revision, revision);
+      expect(repository.read().connections, before.connections);
+      expect(remote.configurations, isEmpty);
+      expect(supervisor.calls, isEmpty);
+      remote.failPortQuery = true;
+      await expectLater(
+        panel.generateConnectionFields(
+          revision,
+          'mihomo',
+          'vless',
+          'port',
+          {},
+          routeId: route.id,
+        ),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.code,
+            'code',
+            'server_operation_failed',
+          ),
+        ),
+      );
+      remote.missingEntry = true;
+      final queryCount = remote.portQueries.length;
+      await expectLater(
+        panel.generateConnectionFields(
+          revision,
+          'mihomo',
+          'vless',
+          'port',
+          {},
+          routeId: route.id,
+        ),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.code,
+            'code',
+            'route_node_missing',
+          ),
+        ),
+      );
+      expect(remote.portQueries, hasLength(queryCount));
+    },
+  );
+  test(
+    'field generation rejects unknown routes and old remote workers',
+    () async {
+      final remote = RelayFixture();
+      panel = service(routes: RelayRoutes(remote, allowNew: true));
+      final route = (await panel.saveNamedRoute(
+        repository.revision,
+        const NamedRoute(id: '', name: 'Remote', nodes: ['entry']),
+      )).routes.single;
+      await expectLater(
+        panel.generateConnectionFields(
+          repository.revision,
+          'mihomo',
+          'vless',
+          'port',
+          {},
+          routeId: 'https://untrusted.example',
+        ),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'route_not_found'),
+        ),
+      );
+      await expectLater(
+        panel.generateConnectionFields(
+          repository.revision,
+          'mihomo',
+          'vless',
+          'port',
+          {},
+          routeId: route.id,
+        ),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.code,
+            'code',
+            'server_upgrade_required',
+          ),
+        ),
+      );
+      await expectLater(
+        panel.generateConnectionFields(
+          repository.revision - 1,
+          'mihomo',
+          'vless',
+          'port',
+          {},
+          routeId: route.id,
+        ),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'state_changed'),
+        ),
+      );
+    },
+  );
+  test(
+    'HTTP field generation accepts route IDs, never caller-supplied hosts',
+    () async {
+      final remote = PortRelayFixture();
+      panel = service(routes: RelayRoutes(remote, allowNew: true));
+      final route = (await panel.saveNamedRoute(
+        repository.revision,
+        const NamedRoute(id: '', name: 'Remote', nodes: ['entry']),
+      )).routes.single;
+      final application = createApplication(config, manager, panel: panel);
+      Future<int> generate(Map<String, Object?> extra) async {
+        final response = await application(
+          GenerationRequestContext(
+            Request.post(
+              Uri.parse('http://127.0.0.1/api/v1/connection-tools/generate'),
+              headers: {
+                'host': '127.0.0.1',
+                'content-type': 'application/json',
+              },
+              body: jsonEncode({
+                'revision': repository.revision,
+                'core': 'mihomo',
+                'protocol': 'vless',
+                'field': 'port',
+                'values': {},
+                ...extra,
+              }),
+            ),
+          ),
+        );
+        return response.statusCode;
+      }
+
+      expect(await generate({'routeId': route.id}), 200);
+      expect(remote.portQueries, ['entry']);
+      expect(await generate({'routeId': 'missing'}), 422);
+      expect(await generate({'routeId': 123}), 400);
+      expect(
+        await generate({'routeId': route.id, 'host': 'other.example'}),
+        400,
+      );
+      expect(await generate({'ingress': 'other-node'}), 400);
+      expect(remote.portQueries, ['entry']);
+    },
+  );
+  for (final preferredOccupied in [false, true])
+    test(
+      'remote isolated grants ${preferredOccupied ? 'skip occupied' : 'retain preferred'} ports without local binds',
+      () async {
+        final remote = GrantPortRelayFixture();
+        final routes = RelayRoutes(remote, allowNew: true);
+        panel = service(routes: routes);
+        final local = (await panel.saveConnection(
+          repository.revision,
+          input(protocol: 'shadowsocks'),
+        )).connections.single;
+        await recipient(local.id, name: 'Local');
+        final route = (await panel.saveNamedRoute(
+          repository.revision,
+          const NamedRoute(id: '', name: 'Remote', nodes: ['entry']),
+        )).routes.single;
+        final connection = (await panel.saveConnection(
+          repository.revision,
+          input(
+            protocol: 'shadowsocks',
+            settings: {'listen': '192.0.2.11'},
+          ).copyWith(routeId: route.id),
+        )).connections.last;
+        // The same base port belongs to a local connection and can still be
+        // used independently by the remote entry. Existing local grants must
+        // not steal the port from another host either.
+        final localDocument = await native.readAsString();
+        remote.occupied.addAll(Iterable.generate(20000, (i) => 20000 + i));
+        if (preferredOccupied)
+          remote.occupied.add(freePort);
+        else
+          remote.occupied.remove(freePort);
+        panel = service(
+          routes: routes,
+          portProbe: (_) async =>
+              throw StateError('Remote allocation used a local probe'),
+        );
+        await recipient(connection.id, name: 'First remote');
+        await recipient(connection.id, name: 'Second remote');
+        final data = repository.read();
+        final grants = data.grants
+            .where((g) => g.connectionId == connection.id)
+            .toList();
+        final first = grants.first, second = grants.last;
+        final ports = grants
+            .map((g) => int.parse(g.credentials['port']!))
+            .toSet();
+        expect(ports, hasLength(2));
+        expect(ports.intersection(remote.occupied), isEmpty);
+        expect(ports, isNot(contains(32222)));
+        if (!preferredOccupied) expect(first.credentials['port'], '$freePort');
+        expect(
+          first.credentials['password'],
+          isNot(second.credentials['password']),
+        );
+        final document =
+            jsonDecode(remote.documents[('entry', 'mihomo')]!) as Map;
+        final listeners = document['listeners'] as List;
+        expect(listeners, hasLength(2));
+        expect(listeners.map((v) => v['port']).toSet(), ports);
+        expect(listeners.every((v) => v['listen'] == '192.0.2.11'), isTrue);
+        expect(await native.readAsString(), localDocument);
+        expect(remote.queries, ['entry', 'entry']);
+        final firstUser = data.recipients.firstWhere(
+          (u) => u.id == first.recipientId,
+        );
+        await panel.saveRecipient(
+          repository.revision,
+          data.publicRecipient(firstUser).copyWith(enabled: false),
+          id: firstUser.id,
+        );
+        expect(
+          repository
+              .read()
+              .grants
+              .where((g) => g.connectionId == connection.id)
+              .map((g) => g.credentials),
+          [first.credentials, second.credentials],
+        );
+        expect(
+          (jsonDecode(remote.documents[('entry', 'mihomo')]!)
+              as Map)['listeners'],
+          hasLength(1),
+        );
+        expect(remote.queries, ['entry', 'entry']);
+      },
+    );
+
+  test(
+    'remote isolated allocation fails closed when port observation fails',
+    () async {
+      final remote = GrantPortRelayFixture();
+      panel = service(routes: RelayRoutes(remote, allowNew: true));
+      final route = (await panel.saveNamedRoute(
+        repository.revision,
+        const NamedRoute(id: '', name: 'Remote', nodes: ['entry']),
+      )).routes.single;
+      final connection = (await panel.saveConnection(
+        repository.revision,
+        input(protocol: 'shadowsocks').copyWith(routeId: route.id),
+      )).connections.single;
+      final revision = repository.revision;
+      remote.failQuery = true;
+      await expectLater(
+        recipient(connection.id),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.code,
+            'code',
+            'server_operation_failed',
+          ),
+        ),
+      );
+      expect(repository.revision, revision);
+      expect(repository.read().recipients, isEmpty);
+      expect(repository.read().grants, isEmpty);
+    },
+  );
+
+  test('remote isolated connection reserves the registered SSH port', () async {
+    final remote = GrantPortRelayFixture()..sshPort = freePort;
+    panel = service(routes: RelayRoutes(remote, allowNew: true));
+    final route = (await panel.saveNamedRoute(
+      repository.revision,
+      const NamedRoute(id: '', name: 'Remote', nodes: ['entry']),
+    )).routes.single;
+    await expectLater(
+      panel.saveConnection(
+        repository.revision,
+        input(
+          protocol: 'shadowsocks',
+          settings: {'listen': '192.0.2.11'},
+        ).copyWith(routeId: route.id),
+      ),
+      throwsA(
+        isA<ApiException>().having((e) => e.code, 'code', 'port_reserved'),
+      ),
+    );
+    expect(remote.occupied, isEmpty);
+    expect(repository.read().connections, isEmpty);
+    expect(remote.queries, isEmpty);
+  });
+
+  test(
+    'remote connections reuse panel service ports on independent nodes',
+    () async {
+      final remote = GrantPortRelayFixture();
+      panel = service(
+        routes: RelayRoutes(remote, allowNew: true),
+        portProbe: (_) async =>
+            throw StateError('Remote connection probed locally'),
+      );
+      final entry = (await panel.saveNamedRoute(
+        repository.revision,
+        const NamedRoute(id: '', name: 'Entry', nodes: ['entry']),
+      )).routes.single;
+      final exit = (await panel.saveNamedRoute(
+        repository.revision,
+        const NamedRoute(id: '', name: 'Exit', nodes: ['exit']),
+      )).routes.last;
+      Connection draft(int port, String route) => Connection(
+        id: '',
+        name: 'Remote',
+        coreId: 'mihomo',
+        protocolId: 'shadowsocks',
+        port: port,
+        routeId: route,
+        settings: const {'listen': '192.0.2.11'},
+      );
+      for (final port in [config.port, manager.core.controller.port]) {
+        await panel.saveConnection(repository.revision, draft(port, entry.id));
+        await panel.saveConnection(repository.revision, draft(port, exit.id));
+        await expectLater(
+          panel.saveConnection(repository.revision, draft(port, entry.id)),
+          throwsA(
+            isA<ApiException>().having((e) => e.code, 'code', 'port_in_use'),
+          ),
+        );
+      }
+      final connection = repository.read().connections.first.value;
+      await recipient(connection.id, name: 'One');
+      await recipient(connection.id, name: 'Two');
+      final otherGrantPort = int.parse(
+        repository.read().grants.last.credentials['port']!,
+      );
+      await expectLater(
+        panel.saveConnection(
+          repository.revision,
+          draft(otherGrantPort, entry.id),
+        ),
+        throwsA(
+          isA<ApiException>().having((e) => e.code, 'code', 'port_in_use'),
+        ),
+      );
+      await panel.saveConnection(
+        repository.revision,
+        draft(otherGrantPort, exit.id),
+      );
+      expect(repository.read().connections, hasLength(5));
+    },
+  );
+
   test(
     'isolated access preserves each recipient port/key when another recipient is revoked',
     () async {
@@ -1172,7 +1627,7 @@ void main() {
     },
   );
   test(
-    'subscription reads and device enrollment retain origin and host guards',
+    'subscription reads and compatibility POST never create access or bypass guards',
     () async {
       final c = (await connection()).connections.single;
       final user = (await recipient(c.id)).recipients.single;
@@ -1232,24 +1687,32 @@ void main() {
         expect(entry['port'], c.port);
         expect(entry['credentials'], contains('uuid'));
         expect(entry['credentials'], isNot(contains('privateKey')));
-        final install = secureToken();
-        Future<Map> enroll() async {
+        final install = secureToken(), revision = repository.revision;
+        Future<Map> readRelink(String installation) async {
           final request = await client.postUrl(
             Uri.parse('http://127.0.0.1:${server.port}$path'),
           );
           request.headers.set(HttpHeaders.acceptHeader, relinkType);
+          request.headers.set('X-Sky-Relink-Device-ID', installation);
           request.headers.contentType = ContentType.json;
-          request.write(jsonEncode({'installation': install, 'name': 'PC'}));
+          request.write(
+            jsonEncode({'installation': installation, 'name': 'PC'}),
+          );
           final response = await request.close();
           expect(response.statusCode, 200);
           return jsonDecode(await utf8.decoder.bind(response).join()) as Map;
         }
 
-        final enrolled = await Future.wait([enroll(), enroll()]);
-        expect(enrolled, [bundle, bundle]);
+        final replies = await Future.wait([
+          readRelink(install),
+          readRelink(secureToken()),
+        ]);
+        expect(replies, [bundle, bundle]);
         final snapshot = await panel.snapshot();
-        expect(snapshot.recipients.single.devices.single.name, 'PC');
-        expect(snapshot.revision, 3);
+        expect(snapshot.recipients.single.id, user.id);
+        expect(repository.read().recipients, hasLength(1));
+        expect(repository.read().grants, hasLength(1));
+        expect(snapshot.revision, revision);
         expect(await status('GET', '/api/v1/panel'), 403);
         expect(await status('GET', '/api/v1/cores/primary/settings'), 403);
         expect(await status('GET', path, host: 'evil.example'), 403);
@@ -1270,7 +1733,7 @@ void main() {
         expect(logResponse.statusCode, 200);
         final logText = await utf8.decoder.bind(logResponse).join();
         expect(logText, contains('POST recipient HTTP 400 request_invalid'));
-        expect(logText, contains('Subscription device registered'));
+        expect(logText, isNot(contains('Subscription device registered')));
         expect(logText, isNot(contains(install)));
         expect(logText, isNot(contains(path)));
       } finally {
@@ -1280,95 +1743,130 @@ void main() {
     },
   );
 
-  test('AWG devices on the same grant get independent stable peers', () async {
-    // A TCP-assigned ephemeral port can be reserved for UDP on Windows.
-    final udp = await RawDatagramSocket.bind(
-      '0.0.0.0',
-      0,
-      reuseAddress: false,
-      reusePort: false,
-    );
-    freePort = udp.port;
-    udp.close();
-    final awgFile = File('${directory.path}/awg.json')..writeAsStringSync('{}');
-    final awg = CoreManager(
-      core: ManagedCore(
-        id: 'amneziawg',
-        coreId: 'amneziawg',
-        service: 'sky-ui-amneziawg.service',
-        binary: '/unused',
-        directory: directory.path,
-        configuration: awgFile.path,
-        controller: Uri.parse('http://127.0.0.1:19093'),
-        secret: '',
-      ),
-      adapters: {'amneziawg': Adapter()},
-      supervisor: Supervisor()..state = CoreProcessState.active,
-      stateDirectory: '${directory.path}/awg-state',
-    );
-    panel = service(additionalManagers: [awg]);
-    final state = await panel.saveConnection(
-      repository.revision,
-      Connection(
-        id: '',
-        name: 'AWG',
-        coreId: 'amneziawg',
-        instanceId: 'amneziawg',
-        protocolId: 'amneziawg',
-        port: freePort,
-      ),
-    );
-    final user = (await recipient(
-      state.connections.single.id,
-    )).recipients.single;
-    final parentToken = await token(user.id);
-    expect(await panel.subscription(parentToken), contains('wireguard'));
-    final firstInstall = secureToken();
-    final tokens = await Future.wait([
-      panel.enrollSubscription(parentToken, firstInstall, 'Desktop'),
-      panel.enrollSubscription(parentToken, secureToken(), 'Phone'),
-    ]);
-    final first = await panel.subscription(tokens[0], format: 'relink');
-    final second = await panel.subscription(tokens[1], format: 'relink');
-    expect(first, isNot(second));
-    final grants = repository.read().grants;
-    expect(grants, hasLength(3));
-    expect(grants.map((g) => g.credentials['address']).toSet(), hasLength(3));
-    expect(grants.map((g) => g.credentials['publicKey']).toSet(), hasLength(3));
-    final revision = repository.revision;
-    repository.close();
-    repository = PanelRepository(
-      '${directory.path}/panel.sqlite',
-      defaultAddress: 'panel.example.net',
-    );
-    panel = service(additionalManagers: [awg]);
-    expect(
-      await panel.enrollSubscription(parentToken, firstInstall, 'PC'),
-      tokens[0],
-    );
-    expect(repository.revision, revision);
-    expect(await panel.subscription(tokens[0], format: 'relink'), first);
-    final enrolled = (await panel.snapshot()).recipients.single;
-    expect(
-      enrolled.devices.map((d) => d.name),
-      unorderedEquals(['Desktop', 'Phone']),
-    );
-    await panel.saveRecipient(
-      revision,
-      enrolled.copyWith(enabled: false),
-      id: user.id,
-    );
-    expect(
-      repository.read().activeGrants(state.connections.single.id),
-      isEmpty,
-    );
-    for (final token in tokens) {
+  test(
+    'two explicit AWG recipients retain distinct stable peers and independent access',
+    () async {
+      // A TCP-assigned ephemeral port can be reserved for UDP on Windows.
+      final udp = await RawDatagramSocket.bind(
+        '0.0.0.0',
+        0,
+        reuseAddress: false,
+        reusePort: false,
+      );
+      freePort = udp.port;
+      udp.close();
+      final awgFile = File('${directory.path}/awg.json')
+        ..writeAsStringSync('{}');
+      final awg = CoreManager(
+        core: ManagedCore(
+          id: 'amneziawg',
+          coreId: 'amneziawg',
+          service: 'sky-ui-amneziawg.service',
+          binary: '/unused',
+          directory: directory.path,
+          configuration: awgFile.path,
+          controller: Uri.parse('http://127.0.0.1:19093'),
+          secret: '',
+        ),
+        adapters: {'amneziawg': Adapter()},
+        supervisor: Supervisor()..state = CoreProcessState.active,
+        stateDirectory: '${directory.path}/awg-state',
+      );
+      panel = service(additionalManagers: [awg]);
+      final state = await panel.saveConnection(
+        repository.revision,
+        Connection(
+          id: '',
+          name: 'AWG',
+          coreId: 'amneziawg',
+          instanceId: 'amneziawg',
+          protocolId: 'amneziawg',
+          port: freePort,
+        ),
+      );
+      final user = (await recipient(
+        state.connections.single.id,
+      )).recipients.single;
+      final other = (await recipient(
+        state.connections.single.id,
+        name: 'Phone',
+      )).recipients.last;
+      final tokens = [await token(user.id), await token(other.id)];
+      expect(await panel.subscription(tokens[0]), contains('wireguard'));
+      final first = await panel.subscription(tokens[0], format: 'relink');
+      final second = await panel.subscription(tokens[1], format: 'relink');
+      expect(first, isNot(second));
+      final grants = repository.read().grants;
+      expect(grants, hasLength(2));
+      expect(grants.map((g) => g.credentials['address']).toSet(), hasLength(2));
+      expect(
+        grants.map((g) => g.credentials['publicKey']).toSet(),
+        hasLength(2),
+      );
+      final revision = repository.revision;
+      repository.close();
+      repository = PanelRepository(
+        '${directory.path}/panel.sqlite',
+        defaultAddress: 'panel.example.net',
+      );
+      panel = service(additionalManagers: [awg]);
+      expect(repository.revision, revision);
+      expect(await panel.subscription(tokens[0], format: 'relink'), first);
+      expect(await panel.subscription(tokens[1], format: 'relink'), second);
+      expect((await panel.snapshot()).recipients, hasLength(2));
+      final server = await serve(
+        createApplication(config, manager, panel: panel),
+        InternetAddress.loopbackIPv4,
+        0,
+      );
+      final client = HttpClient()..findProxy = (_) => 'DIRECT';
+      try {
+        for (final method in ['GET', 'POST', 'POST']) {
+          final request = await client.openUrl(
+            method,
+            Uri.parse('http://127.0.0.1:${server.port}/s/${tokens.first}'),
+          );
+          request.headers.set(
+            'Accept',
+            'application/vnd.sky-ui.relink-v1+json',
+          );
+          request.headers.set('X-Sky-Relink-Device-ID', secureToken());
+          if (method == 'POST') {
+            request.headers.contentType = ContentType.json;
+            request.write(
+              jsonEncode({
+                'installation': secureToken(),
+                'name': 'Another device',
+              }),
+            );
+          }
+          final response = await request.close();
+          expect(response.statusCode, 200);
+          expect(await utf8.decoder.bind(response).join(), first);
+        }
+        expect(repository.revision, revision);
+        expect(repository.read().recipients, hasLength(2));
+        expect(repository.read().grants, hasLength(2));
+      } finally {
+        client.close(force: true);
+        await server.close(force: true);
+      }
+      await panel.saveRecipient(
+        revision,
+        user.copyWith(enabled: false),
+        id: user.id,
+      );
+      expect(
+        repository.read().activeGrants(state.connections.single.id),
+        hasLength(1),
+      );
       await expectLater(
-        panel.subscription(token, format: 'relink'),
+        panel.subscription(tokens[0], format: 'relink'),
         throwsA(isA<ApiException>().having((e) => e.status, 'status', 404)),
       );
-    }
-  });
+      expect(await panel.subscription(tokens[1], format: 'relink'), second);
+    },
+  );
 
   test(
     'schema 1 upgrade preserves recipient tokens and native grants',
@@ -1381,7 +1879,7 @@ void main() {
       repository.close();
       final old = sqlite3.open(path);
       try {
-        old.execute('DROP TABLE recipient_devices');
+        old.execute('DROP TABLE IF EXISTS recipient_devices');
         old.execute('PRAGMA user_version = 1');
       } finally {
         old.close();
@@ -1390,12 +1888,8 @@ void main() {
       panel = service();
       expect(await token(user.id), previousToken);
       expect(repository.read().grants.single.credentials, previousGrant);
-      expect((await panel.snapshot()).recipients.single.devices, isEmpty);
-      await panel.enrollSubscription(previousToken, secureToken(), 'PC');
-      expect(
-        (await panel.snapshot()).recipients.single.devices.single.name,
-        'PC',
-      );
+      expect((await panel.snapshot()).recipients.single.id, user.id);
+      expect(repository.read().recipients, hasLength(1));
     },
   );
 }

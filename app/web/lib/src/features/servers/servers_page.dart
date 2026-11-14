@@ -13,12 +13,14 @@ class ServersPage extends StatefulComponent {
   const ServersPage({
     required this.api,
     required this.localName,
+    required this.onChanged,
     this.routes = const [],
     super.key,
   });
 
   final ApiClient api;
   final String localName;
+  final Future<void> Function() onChanged;
   final List<NamedRoute> routes;
 
   @override
@@ -30,10 +32,13 @@ class _ServersPageState extends State<ServersPage> {
   List<ServerNode> nodes = [];
   final states = <String, String>{};
   final logs = <String, String>{};
+  final inventories = <String, List<Map<String, dynamic>>>{};
+  final logEngines = <String, String>{};
   bool? enabled;
   bool busy = false;
   bool adding = false;
   String? removeId;
+  ({String node, String core})? removeEngine;
   String? bootstrapId;
   String bootstrapUser = 'root';
   String bootstrapKey = '';
@@ -44,7 +49,8 @@ class _ServersPageState extends State<ServersPage> {
   final nodeErrors = <String, String>{};
   final checked = <String, DateTime>{};
   String? activeNode, endpointId;
-  String editedEndpoint = '';
+  String? activeLabel;
+  String editedEndpoint = '', editedName = '';
   String name = '';
   String host = '';
   String port = '22';
@@ -58,13 +64,18 @@ class _ServersPageState extends State<ServersPage> {
     unawaited(run(load));
   }
 
-  Future<void> run(Future<void> Function() operation, {String? nodeId}) async {
+  Future<void> run(
+    Future<void> Function() operation, {
+    String? nodeId,
+    String? label,
+  }) async {
     if (busy) return;
     setState(() {
       busy = true;
       error = null;
       fieldErrors = {};
       activeNode = nodeId;
+      activeLabel = label;
       if (nodeId != null) nodeErrors.remove(nodeId);
     });
     try {
@@ -87,6 +98,7 @@ class _ServersPageState extends State<ServersPage> {
         setState(() {
           busy = false;
           activeNode = null;
+          activeLabel = null;
         });
     }
   }
@@ -116,16 +128,36 @@ class _ServersPageState extends State<ServersPage> {
     adding = false;
     name = host = hostKey = endpoint = relayAddress = '';
     port = '22';
+    await component.onChanged();
   }
 
-  Future<void> operate(ServerNode node, ServerOperation operation) async {
+  Future<void> inspectCores(ServerNode node) async {
+    final inventory = await component.api.serverEngines(node.id, updates: true);
+    inventories[node.id] = inventory;
+    states[node.id] = inventory.any((core) => core['state'] == 'active')
+        ? 'active'
+        : 'inactive';
+    checked[node.id] = DateTime.now();
+  }
+
+  Future<void> operate(
+    ServerNode node,
+    ServerOperation operation, {
+    String engine = 'mihomo',
+  }) async {
     if (operation != ServerOperation.logs) states.remove(node.id);
-    final value = await component.api.serverOperation(node.id, operation);
+    final value = await component.api.serverOperation(
+      node.id,
+      operation,
+      engine: engine,
+    );
     if (operation == ServerOperation.logs) {
       logs[node.id] = value;
+      logEngines[node.id] = engine;
     } else {
       states[node.id] = value;
       checked[node.id] = DateTime.now();
+      await inspectCores(node);
     }
   }
 
@@ -137,6 +169,9 @@ class _ServersPageState extends State<ServersPage> {
     removeId = null;
     checked.remove(id);
     nodeErrors.remove(id);
+    inventories.remove(id);
+    logEngines.remove(id);
+    await component.onChanged();
   }
 
   void closeBootstrap() {
@@ -154,7 +189,8 @@ class _ServersPageState extends State<ServersPage> {
         usePassword ? bootstrapPassword : '',
       );
       closeBootstrap();
-      await operate(node, ServerOperation.status);
+      await inspectCores(node);
+      await component.onChanged();
     } finally {
       bootstrapKey = '';
       bootstrapPassword = '';
@@ -347,13 +383,14 @@ class _ServersPageState extends State<ServersPage> {
     [
       div([
         h2([txt(node.name)]),
-        txt('mihomo', classes: 'protocol-tag'),
         pill(
           t(
             activeNode == node.id
                 ? 'servers.working'
                 : nodeErrors.containsKey(node.id)
-                ? 'servers.checkFailed'
+                ? nodeErrors[node.id] == 'server_ssh_failed'
+                      ? 'servers.checkFailed'
+                      : 'servers.operationFailed'
                 : 'servers.state.${states[node.id] ?? 'unknown'}',
           ),
           positive:
@@ -385,20 +422,30 @@ class _ServersPageState extends State<ServersPage> {
             }),
           ),
         ], classes: 'muted small'),
-      if (activeNode == node.id)
+      if (activeNode == node.id) ...[
         p(
           [
             txt(
-              t(
-                bootstrapId == node.id
-                    ? 'servers.installProgress'
-                    : 'servers.operationProgress',
-              ),
+              activeLabel ??
+                  t(
+                    bootstrapId == node.id
+                        ? 'servers.installProgress'
+                        : 'servers.operationProgress',
+                  ),
             ),
           ],
           classes: 'notice',
           attributes: {'role': 'status'},
         ),
+        div(
+          [div([], classes: 'core-install-fill indeterminate')],
+          classes: 'core-install-bar',
+          attributes: {
+            'role': 'progressbar',
+            'aria-label': activeLabel ?? t('servers.operationProgress'),
+          },
+        ),
+      ],
       if (nodeErrors[node.id] case final code?)
         p(
           [txt(errorMessage(code)), txt(' [$code]', classes: 'muted small')],
@@ -409,6 +456,7 @@ class _ServersPageState extends State<ServersPage> {
         p([txt(t('servers.notCheckedHelp'))], classes: 'muted small'),
       if (endpointId == node.id)
         div([
+          field('name', editedName, (v) => editedName = v, maxLength: 80),
           field(
             'endpoint',
             editedEndpoint,
@@ -423,12 +471,14 @@ class _ServersPageState extends State<ServersPage> {
               t('common.save'),
               () => unawaited(
                 run(() async {
-                  await component.api.updateServerEndpoint(
+                  await component.api.updateServerDetails(
                     node.id,
+                    editedName,
                     editedEndpoint,
                   );
                   endpointId = null;
                   await load();
+                  await component.onChanged();
                 }, nodeId: node.id),
               ),
               disabled: busy,
@@ -458,9 +508,10 @@ class _ServersPageState extends State<ServersPage> {
       ] else
         div([
           action(
-            t('servers.editAddress'),
+            t('servers.edit'),
             () => setState(() {
               endpointId = node.id;
+              editedName = node.name;
               editedEndpoint = node.endpoint ?? '';
             }),
             disabled: busy,
@@ -474,24 +525,139 @@ class _ServersPageState extends State<ServersPage> {
               }),
               disabled: busy,
             ),
-          for (final operation in ServerOperation.values)
-            action(
-              t('servers.${operation.name}'),
-              () => unawaited(
-                run(() => operate(node, operation), nodeId: node.id),
-              ),
-              disabled:
-                  busy ||
-                  (operation != ServerOperation.status &&
-                      operation != ServerOperation.logs &&
-                      !states.containsKey(node.id)),
-            ),
+          action(
+            t('servers.refresh'),
+            () => unawaited(run(() => inspectCores(node), nodeId: node.id)),
+            disabled: busy,
+          ),
           action(
             t('servers.remove'),
             () => setState(() => removeId = node.id),
             disabled: busy,
           ),
         ], classes: 'server-actions'),
+      if (inventories[node.id] case final inventory?)
+        div([
+          for (final core in inventory)
+            div([
+              txt('${core['coreId']}', classes: 'server-core-name'),
+              txt(core['version'] as String? ?? '—', classes: 'muted'),
+              pill(
+                core['installed'] != true
+                    ? t('core.notInstalled')
+                    : t('servers.state.${core['state']}'),
+                positive: core['state'] == 'active',
+              ),
+              div([
+                if (core['installed'] != true)
+                  action(
+                    t('core.install'),
+                    () => unawaited(
+                      run(
+                        () async {
+                          await component.api.installServerEngine(
+                            node.id,
+                            core['coreId'] as String,
+                          );
+                          await inspectCores(node);
+                        },
+                        nodeId: node.id,
+                        label: t('servers.installingCore', {
+                          'core': core['coreId'] as String,
+                        }),
+                      ),
+                    ),
+                    disabled: busy,
+                  )
+                else ...[
+                  action(
+                    t('core.update'),
+                    () => unawaited(
+                      run(
+                        () async {
+                          await component.api.updateServerEngine(
+                            node.id,
+                            core['coreId'] as String,
+                          );
+                          await inspectCores(node);
+                        },
+                        nodeId: node.id,
+                        label: t('servers.updatingCore', {
+                          'core': core['coreId'] as String,
+                        }),
+                      ),
+                    ),
+                    disabled: busy || core['approvedVersion'] == null,
+                  ),
+                  for (final op in [
+                    core['state'] == 'active'
+                        ? ServerOperation.stop
+                        : ServerOperation.start,
+                    ServerOperation.restart,
+                    ServerOperation.logs,
+                  ])
+                    iconButton(
+                      op == ServerOperation.logs
+                          ? 'logs'
+                          : op == ServerOperation.restart
+                          ? 'refresh'
+                          : 'power',
+                      t('servers.${op.name}'),
+                      () => unawaited(
+                        run(
+                          () => operate(
+                            node,
+                            op,
+                            engine: core['coreId'] as String,
+                          ),
+                          nodeId: node.id,
+                        ),
+                      ),
+                      disabled: busy,
+                    ),
+                  iconButton(
+                    'trash',
+                    t('core.remove'),
+                    () => setState(
+                      () => removeEngine = (
+                        node: node.id,
+                        core: core['coreId'] as String,
+                      ),
+                    ),
+                    disabled: busy,
+                  ),
+                ],
+              ], classes: 'server-actions'),
+            ], classes: 'server-core-row'),
+        ], classes: 'server-cores'),
+      if (removeEngine?.node == node.id)
+        div([
+          p([
+            txt(t('servers.removeCoreConfirm', {'core': removeEngine!.core})),
+          ]),
+          div([
+            action(
+              t('core.remove'),
+              () => unawaited(
+                run(() async {
+                  await component.api.removeServerEngine(
+                    node.id,
+                    removeEngine!.core,
+                  );
+                  removeEngine = null;
+                  await inspectCores(node);
+                  await component.onChanged();
+                }, nodeId: node.id),
+              ),
+              disabled: busy,
+            ),
+            action(
+              t('common.cancel'),
+              () => setState(() => removeEngine = null),
+              disabled: busy,
+            ),
+          ], classes: 'server-actions'),
+        ], classes: 'notice'),
       el('details', [
         el('summary', [txt(t('servers.manualInstall'))]),
         p([txt(t('servers.enrollmentHelp'))], classes: 'muted small'),
@@ -499,6 +665,7 @@ class _ServersPageState extends State<ServersPage> {
       ], classes: 'server-manual'),
       if (logs[node.id] case final text?)
         el('pre', [
+          txt('${logEngines[node.id] ?? ''}\n', classes: 'muted'),
           txt(text.isEmpty ? t('servers.emptyLogs') : text),
         ], classes: 'server-logs'),
     ],

@@ -3,6 +3,26 @@
   "coreId": "mihomo",
   "releases": [
     {
+      "version": "v1.19.34",
+      "verified": true,
+      "panelVersions": [
+        "2.1.0"
+      ],
+      "verifiedAt": "2026-11-14",
+      "platforms": {
+        "linux-amd64": {
+          "verified": true,
+          "asset": "mihomo-linux-amd64-v1-v1.19.34.gz",
+          "sha256": "0c07340a01408d033dda4088ea2a4c1e4d82aeed7b2f84f7c046e93b6ff3290c"
+        },
+        "linux-arm64": {
+          "verified": true,
+          "asset": "mihomo-linux-arm64-v1.19.34.gz",
+          "sha256": "daaf78a6240a282cdfd75bcbf98fe321f6bd52765cc29e79f344191198f0b50f"
+        }
+      }
+    },
+    {
       "version": "v1.19.33",
       "verified": true,
       "panelVersions": [

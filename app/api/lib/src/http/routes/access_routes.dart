@@ -101,9 +101,22 @@ void registerAccessRoutes(
   });
   router.post('/api/v1/connection-tools/generate', (context) async {
     final value = await body(context);
-    if (value['core'] is! String ||
+    if (value.keys.any(
+          (key) => !{
+            'revision',
+            'core',
+            'protocol',
+            'field',
+            'values',
+            'routeId',
+          }.contains(key),
+        ) ||
+        value['core'] is! String ||
         value['protocol'] is! String ||
         value['field'] is! String ||
+        value.containsKey('routeId') &&
+            (value['routeId'] is! String ||
+                (value['routeId'] as String).length > 128) ||
         value['values'] is! Map ||
         (value['values'] as Map).length > 256 ||
         (value['values'] as Map).entries.any(
@@ -119,6 +132,7 @@ void registerAccessRoutes(
           value['protocol'] as String,
           value['field'] as String,
           Map<String, String>.from(value['values'] as Map),
+          routeId: value['routeId'] as String? ?? '',
         ),
       },
     );
@@ -254,16 +268,10 @@ void registerAccessRoutes(
       return failure('not_found', 404);
     if (context.request.headers['accept'] != mediaType)
       return failure('export_unavailable', 406);
-    final value = await body(context, limit: 1024, requireRevision: false);
-    final installation = value['installation'];
-    final name = value['name'];
-    if (installation is! String ||
-        !RegExp(r'^[A-Za-z0-9_-]{43}$').hasMatch(installation) ||
-        name is! String)
-      return failure('request_invalid', 400);
-    final device = await panel.enrollSubscription(token, installation, name);
+    // Older Relink versions POST an installation identity. It never creates access.
+    await body(context, limit: 1024, requireRevision: false);
     return Response(
-      body: await panel.subscription(device, format: 'relink'),
+      body: await panel.subscription(token, format: 'relink'),
       headers: {
         'content-type': '$mediaType; charset=utf-8',
         'x-robots-tag': 'noindex, nofollow, noarchive',

@@ -13,7 +13,10 @@ class ConnectionDraft {
   final bool Function(String) coreInstalled;
   final bool Function(String)? engineAllowed;
   String? editingId, selectedCore, selectedProtocol, error;
-  String connectionStep = 'protocol';
+  String connectionStep = 'route';
+  List<String> route = [Connection.localNode];
+  Map<String, NodeRouting> routing = {};
+  String routeId = '';
   Map<String, String> draft = {}, connectionErrors = {};
   final advancedGroups = <String>{};
   List<String> candidateEngines(String protocol) => [
@@ -26,6 +29,7 @@ class ConnectionDraft {
         ? store.definition(selectedCore!, selectedProtocol!)
         : null;
     return [
+      'route',
       'protocol',
       if (selectedProtocol == null ||
           candidateEngines(selectedProtocol!).length > 1)
@@ -42,7 +46,35 @@ class ConnectionDraft {
     ];
   }
 
+  void selectRoute(NamedRoute? selected) {
+    routeId = selected?.id ?? '';
+    route = selected == null || selected.nodes.isEmpty
+        ? [Connection.localNode]
+        : [...selected.nodes];
+    routing = {...?selected?.policies};
+    connectionErrors = {};
+    error = null;
+    if (editingId == null &&
+        selectedProtocol != null &&
+        selectedCore != null &&
+        !candidateEngines(selectedProtocol!).contains(selectedCore)) {
+      selectedCore = null;
+      selectedProtocol = null;
+      draft = {'name': draft['name'] ?? '', 'port': draft['port'] ?? ''};
+      advancedGroups.clear();
+    }
+  }
+
   void advanceConnection() {
+    if (connectionStep == 'route') {
+      connectionStep = editingId == null
+          ? 'protocol'
+          : selectedCore != null && !coreInstalled(selectedCore!)
+          ? 'dependency'
+          : 'parameters';
+      error = null;
+      return;
+    }
     if (selectedCore == null || selectedProtocol == null) return;
     final definition = store.definition(selectedCore!, selectedProtocol!);
     connectionErrors = {
@@ -66,7 +98,7 @@ class ConnectionDraft {
     if (connectionErrors.isNotEmpty) return;
     final steps = connectionSteps;
     var index = connectionStep == 'core' && !steps.contains('core')
-        ? 1
+        ? steps.indexOf('protocol') + 1
         : steps.indexOf(connectionStep) + 1;
     while (index < steps.length - 1) {
       final fields = definition

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../access/records.dart';
 
@@ -70,6 +71,33 @@ class DiagnosticResolution {
   final List<String> addresses;
 }
 
+/// A bounded observation from the managed ingress host, never from the panel host.
+class RemoteDiagnosticSnapshot {
+  const RemoteDiagnosticSnapshot({
+    required this.installed,
+    required this.state,
+    required this.hash,
+    required this.native,
+    this.version = '',
+    this.processId,
+    this.listeners = const [],
+  });
+  final bool installed;
+  final String state, hash, version;
+  final int? processId;
+  final DiagnosticProbeResult native;
+  final List<DiagnosticListener> listeners;
+}
+
+abstract interface class RemoteConnectionDiagnostics {
+  Future<RemoteDiagnosticSnapshot> inspect(
+    String node,
+    String core,
+    DiagnosticCancellation cancellation,
+  );
+  DiagnosticNetworkProbe probe(String node, String core);
+}
+
 class DiagnosticCancelled implements Exception {
   const DiagnosticCancelled();
 }
@@ -77,6 +105,8 @@ class DiagnosticCancelled implements Exception {
 /// Cancels owned sockets/processes, including when a dialog closes mid-handshake.
 class DiagnosticCancellation {
   bool cancelled = false;
+  final _done = Completer<void>();
+  Future<void> get whenCancelled => _done.future;
   final _callbacks = <void Function()>{};
   void check() {
     if (cancelled) throw const DiagnosticCancelled();
@@ -94,6 +124,7 @@ class DiagnosticCancellation {
   void cancel() {
     if (cancelled) return;
     cancelled = true;
+    _done.complete();
     for (final callback in [..._callbacks]) {
       callback();
     }

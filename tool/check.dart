@@ -46,6 +46,7 @@ Future<void> main(List<String> args) async {
   if (exitCode != 0) return;
   for (final check in [
     'connection_draft_check.dart',
+    'routing_order_check.dart',
     'localization_check.dart',
   ]) {
     final process = await Process.start(

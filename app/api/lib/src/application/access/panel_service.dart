@@ -1,7 +1,4 @@
-import 'dart:convert';
 import 'dart:io';
-
-import 'package:crypto/crypto.dart';
 
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
@@ -23,6 +20,7 @@ import 'named_routes.dart';
 import 'recipient_commands.dart';
 import 'recipient_presence.dart';
 import 'records.dart';
+import 'port_reservations.dart';
 import 'repository.dart';
 import 'validation.dart';
 
@@ -101,6 +99,15 @@ class PanelService {
   late final recipientCommands = RecipientCommands(
     config: config,
     registry: registry,
+    remoteReservedPorts: (node) async {
+      final transport = routes?.transport;
+      final server = transport?.nodes()[node];
+      if (server == null)
+        throw const ApiException('route_node_missing', status: 409);
+      if (transport is! EngineRelayTransport)
+        throw const ApiException('server_upgrade_required', status: 409);
+      return {server.port, ...await transport.occupiedPorts(node)};
+    },
   );
 
   Future<CoreSettings> coreSettings(String id) => _exclusive((_) async {
@@ -150,10 +157,29 @@ class PanelService {
     String coreId,
     String protocolId,
     String fieldId,
-    Map<String, String> values,
-  ) => _exclusive((_) async {
+    Map<String, String> values, {
+    String routeId = '',
+  }) => _exclusive((_) async {
     final data = repository.read();
     await _check(revision);
+    var ingress = Connection.localNode;
+    if (routeId.isNotEmpty) {
+      final selected = data.namedRoutes
+          .where((route) => route.id == routeId)
+          .firstOrNull;
+      if (selected == null)
+        throw const ApiException('route_not_found', status: 422);
+      if (selected.nodes.isEmpty ||
+          selected.nodes.length > 1 &&
+              !NodeRouting.supportsProxyCascade(coreId)) {
+        throw const ApiException('route_protocol_unsupported', status: 422);
+      }
+      ingress = selected.nodes.first;
+      if (ingress != Connection.localNode &&
+          routes?.transport.nodes().containsKey(ingress) != true) {
+        throw const ApiException('route_node_missing', status: 409);
+      }
+    }
     final definition = _codec(
       coreId,
     ).protocols.where((p) => p.id == protocolId && p.available).firstOrNull;
@@ -163,21 +189,28 @@ class PanelService {
     if (fieldId == 'port' ||
         fieldId == 'defaults' && (values['port'] ?? '').isEmpty) {
       final reserved = <int>{
-        22,
-        80,
-        443,
-        config.port,
-        for (final owner in managers.values) owner.core.controller.port,
-        for (final c in data.connections)
-          if (c.value.port != null) c.value.port!,
-        for (final g in data.grants)
-          if (int.tryParse(g.credentials['port'] ?? '') != null)
-            int.parse(g.credentials['port']!),
+        if (ingress == Connection.localNode)
+          ...localServicePorts(
+            config.port,
+            managers.values.map((m) => m.core.controller.port),
+          ),
+        ...allocatedPortsOnNode(data, ingress),
         if (int.tryParse(values['port'] ?? '') != null)
           int.parse(values['port']!),
       };
-      result['port'] =
-          '${await randomConnectionPort(reserved, probe: portProbe)}';
+      var probe = portProbe;
+      if (ingress != Connection.localNode) {
+        final transport = routes?.transport;
+        if (transport is! EngineRelayTransport) {
+          throw const ApiException('server_upgrade_required', status: 409);
+        }
+        reserved.addAll(await transport.occupiedPorts(ingress));
+        reserved.add(transport.nodes()[ingress]!.port);
+        // The remote worker observes TCP and UDP sockets on the entry host.
+        // A local bind says nothing about that host's port availability.
+        probe = (_) async => true;
+      }
+      result['port'] = '${await randomConnectionPort(reserved, probe: probe)}';
       if (fieldId == 'port') return result;
     }
     for (final field in definition.activeFields(current)) {
@@ -238,7 +271,26 @@ class PanelService {
           if (_codec(owner.core.coreId) is CoreSettingsCodec) owner.core.id,
       ],
       revision: repository.revision,
+      remoteInstanceStates: routes?.transport is CachedRelayReadiness
+          ? (routes!.transport as CachedRelayReadiness).cachedReadiness({
+              for (final connection in data.connections)
+                for (final node in connection.value.route)
+                  if (node != Connection.localNode)
+                    (
+                      node: node,
+                      engine: node == connection.value.ingress
+                          ? connection.value.coreId
+                          : 'mihomo',
+                    ),
+            })
+          : const {},
       routeNodes: routes?.names(data) ?? const {},
+      routeAddresses: {
+        Connection.localNode: data.address,
+        if (routes != null)
+          for (final node in routes!.names(data).keys)
+            node: routes!.address(data, node),
+      },
       routes: data.namedRoutes,
       connections: data.connections
           .map(
@@ -268,10 +320,7 @@ class PanelService {
             ),
           )
           .toList(),
-      recipients: data.recipients
-          .where((u) => u.parentId == null)
-          .map(data.publicRecipient)
-          .toList(),
+      recipients: data.recipients.map(data.publicRecipient).toList(),
       serverName: data.serverName,
       address: data.address,
       synchronized: synchronized,
@@ -375,15 +424,10 @@ class PanelService {
 
   Future<PanelSnapshot> deleteRecipient(int revision, String id) =>
       _change(revision, (data) async {
-        if (!data.recipients.any((u) => u.id == id && u.parentId == null))
+        if (!data.recipients.any((u) => u.id == id))
           throw const ApiException('not_found', status: 404);
-        final removed = {
-          id,
-          for (final user in data.recipients)
-            if (user.parentId == id) user.id,
-        };
-        data.grants.removeWhere((g) => removed.contains(g.recipientId));
-        data.recipients.removeWhere((u) => removed.contains(u.id));
+        data.grants.removeWhere((g) => g.recipientId == id);
+        data.recipients.removeWhere((u) => u.id == id);
       });
   Future<PanelSnapshot> saveSettings(
     int revision,
@@ -397,58 +441,6 @@ class PanelService {
   });
 
   Future<RecipientShare> share(String id) => subscriptions.share(id);
-
-  Future<String> enrollSubscription(
-    String token,
-    String installation,
-    String name,
-  ) async {
-    final parentId = repository.recipientForToken(token);
-    if (parentId == null) throw const ApiException('not_found', status: 404);
-    final deviceToken = base64Url
-        .encode(
-          Hmac(
-            sha256,
-            utf8.encode(token),
-          ).convert(utf8.encode('sky-ui-device-v1:$installation')).bytes,
-        )
-        .replaceAll('=', '');
-    StoredRecipient parentIn(PanelData data) {
-      final parent = data.recipients
-          .where((u) => u.id == parentId && u.parentId == null && u.enabled)
-          .firstOrNull;
-      if (parent == null) throw const ApiException('not_found', status: 404);
-      return parent;
-    }
-
-    for (var attempt = 0; attempt < 5; attempt++) {
-      final revision = repository.revision;
-      final data = repository.read();
-      parentIn(data);
-      if (repository.recipientForToken(deviceToken) != null) return deviceToken;
-      try {
-        await deployment.apply(revision, (draft) async {
-          final parent = parentIn(draft);
-          await recipientCommands.enroll(
-            draft,
-            parent,
-            StoredRecipient(
-              id: newId('d'),
-              name: validatedName(name),
-              enabled: true,
-              token: deviceToken,
-              parentId: parent.id,
-            ),
-          );
-        }, () async {});
-        log.event('Subscription device registered');
-        return deviceToken;
-      } on ApiException catch (e) {
-        if (e.code != 'state_changed') rethrow;
-      }
-    }
-    throw const ApiException('state_changed', status: 409);
-  }
 
   Future<String> subscription(
     String token, {

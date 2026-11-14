@@ -1,4 +1,10 @@
 const diagnosticStrings = <String, String>{
+  'diagnostics.code.remote_unreachable':
+      'Нет связи с удалённым сервером по SSH. Проверьте адрес и состояние сервера.',
+  'diagnostics.code.remote_update_required':
+      'Обновите службу удалённого сервера во вкладке «Серверы», затем повторите проверку.',
+  'diagnostics.code.remote_busy':
+      'На удалённом сервере выполняется другая операция. Повторите проверку после её завершения.',
   'diagnostics.action': 'Диагностика',
   'diagnostics.title': 'Диагностика подключения',
   'diagnostics.retry': 'Проверить ещё раз',

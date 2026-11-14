@@ -112,6 +112,15 @@ class _RoutingPageState extends State<RoutingPage> {
           }),
           classes: 'availability-chip',
         ),
+        txt(
+          t('routes.ruleCount', {
+            'count': route.policies.values.fold<int>(
+              0,
+              (n, p) => n + p.rules.length,
+            ),
+          }),
+          classes: 'availability-chip',
+        ),
         action(
           t('common.edit'),
           () => edit(route),
@@ -126,25 +135,6 @@ class _RoutingPageState extends State<RoutingPage> {
             span([txt(role(i, route.nodes.length))], classes: 'muted small'),
           ]),
       ], classes: 'route-chain'),
-      p([
-        txt(
-          t(
-            route.nodes.contains(Connection.localNode)
-                ? 'routes.panelParticipates'
-                : 'routes.remoteOnly',
-          ),
-        ),
-      ], classes: 'muted small'),
-      p([
-        txt(
-          t('routes.ruleCount', {
-            'count': route.policies.values.fold<int>(
-              0,
-              (n, p) => n + p.rules.length,
-            ),
-          }),
-        ),
-      ], classes: 'muted small'),
       if (connections.isNotEmpty)
         el('details', [
           el('summary', [txt(t('routes.connections'))]),
@@ -206,7 +196,7 @@ class _RoutingPageState extends State<RoutingPage> {
               txt(c.name),
               span([txt(c.coreId)], classes: 'muted small'),
             ]),
-            el('td', [txt('${names[c.ingress] ?? c.ingress}:${c.port ?? ''}')]),
+            el('td', [txt(connectionAddress(c))]),
             el('td', [
               txt(
                 c.routePorts.isEmpty
@@ -224,6 +214,18 @@ class _RoutingPageState extends State<RoutingPage> {
       ]),
     ], classes: 'data-table'),
   ], classes: 'table-scroll');
+
+  String connectionAddress(Connection connection) {
+    final address = connection.ingress == Connection.localNode
+        ? component.snapshot.address
+        : component.snapshot.routeAddresses[connection.ingress] ?? '';
+    if (address.isEmpty) return t('builder.route.addressUnavailable');
+    final host = address.contains(':') && !address.startsWith('[')
+        ? '[$address]'
+        : address;
+    final port = connection.assignedPorts.firstOrNull ?? connection.port;
+    return port == null ? host : '$host:$port';
+  }
 
   Component editor() {
     final bindings = bound(editing!);
@@ -247,77 +249,67 @@ class _RoutingPageState extends State<RoutingPage> {
           value: name,
           disabled: !editable,
           onInput: (v) => name = v,
-          attributes: {
-            'maxlength': '80',
-            'placeholder': t('routes.nameExample'),
-          },
+          attributes: {'maxlength': '80'},
         ),
       ]),
-      h3([txt(t('routes.path'))], classes: 'form-section-title'),
-      p([txt(t('routes.pathHelp'))], classes: 'muted small'),
-      for (var i = 0; i < nodes.length; i++)
-        div([
-          txt('${i + 1}', classes: 'route-order'),
-          label([
-            txt(role(i, nodes.length)),
-            select(
-              [
-                for (final e in {
-                  ...names,
-                  for (final n in nodes) n: names[n] ?? n,
-                }.entries)
-                  if (e.key == nodes[i] || !nodes.contains(e.key))
-                    option([txt(e.value)], value: e.key),
-              ],
-              value: nodes[i],
-              disabled: !editable,
-              onChange: (values) {
-                if (values.isNotEmpty)
-                  setState(() {
-                    nodes[i] = values.single;
-                  });
-              },
+      div([
+        h3([txt(t('routes.path'))], classes: 'form-section-title'),
+        p([txt(t('routes.pathHelp'))], classes: 'muted small'),
+        for (var i = 0; i < nodes.length; i++)
+          div([
+            txt('${i + 1}', classes: 'route-order'),
+            label([
+              txt(role(i, nodes.length)),
+              select(
+                [
+                  for (final e in {
+                    ...names,
+                    for (final n in nodes) n: names[n] ?? n,
+                  }.entries)
+                    if (e.key == nodes[i] || !nodes.contains(e.key))
+                      option([txt(e.value)], value: e.key),
+                ],
+                value: nodes[i],
+                disabled: !editable,
+                onChange: (values) {
+                  if (values.isNotEmpty)
+                    setState(() {
+                      nodes[i] = values.single;
+                    });
+                },
+              ),
+            ]),
+            iconButton(
+              'up',
+              t('routes.moveUp'),
+              () => move(i, i - 1),
+              disabled: !editable || i == 0,
             ),
-          ]),
-          iconButton(
-            'up',
-            t('routes.moveUp'),
-            () => move(i, i - 1),
-            disabled: !editable || i == 0,
-          ),
-          iconButton(
-            'down',
-            t('routes.moveDown'),
-            () => move(i, i + 1),
-            disabled: !editable || i == nodes.length - 1,
-          ),
-          iconButton(
-            'trash',
-            t('builder.routeRemove'),
-            () => setState(() => nodes.removeAt(i)),
-            disabled: !editable || nodes.length == 1,
-          ),
-        ], classes: 'route-field'),
-      action(
-        t('builder.routeAdd'),
-        () => setState(() {
-          nodes.add(names.keys.firstWhere((n) => !nodes.contains(n)));
-        }),
-        glyph: 'plus',
-        disabled:
-            !editable || nodes.length >= 8 || names.keys.every(nodes.contains),
-      ),
-      p([
-        txt(
-          t(
-            nodes.contains(Connection.localNode)
-                ? 'routes.panelParticipates'
-                : 'routes.remoteOnly',
-          ),
+            iconButton(
+              'down',
+              t('routes.moveDown'),
+              () => move(i, i + 1),
+              disabled: !editable || i == nodes.length - 1,
+            ),
+            iconButton(
+              'trash',
+              t('builder.routeRemove'),
+              () => setState(() => nodes.removeAt(i)),
+              disabled: !editable || nodes.length == 1,
+            ),
+          ], classes: 'route-field'),
+        action(
+          t('builder.routeAdd'),
+          () => setState(() {
+            nodes.add(names.keys.firstWhere((n) => !nodes.contains(n)));
+          }),
+          glyph: 'plus',
+          disabled:
+              !editable ||
+              nodes.length >= 8 ||
+              names.keys.every(nodes.contains),
         ),
-      ], classes: 'notice'),
-      if (nodes.first != Connection.localNode)
-        p([txt(t('routes.remoteCapabilities'))], classes: 'muted small'),
+      ], classes: 'route-path-editor'),
       if (invalidPolicies)
         div([
           p([txt(t('routes.policyConflict'))], classes: 'field-error'),
@@ -345,37 +337,40 @@ class _RoutingPageState extends State<RoutingPage> {
               disabled: !editable,
             ),
         ]),
-      h3([txt(t('routes.nodeRules'))], classes: 'form-section-title'),
       div([
-        for (final n in nodes)
-          button(
-            [txt(names[n] ?? n)],
-            type: ButtonType.button,
-            classes: 'tab ${node == n ? 'active' : ''}',
-            attributes: {'aria-pressed': '${node == n}'},
-            disabled: !editable,
-            onClick: () => setState(() => selectedNode = n),
+        h3([txt(t('routes.nodeRules'))], classes: 'form-section-title'),
+        div([
+          for (final n in nodes)
+            button(
+              [txt(names[n] ?? n)],
+              type: ButtonType.button,
+              classes: 'tab ${node == n ? 'active' : ''}',
+              attributes: {'aria-pressed': '${node == n}'},
+              disabled: !editable,
+              onClick: () => setState(() => selectedNode = n),
+            ),
+        ], classes: 'tabs routing-tabs'),
+        RouteRules(
+          key: ValueKey(node),
+          nodes: nodes,
+          node: node,
+          names: names,
+          coreId: isAwg ? 'amneziawg' : 'mihomo',
+          policy: policies[node] ?? const NodeRouting(),
+          ruleLimit: (NodeRouting.maxTotalRules - otherRules).clamp(
+            0,
+            NodeRouting.maxRules,
           ),
-      ], classes: 'tabs routing-tabs'),
-      RouteRules(
-        nodes: nodes,
-        node: node,
-        names: names,
-        coreId: isAwg ? 'amneziawg' : 'mihomo',
-        policy: policies[node] ?? const NodeRouting(),
-        ruleLimit: (NodeRouting.maxTotalRules - otherRules).clamp(
-          0,
-          NodeRouting.maxRules,
+          editable: editable,
+          onChange: (p) => setState(() {
+            if (p.isDefault) {
+              policies.remove(node);
+            } else {
+              policies[node] = p;
+            }
+          }),
         ),
-        editable: editable,
-        onChange: (p) => setState(() {
-          if (p.isDefault) {
-            policies.remove(node);
-          } else {
-            policies[node] = p;
-          }
-        }),
-      ),
+      ], classes: 'route-policy-editor'),
       if (bindings.isNotEmpty) ...[
         p([
           txt(t('routes.applyAll', {'count': bindings.length})),

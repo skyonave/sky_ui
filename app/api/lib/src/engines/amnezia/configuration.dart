@@ -11,11 +11,7 @@ import '../../shared/api_exception.dart';
 import '../managed_core.dart';
 
 class AmneziaConfiguration
-    implements
-        ConfigurationCodec,
-        GrantAllocator,
-        DeviceGrantPolicy,
-        ConnectionDiagnosticsCodec {
+    implements ConfigurationCodec, GrantAllocator, ConnectionDiagnosticsCodec {
   @override
   ConnectionDiagnosticPlan diagnosticPlan(
     PanelData data,
@@ -263,8 +259,6 @@ class AmneziaConfiguration
         previous['presharedKey'] ??
         base64.encode(base64Url.decode(secureToken() + '=')),
   };
-  @override
-  bool requiresDeviceGrant(StoredConnection connection) => true;
 
   @override
   Map<String, String> allocateGrant(

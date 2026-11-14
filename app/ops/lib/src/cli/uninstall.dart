@@ -22,6 +22,59 @@ const directories = [
   '/opt/sky-ui',
   downloadCache,
 ];
+
+List<String> panelRemovalAccounts({required bool nodeInstalled}) => [
+  for (final name in accounts)
+    if (!nodeInstalled || name != 'sky-ui-build') name,
+];
+
+/// The caller owns the node lifecycle lock and trusts the backup path.
+Future<bool> restorePanelForwarding(
+  File backup,
+  File forwarding,
+  Future<String?> Function() nodeState,
+) async {
+  final original = (await backup.readAsString()).trim();
+  if (!['0', '1'].contains(original)) return false;
+  final state = await nodeState();
+  // Unknown or transitioning state must not disable another runtime's routing.
+  if (state != 'inactive' && state != 'not-installed') return false;
+  if ((await forwarding.readAsString()).trim() != '1') return false;
+  await forwarding.writeAsString('$original\n');
+  return true;
+}
+
+Future<void> _restoreForwarding() async {
+  const backup = '/var/lib/sky-ui-amneziawg-network/ip_forward';
+  if (!exists(backup)) return;
+  host.trusted(backup);
+  const nodeUnit = 'sky-ui-node-amneziawg.service';
+  final hasNode = exists('/usr/local/libexec/sky-ui-node');
+  final lock = hasNode ? HostLock('/run/lock/sky-ui-node.lock') : null;
+  try {
+    await lock?.acquire();
+    await restorePanelForwarding(
+      File(backup),
+      File('/proc/sys/net/ipv4/ip_forward'),
+      () async {
+        if (!hasNode) return 'not-installed';
+        try {
+          final result = await command(
+            ['systemctl', 'show', '-p', 'ActiveState', '--value', nodeUnit],
+            check: false,
+            timeout: const Duration(seconds: 5),
+          );
+          return result.exitCode == 0 ? result.stdout.toString().trim() : null;
+        } on OpsError {
+          return null;
+        }
+      },
+    );
+  } finally {
+    lock?.close();
+  }
+}
+
 Future<List<String>> removalPlan() async {
   managed();
   require(
@@ -153,19 +206,14 @@ Future<void> uninstall() async {
         ),
         'service_stop_timeout',
       );
-    const forwarding = '/var/lib/sky-ui-amneziawg-network/ip_forward';
-    if (exists(forwarding)) {
-      host.trusted(forwarding);
-      final original = readText(forwarding, 16).trim();
-      if (['0', '1'].contains(original) &&
-          File('/proc/sys/net/ipv4/ip_forward').readAsStringSync().trim() ==
-              '1')
-        File('/proc/sys/net/ipv4/ip_forward').writeAsStringSync('$original\n');
-    }
-    for (final name in accounts.reversed)
+    await _restoreForwarding();
+    final removedAccounts = panelRemovalAccounts(
+      nodeInstalled: exists('/usr/local/libexec/sky-ui-node'),
+    );
+    for (final name in removedAccounts.reversed)
       if ((await command(['id', '-u', name], check: false)).exitCode == 0)
         await run(['userdel', name]);
-    for (final name in accounts)
+    for (final name in removedAccounts)
       if ((await command(['getent', 'group', name], check: false)).exitCode ==
           0)
         await run(['groupdel', name]);

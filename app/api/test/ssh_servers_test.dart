@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:sky_ui_api/src/infrastructure/process/command_runner.dart';
@@ -11,7 +13,10 @@ const hostKey =
 
 class TestSshRunner implements CommandRunner {
   List<String> command = [];
+  final calls = <List<String>>[];
+  final replies = <String, CommandResult>{};
   int result = 0;
+  Completer<CommandResult>? inventory;
 
   @override
   Future<CommandResult> run(
@@ -20,12 +25,16 @@ class TestSshRunner implements CommandRunner {
     Duration timeout = const Duration(seconds: 15),
   }) async {
     command = [executable, ...arguments];
+    calls.add(command);
     if (executable.endsWith('/ssh-keygen')) {
       File(arguments.last).writeAsStringSync('test-private-key');
       File('${arguments.last}.pub').writeAsStringSync('$hostKey test-panel\n');
       return const CommandResult(0, '');
     }
-    return CommandResult(result, result == 0 ? 'active\n' : 'test-private-key');
+    if (arguments.last == 'v3:inventory' && inventory != null)
+      return inventory!.future;
+    return replies[arguments.last] ??
+        CommandResult(result, result == 0 ? 'active\n' : 'test-private-key');
   }
 }
 
@@ -44,6 +53,118 @@ void main() {
 
   Future<ServerNode> add({String host = 'VPS.example', int port = 2222}) =>
       servers.add(name: 'VPS', host: host, port: port, hostKey: hostKey);
+
+  test(
+    'background and explicit inventory share one bounded SSH request',
+    () async {
+      final node = await add();
+      runner.calls.clear();
+      runner.inventory = Completer();
+      final target = [(node: node.id, engine: 'xray')];
+      expect(servers.cachedReadiness(target)['${node.id}/xray'], 'unknown');
+      final explicit = servers.engineInventory(node.id);
+      expect(runner.calls.where((c) => c.last == 'v3:inventory').length, 1);
+      runner.inventory!.complete(
+        CommandResult(
+          0,
+          jsonEncode([
+            for (final core in ['mihomo', 'sing-box', 'xray', 'amneziawg'])
+              {'coreId': core, 'installed': true, 'state': 'active'},
+          ]),
+        ),
+      );
+      await explicit;
+      expect(servers.cachedReadiness(target)['${node.id}/xray'], 'ready');
+      await servers.execute(node.id, ServerOperation.stop, engine: 'xray');
+      expect(servers.cachedReadiness(target)['${node.id}/xray'], 'unknown');
+    },
+  );
+
+  test(
+    'lifecycle waits for a background inventory instead of failing busy',
+    () async {
+      final node = await add();
+      runner.calls.clear();
+      runner.inventory = Completer();
+      servers.cachedReadiness([(node: node.id, engine: 'xray')]);
+      final stopped = servers.execute(
+        node.id,
+        ServerOperation.stop,
+        engine: 'xray',
+      );
+      expect(runner.calls.map((call) => call.last), ['v3:inventory']);
+      runner.inventory!.complete(
+        CommandResult(
+          0,
+          jsonEncode([
+            for (final core in ['mihomo', 'sing-box', 'xray', 'amneziawg'])
+              {'coreId': core, 'installed': true, 'state': 'active'},
+          ]),
+        ),
+      );
+      await stopped;
+      expect(runner.calls.map((call) => call.last), [
+        'v3:inventory',
+        'v3:stop:xray',
+      ]);
+    },
+  );
+
+  test(
+    'engine recovery after restart selects v3 without relying on capability cache',
+    () async {
+      final node = await add();
+      runner.calls.clear();
+      await SshServers(
+        data.path,
+        runner,
+      ).rollbackEngine(node.id, 'mihomo', 'tx_fixture');
+      expect(runner.calls.map((c) => c.last), ['v3:rollback:mihomo']);
+    },
+  );
+
+  test(
+    'legacy worker fallback is explicit and never hides a transport failure',
+    () async {
+      final node = await add();
+      runner.calls.clear();
+      runner.replies['v3:rollback:mihomo'] = const CommandResult(2, '');
+      await SshServers(
+        data.path,
+        runner,
+      ).rollbackEngine(node.id, 'mihomo', 'tx_fixture');
+      expect(runner.calls.map((c) => c.last), [
+        'v3:rollback:mihomo',
+        'rollback',
+      ]);
+      runner.calls.clear();
+      runner.replies['v3:rollback:mihomo'] = const CommandResult(255, '');
+      await expectLater(
+        SshServers(
+          data.path,
+          runner,
+        ).rollbackEngine(node.id, 'mihomo', 'tx_fixture'),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.code,
+            'code',
+            'server_ssh_failed',
+          ),
+        ),
+      );
+      expect(runner.calls.map((c) => c.last), ['v3:rollback:mihomo']);
+    },
+  );
+
+  test(
+    'legacy persisted intent uses legacy undo even on upgraded nodes',
+    () async {
+      final node = await add();
+      runner.calls.clear();
+      await SshServers(data.path, runner).rollback(node.id, 'tx_fixture');
+      expect(runner.calls.map((c) => c.last), ['rollback']);
+    },
+  );
 
   test(
     'pins a node host key and sends only a predefined SSH operation',
@@ -67,7 +188,7 @@ void main() {
       expect(runner.command.sublist(runner.command.length - 3), [
         '--',
         'vps.example',
-        'status',
+        'v3:status:mihomo',
       ]);
       runner.result = 255;
       await expectLater(
@@ -112,6 +233,20 @@ void main() {
   });
 
   test(
+    'lifecycle uses native Mihomo readiness and explicit legacy fallback',
+    () async {
+      final node = await add();
+      runner.calls.clear();
+      await servers.execute(node.id, ServerOperation.restart);
+      expect(runner.calls.map((c) => c.last), ['v3:restart:mihomo']);
+      runner.calls.clear();
+      runner.replies['v3:restart:mihomo'] = const CommandResult(2, '');
+      await servers.execute(node.id, ServerOperation.restart);
+      expect(runner.calls.map((c) => c.last), ['v3:restart:mihomo', 'restart']);
+    },
+  );
+
+  test(
     'reports invalid fields and accepts the full public host key line',
     () async {
       await expectLater(
@@ -145,6 +280,21 @@ void main() {
       expect(servers.list().single.host, '192.0.2.4');
       expect(File('$path/known_hosts').readAsStringSync(), pin);
       expect(File('$path/identity').readAsStringSync(), key);
+      await servers.updateDetails(node.id, name: '  Germany  ');
+      expect(servers.list().single.name, 'Germany');
+      expect(servers.list().single.endpoint, 'new.example.com');
+      expect(servers.list().single.id, node.id);
+      expect(File('$path/known_hosts').readAsStringSync(), pin);
+      expect(File('$path/identity').readAsStringSync(), key);
+      await expectLater(
+        servers.updateDetails(node.id, name: ' '),
+        throwsA(
+          isA<ApiException>().having((e) => e.fields, 'fields', {
+            'name': 'name',
+          }),
+        ),
+      );
+      expect(servers.list().single.name, 'Germany');
       await expectLater(
         servers.updateEndpoint(node.id, 'https://bad.example/'),
         throwsA(

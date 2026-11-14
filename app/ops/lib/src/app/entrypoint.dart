@@ -9,6 +9,7 @@ import 'package:sky_ui_ops/src/features/engines/installer.dart';
 import 'package:sky_ui_ops/src/features/maintenance/worker.dart';
 import 'package:sky_ui_ops/src/features/maintenance/systemd_control.dart';
 import 'package:sky_ui_ops/src/features/storage/retention.dart';
+import 'package:sky_ui_ops/src/features/servers/node_worker.dart';
 import 'package:sky_ui_ops/src/features/updates/panel_updater.dart';
 import 'package:sky_ui_ops/src/features/updates/release_catalog.dart';
 import 'package:sky_ui_ops/src/platform/host.dart';
@@ -58,6 +59,8 @@ Future<void> runOperations(List<String> args) async {
     require(host.uid() == 0, 'root_required');
     host.umask(0x3f);
     switch (args.first) {
+      case 'node':
+        await nodeMain(args.sublist(1));
       case 'systemd-control':
         require(args.length == 1, 'request_invalid');
         await handleSystemdControl();

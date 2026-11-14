@@ -14,6 +14,7 @@ import '../../shared/protocols/catalog.dart';
 import '../../shared/state/panel_store.dart';
 import '../engines/install_progress.dart';
 import 'connection_draft.dart';
+import 'route_engines.dart';
 import 'sni_picker.dart';
 
 class ConnectionWizard extends StatefulComponent {
@@ -58,8 +59,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
   late final model = ConnectionDraft(
     store: store,
     coreInstalled: coreInstalled,
-    engineAllowed: (id) =>
-        route.first == Connection.localNode || id == 'mihomo',
+    engineAllowed: engineAllowed,
   );
   void changeField(ProtocolField field, String value) =>
       setState(() => model.changeField(field, value));
@@ -70,20 +70,30 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
   bool get dataBusy => component.dataBusy;
   bool get maintenanceBusy => component.maintenanceBusy;
   bool get canChooseRoute =>
-      store.routes.isNotEmpty &&
       model.selectedProtocol != null &&
-      NodeRouting.supportsProxyCascade(model.selectedCore) &&
+      (route.length == 1 ||
+          NodeRouting.supportsProxyCascade(model.selectedCore)) &&
       store.definition(model.selectedCore!, model.selectedProtocol!).shareable;
   bool get canRemoteIngress =>
-      model.selectedCore == 'mihomo' &&
+      engineAllowed(model.selectedCore!) &&
       (model.draft['security'] != 'TLS' ||
           model.draft['certificateSource'] == 'custom');
-  List<String> route = [Connection.localNode];
-  Map<String, NodeRouting> routing = {};
-  String routeId = '';
-  bool coreInstalled(String id) =>
-      component.coreInstalled(id) ||
-      id == 'mihomo' && !route.contains(Connection.localNode);
+  List<String> get route => model.route;
+  Map<String, NodeRouting> get routing => model.routing;
+  String get routeId => model.routeId;
+  late final routeEngines = ConnectionRouteEngines(
+    localInstalled: (id) => component.coreInstalled(id),
+  );
+  bool routeLoading = false;
+  String? routeLoadError;
+  int routeGeneration = 0;
+  bool engineAllowed(String id) => routeEngines.allows(route, id);
+  bool coreInstalled(String id) => routeEngines.installed(route, id);
+  bool get routeEngineUnavailable =>
+      model.selectedCore != null &&
+      !routeLoading &&
+      routeLoadError == null &&
+      !engineAllowed(model.selectedCore!);
   MaintenanceJob? maintenanceJob;
   String runtimeMessage(String code) {
     final key = 'runtime.error.$code';
@@ -104,24 +114,26 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
     draftRevision = component.revision;
     maintenanceJob = component.job;
     initialize(component.initial);
+    if (route.first != Connection.localNode) unawaited(loadRouteEngines());
   }
 
   @override
   void dispose() {
     dependencyGeneration++;
     fieldGeneration++;
+    routeGeneration++;
     super.dispose();
   }
 
   void initialize(Connection? connection) {
     model.editingId = connection?.id;
-    route = connection?.route.isNotEmpty == true
+    model.route = connection?.route.isNotEmpty == true
         ? [...connection!.route]
         : [Connection.localNode];
-    routing = {...?connection?.routing};
-    routeId = connection?.routeId ?? '';
+    model.routing = {...?connection?.routing};
+    model.routeId = connection?.routeId ?? '';
     dependencyGeneration++;
-    model.connectionStep = connection == null ? 'protocol' : 'parameters';
+    model.connectionStep = connection == null ? 'route' : 'parameters';
     dependencyMessage = null;
     dependencyJobId = null;
     dependencyReconnecting = false;
@@ -161,6 +173,11 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
           if (model.draft[f.id] != null) f.id: model.draft[f.id]!,
         'name': model.draft['name'] ?? '',
         'port': model.draft['port'] ?? '',
+        for (final entry in model.draft.entries)
+          if (entry.key.startsWith('_stored:')) entry.key: entry.value,
+        if (route.first != Connection.localNode &&
+            definition.fields.any((f) => f.id == 'certificateSource'))
+          'certificateSource': 'custom',
       });
       model.connectionStep = coreInstalled(coreId) ? 'core' : 'dependency';
       if (coreInstalled(coreId)) model.advanceConnection();
@@ -179,6 +196,10 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
         generatingFields.isNotEmpty ||
         dataBusy)
       return;
+    if (route.first != Connection.localNode && routeId.isEmpty) {
+      setState(() => model.error = runtimeMessage('route_not_found'));
+      return;
+    }
     final generation = ++fieldGeneration;
     final before = Map<String, String>.from(model.draft);
     setState(() => generatingFields.add(field));
@@ -189,6 +210,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
         protocol,
         field,
         before,
+        routeId: routeId,
       );
       if (!mounted || generation != fieldGeneration) return;
       // Never overwrite input edited while the request was in flight.
@@ -286,10 +308,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       });
       return;
     }
-    if (canChooseRoute &&
-        (selectedRoute.isEmpty ||
-            selectedRoute.contains(Connection.localNode)) &&
-        !component.coreInstalled(model.selectedCore!)) {
+    if (!coreInstalled(model.selectedCore!)) {
       setState(() {
         model.connectionStep = 'dependency';
       });
@@ -331,6 +350,10 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
 
   Future<void> installDependency() async {
     if (dependencyBusy || model.selectedCore == null) return;
+    if (route.first != Connection.localNode) {
+      await installRemoteDependency();
+      return;
+    }
     final core = model.selectedCore!, protocol = model.selectedProtocol;
     final generation = ++dependencyGeneration;
     bool current() =>
@@ -403,10 +426,43 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
     }
   }
 
+  Future<void> installRemoteDependency() async {
+    final node = route.first, core = model.selectedCore!;
+    final generation = ++dependencyGeneration;
+    bool current() => mounted && generation == dependencyGeneration;
+    setState(() {
+      dependencyBusy = true;
+      dependencyMessage = t('builder.installing');
+      model.error = null;
+    });
+    try {
+      await api.installServerEngine(node, core);
+      final inventory = await api.serverEngines(node);
+      if (!current()) return;
+      setState(() {
+        routeEngines.update(node, inventory);
+        dependencyMessage = null;
+      });
+      if (!coreInstalled(core)) {
+        throw const ApiClientException('core_not_ready');
+      }
+      chooseCore(core);
+    } on ApiClientException catch (failure) {
+      if (current()) {
+        setState(() {
+          dependencyMessage = null;
+          model.error = runtimeMessage(failure.code);
+        });
+      }
+    } finally {
+      if (current()) setState(() => dependencyBusy = false);
+    }
+  }
+
   Component connectionForm() {
+    if (model.connectionStep == 'route') return routeFields();
     if (model.connectionStep == 'protocol')
       return div([
-        routeFields(),
         div([
           for (final protocol in productProtocols)
             productProtocolCard(protocol),
@@ -414,7 +470,6 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       ]);
     if (model.connectionStep == 'core')
       return div([
-        routeFields(),
         div([
           for (final id in model.candidateEngines(model.selectedProtocol!))
             button(
@@ -441,15 +496,26 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       ]);
     if (model.connectionStep == 'dependency')
       return div([
-        routeFields(),
         h3([Component.text(coreName(model.selectedCore!))]),
+        if (route.first != Connection.localNode)
+          p([txt(nodeLabel(route.first))], classes: 'muted small'),
         p([Component.text(t('builder.installRequired'))]),
         if (dependencyMessage != null) p([Component.text(dependencyMessage!)]),
-        if (dependencyBusy ||
-            (dependencyJobId != null &&
-                maintenanceJob?.id == dependencyJobId) ||
-            maintenanceJob?.core == model.selectedCore &&
-                ['install', 'update'].contains(maintenanceJob?.action))
+        if (route.first != Connection.localNode && dependencyBusy)
+          div(
+            [div([], classes: 'update-progress-fill indeterminate')],
+            classes: 'update-progress',
+            attributes: {
+              'role': 'progressbar',
+              'aria-label': t('builder.installing'),
+            },
+          ),
+        if (route.first == Connection.localNode &&
+            (dependencyBusy ||
+                (dependencyJobId != null &&
+                    maintenanceJob?.id == dependencyJobId) ||
+                maintenanceJob?.core == model.selectedCore &&
+                    ['install', 'update'].contains(maintenanceJob?.action)))
           CoreInstallProgress(
             core: model.selectedCore!,
             job:
@@ -509,14 +575,15 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
         el('dl', [
           for (final entry in <String, String>{
             t('field.name'): model.draft['name'] ?? '',
-            if (!canChooseRoute || route.first == Connection.localNode)
-              t('builder.address'): definition.usesPort
-                  ? '${store.address}:${model.draft['port']}'
-                  : store.address,
-            if (canChooseRoute)
-              t('builder.route'): route
-                  .map((node) => component.routeNodes[node] ?? node)
-                  .join(' / '),
+            t('builder.address'): store.addressForNode(route.first).isEmpty
+                ? t('builder.route.addressUnavailable')
+                : store.endpointForNode(
+                    route.first,
+                    definition.usesPort
+                        ? int.tryParse(model.draft['port'] ?? '')
+                        : null,
+                  ),
+            t('builder.route'): route.map(nodeLabel).join(' / '),
             if (routing.isNotEmpty)
               t('routing.title'): t('routing.review', {
                 'nodes': routing.length,
@@ -569,7 +636,6 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
                 ),
               ),
           ], classes: 'form-grid'),
-          routeFields(),
         ],
         for (final f in fields.where((f) => f.kind == 'choice' && !f.advanced))
           field(f),
@@ -601,53 +667,95 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
   }
 
   bool routeCompatible(NamedRoute value) {
-    if (model.selectedCore == null) return true;
-    if (value.nodes.length == 1 && value.nodes.single == Connection.localNode)
-      return true;
-    return NodeRouting.supportsProxyCascade(model.selectedCore) &&
-        (value.nodes.first == Connection.localNode ||
-            model.selectedCore == 'mihomo');
+    if (model.editingId == null || model.selectedCore == null) return true;
+    return value.nodes.length == 1 ||
+        NodeRouting.supportsProxyCascade(model.selectedCore);
+  }
+
+  String nodeLabel(String node) => node == Connection.localNode
+      ? store.serverName
+      : component.routeNodes[node] ?? node;
+
+  void chooseRoute(NamedRoute? selected) {
+    setState(() {
+      routeGeneration++;
+      routeLoading = false;
+      routeLoadError = null;
+      fieldGeneration++;
+      generatingFields.clear();
+      model.selectRoute(selected);
+      if (route.first != Connection.localNode &&
+          model.draft.containsKey('certificateSource')) {
+        model.draft['certificateSource'] = 'custom';
+      }
+    });
+    if (route.first != Connection.localNode) unawaited(loadRouteEngines());
+  }
+
+  Future<void> loadRouteEngines() async {
+    final node = route.first;
+    if (node == Connection.localNode) return;
+    final generation = ++routeGeneration;
+    bool current() => mounted && generation == routeGeneration;
+    setState(() {
+      routeLoading = true;
+      routeLoadError = null;
+    });
+    try {
+      final inventory = await api.serverEngines(node);
+      if (!current()) return;
+      setState(() {
+        routeEngines.update(node, inventory);
+      });
+    } on ApiClientException catch (failure) {
+      if (current()) {
+        setState(() => routeLoadError = runtimeMessage(failure.code));
+      }
+    } finally {
+      if (current()) setState(() => routeLoading = false);
+    }
+  }
+
+  Component routeChoice(NamedRoute? value) {
+    final nodes = value?.nodes ?? const [Connection.localNode];
+    final selected = value == null
+        ? routeId.isEmpty &&
+              route.length == 1 &&
+              route.single == Connection.localNode
+        : routeId == value.id;
+    final available = value == null || routeCompatible(value);
+    return button(
+      [
+        span([
+          icon('server'),
+          txt(value?.name ?? t('builder.route.local')),
+          if (selected) icon('check'),
+        ], classes: 'protocol-card-heading'),
+        if (value == null)
+          txt(t('builder.route.localDescription'), classes: 'muted small')
+        else
+          div([
+            txt('${t('builder.route.ingress')}: ${nodeLabel(nodes.first)}'),
+            txt('${t('builder.route.egress')}: ${nodeLabel(nodes.last)}'),
+          ], classes: 'connection-route-summary'),
+        if (store.addressForNode(nodes.first).isNotEmpty)
+          txt(store.addressForNode(nodes.first), classes: 'mono muted small'),
+        if (!available)
+          txt(t('builder.route.incompatible'), classes: 'availability-chip'),
+      ],
+      classes:
+          'protocol-option connection-route-choice ${selected ? 'selected' : ''}',
+      type: ButtonType.button,
+      attributes: {'aria-pressed': '$selected'},
+      disabled: !canEdit || dependencyBusy || dataBusy || !available,
+      onClick: () => chooseRoute(value),
+    );
   }
 
   Component routeFields() => div([
-    label([
-      txt(t('builder.route')),
-      select(
-        [
-          option([txt(t('routes.localDefault'))], value: ''),
-          for (final value in store.routes)
-            option(
-              [txt(value.name)],
-              value: value.id,
-              disabled: !routeCompatible(value),
-            ),
-        ],
-        value: routeId,
-        disabled: !canEdit || dependencyBusy || dataBusy,
-        onChange: (values) {
-          if (values.isEmpty) return;
-          final selected = store.routes
-              .where((r) => r.id == values.single)
-              .firstOrNull;
-          setState(() {
-            routeId = selected?.id ?? '';
-            route = [...?selected?.nodes];
-            if (route.isEmpty) route = [Connection.localNode];
-            routing = {...?selected?.policies};
-            model.error = null;
-            if (model.connectionStep == 'dependency' &&
-                coreInstalled(model.selectedCore!)) {
-              model.connectionStep = 'core';
-              model.advanceConnection();
-            }
-          });
-        },
-      ),
-    ]),
-    p([txt(t('routes.chooseHelp'))], classes: 'muted small'),
-    if (route.first != Connection.localNode)
-      p([txt(t('routes.remoteCapabilities'))], classes: 'muted small'),
-  ], classes: 'route-selector');
+    routeChoice(null),
+    for (final value in store.routes) routeChoice(value),
+  ], classes: 'connection-route-list');
   Component productProtocolCard(ProductProtocol protocol) {
     final available = model.candidateEngines(protocol.id).isNotEmpty;
     return div([
@@ -697,7 +805,10 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
       onGenerate: f.generator == null
           ? null
           : () => generateConnectionFields(f.id),
-      extra: f.id == 'serverName' && model.draft['security'] == 'REALITY'
+      extra:
+          route.first == Connection.localNode &&
+              f.id == 'serverName' &&
+              model.draft['security'] == 'REALITY'
           ? SniPicker(
               api: api,
               revision: draftRevision,
@@ -720,7 +831,11 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
           : null,
       prefix: '${model.selectedCore}-${model.selectedProtocol}-',
       configured: original?.configuredSecrets.contains(f.id) == true,
-      blockedOptions: model.blockedChoices(f),
+      blockedOptions: {
+        ...model.blockedChoices(f),
+        if (route.first != Connection.localNode && f.id == 'certificateSource')
+          'panel': 'builder.route.remoteCertificate',
+      },
       guideScope: model.selectedProtocol ?? '',
       onChanged: (value, rebuild) {
         if (rebuild) {
@@ -761,6 +876,7 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
                   type: ButtonType.button,
                   disabled:
                       dataBusy ||
+                      dependencyBusy ||
                       model.connectionSteps.indexOf(step) >
                           model.connectionSteps.indexOf(model.connectionStep) ||
                       model.editingId != null &&
@@ -783,6 +899,21 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
         ], classes: 'modal-header'),
         div([
           connectionForm(),
+          if (routeLoading)
+            p(
+              [txt(t('builder.route.checking'))],
+              attributes: {'role': 'status'},
+            ),
+          if (routeLoadError != null) ...[
+            p(
+              [txt(routeLoadError!)],
+              classes: 'form-error',
+              attributes: {'role': 'alert'},
+            ),
+            action(t('common.retry'), () => unawaited(loadRouteEngines())),
+          ],
+          if (routeEngineUnavailable)
+            p([txt(t('builder.route.incompatible'))], classes: 'form-error'),
           if (model.error != null)
             div(
               [icon('info'), Component.text(model.error!)],
@@ -804,16 +935,17 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
                 model.error = null;
               }),
               classes: 'button ghost',
-              disabled: dataBusy,
+              disabled: dataBusy || dependencyBusy,
             ),
           div([
             action(t('common.cancel'), component.onClose, disabled: dataBusy),
-            if (model.selectedCore != null &&
-                !{
-                  'core',
-                  'protocol',
-                  'dependency',
-                }.contains(model.connectionStep))
+            if (model.connectionStep == 'route' ||
+                model.selectedCore != null &&
+                    !{
+                      'core',
+                      'protocol',
+                      'dependency',
+                    }.contains(model.connectionStep))
               action(
                 t(
                   model.connectionStep == 'review'
@@ -827,10 +959,19 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
                     : () => setState(model.advanceConnection),
                 classes: 'button primary',
                 disabled:
+                    dataBusy ||
+                    dependencyBusy ||
+                    routeLoading ||
+                    routeLoadError != null ||
+                    routeEngineUnavailable ||
                     (model.connectionStep == 'review'
                         ? !canEdit
                         : !canInspect) ||
-                    !store.supports(model.selectedCore, model.selectedProtocol),
+                    model.connectionStep != 'route' &&
+                        !store.supports(
+                          model.selectedCore,
+                          model.selectedProtocol,
+                        ),
               ),
           ], classes: 'modal-footer-actions'),
         ], classes: 'modal-footer'),

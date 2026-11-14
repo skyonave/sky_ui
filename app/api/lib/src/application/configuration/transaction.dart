@@ -49,10 +49,16 @@ class ConfigurationTransaction {
     var failed = false;
     for (final node in (value['remote'] as List).reversed) {
       try {
-        await transport.rollback(
-          node as String,
-          value['transaction'] as String,
-        );
+        if (node is Map && transport is EngineRelayTransport) {
+          await transport.rollbackEngine(
+            node['node'] as String,
+            node['engine'] as String,
+            value['transaction'] as String,
+          );
+        } else {
+          if (node is! String) throw const ApiException('route_node_protocol');
+          await transport.rollback(node, value['transaction'] as String);
+        }
       } on Object {
         failed = true;
       }
@@ -170,6 +176,8 @@ class ConfigurationTransaction {
             after,
             registry.codec(manager.core.coreId),
             manager.core,
+            codecs: registry.codecs,
+            cores: managers.values.map((m) => m.core),
           ) ??
           const <RelayChange>[];
       for (final owner in managers.values) {
@@ -342,7 +350,14 @@ class ConfigurationTransaction {
           'skyUiDeployment': 2,
           'instances': changes,
           if (remote.isNotEmpty) 'transaction': transaction,
-          if (remote.isNotEmpty) 'remote': remote.map((r) => r.node).toList(),
+          if (remote.isNotEmpty)
+            'remote': remote
+                .map(
+                  (r) => r.engineScoped
+                      ? {'node': r.node, 'engine': r.engine}
+                      : r.node,
+                )
+                .toList(),
         });
         recoveryIntent = intent;
         // The existing durable row remains the single recovery/maintenance barrier.
@@ -356,14 +371,27 @@ class ConfigurationTransaction {
         prepared = true;
         for (final change in remote) {
           stage = 'publish remote configuration';
-          await routes!.transport.publish(
-            change.node,
-            transaction,
-            change.previous,
-            change.configuration,
-            change.ports,
-            change.udpPorts,
-          );
+          final transport = routes!.transport;
+          if (transport is EngineRelayTransport) {
+            await transport.publishEngine(
+              change.node,
+              change.engine,
+              transaction,
+              change.previous,
+              change.configuration,
+              change.ports,
+              change.udpPorts,
+            );
+          } else {
+            await transport.publish(
+              change.node,
+              transaction,
+              change.previous,
+              change.configuration,
+              change.ports,
+              change.udpPorts,
+            );
+          }
         }
         for (final entry in changes.entries) {
           final owner = managers[entry.key]!;
