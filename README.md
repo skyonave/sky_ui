@@ -11,7 +11,7 @@
 | [mihomo](https://github.com/MetaCubeX/mihomo) | v1.19.34 | VLESS, Hysteria 2, Shadowsocks, TUIC v5, Mieru, TrustTunnel |
 | [sing-box](https://github.com/SagerNet/sing-box) | v1.14.4 | VLESS, NaiveProxy, Hysteria 2, Shadowsocks, TUIC v5 |
 | [Xray](https://github.com/XTLS/Xray-core) | v26.11.9 | VLESS, Shadowsocks |
-| [AmneziaWG Go](https://github.com/amnezia-vpn/amneziawg-go) | v3.1.20260828 | AmneziaWG 3.1 |
+| [AmneziaWG Go](https://github.com/amnezia-vpn/amneziawg-go) | v3.1.20261116 | AmneziaWG 3.1 |
 
 Linux amd64 and arm64, glibc 2.31+, systemd 245+. Verified versions are listed in the [compatibility catalog](compatibility/cores).
 

@@ -3,6 +3,21 @@
   "coreId": "amneziawg",
   "releases": [
     {
+      "version": "v3.1.20261116",
+      "verified": true,
+      "panelVersions": [
+        "2.1.0"
+      ],
+      "verifiedAt": "2026-11-21",
+      "platforms": {
+        "linux-amd64": {
+          "verified": true,
+          "asset": "v3.1.20261116.tar.gz",
+          "sha256": "5390f79949b9972669d006de95778ea9883fc16f7712a8b9ebfe63f96b52cf57"
+        }
+      }
+    },
+    {
       "version": "v3.1.20260828",
       "verified": true,
       "panelVersions": [
