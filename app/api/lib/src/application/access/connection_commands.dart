@@ -40,7 +40,9 @@ class ConnectionCommands {
       routing: {...old.value.routing, node: policy},
     );
     _checkRouting(input, input.settings);
-    final value = input.copyWith(routing: RoutePolicy.validate(input));
+    final value = input.copyWith(
+      routing: RoutePolicy.validate(input, previous: old.value.routing),
+    );
     final secrets = {...old.secrets};
     if (value.route.isNotEmpty) {
       if (routes == null)
@@ -171,7 +173,12 @@ class ConnectionCommands {
       throw const ApiException('route_protocol_unsupported', status: 422);
     }
     if (input.routing.isNotEmpty) _checkRouting(input, settings);
-    final routing = RoutePolicy.validate(input);
+    final routing = RoutePolicy.validate(
+      input,
+      previous: input.routeId.isNotEmpty
+          ? input.routing
+          : old?.value.routing ?? const {},
+    );
     final secretIds = definition.fields
         .where((f) => f.secret)
         .map((f) => f.id)

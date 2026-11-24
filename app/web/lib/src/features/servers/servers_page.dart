@@ -54,7 +54,6 @@ class _ServersPageState extends State<ServersPage> {
   String name = '';
   String host = '';
   String port = '22';
-  String hostKey = '';
   String endpoint = '';
   String relayAddress = '';
 
@@ -120,13 +119,12 @@ class _ServersPageState extends State<ServersPage> {
       name: name,
       host: host,
       port: value,
-      hostKey: hostKey,
       endpoint: endpoint,
       relayAddress: relayAddress,
     );
     nodes = [...nodes, node]..sort((a, b) => a.name.compareTo(b.name));
     adding = false;
-    name = host = hostKey = endpoint = relayAddress = '';
+    name = host = endpoint = relayAddress = '';
     port = '22';
     await component.onChanged();
   }
@@ -279,14 +277,6 @@ class _ServersPageState extends State<ServersPage> {
       ),
       field('port', port, (value) => port = value, maxLength: 5),
       field(
-        'hostKey',
-        hostKey,
-        (value) => hostKey = value,
-        maxLength: 1024,
-        placeholder: 'ssh-ed25519 AAAAC3…',
-        hint: 'servers.keyHelp',
-      ),
-      field(
         'endpoint',
         endpoint,
         (value) => endpoint = value,
@@ -302,10 +292,6 @@ class _ServersPageState extends State<ServersPage> {
         hint: 'servers.relayHelp',
       ),
     ], classes: 'form-grid'),
-    p([txt(t('servers.hostKeyHelp'))], classes: 'muted small'),
-    el('code', [
-      txt('cat /etc/ssh/ssh_host_ed25519_key.pub'),
-    ], classes: 'server-public-key'),
     p([txt(t('servers.saveHelp'))], classes: 'muted small'),
     div([
       action(t('common.save'), () => unawaited(run(add)), disabled: busy),

@@ -54,6 +54,58 @@ void main() {
   Future<ServerNode> add({String host = 'VPS.example', int port = 2222}) =>
       servers.add(name: 'VPS', host: host, port: port, hostKey: hostKey);
 
+  for (final (host, port) in [('vps.example', 22), ('2001:db8::1', 2222)]) {
+    test('first enrollment pins the SSH key for $host on port $port', () async {
+      final address = port == 22 ? host : '[$host]:$port';
+      runner.replies[host] = CommandResult(
+        0,
+        '# $address SSH-2.0\n$address $hostKey\n',
+      );
+      final node = await servers.add(name: 'VPS', host: host, port: port);
+      expect(runner.calls.first, [
+        '/usr/bin/ssh-keyscan',
+        '-T',
+        '5',
+        '-p',
+        '$port',
+        '-t',
+        'ed25519',
+        host,
+      ]);
+      final pin = File('${data.path}/remote-servers/${node.id}/known_hosts');
+      expect(pin.readAsStringSync(), 'sky-ui-node $hostKey\n');
+      runner.calls.clear();
+      await servers.execute(node.id, ServerOperation.status);
+      expect(runner.calls.single, contains('StrictHostKeyChecking=yes'));
+    });
+  }
+
+  test('failed discovery leaves no registration and permits retry', () async {
+    for (final reply in [
+      const CommandResult(1, ''),
+      const CommandResult(0, 'other.example $hostKey'),
+    ]) {
+      runner.replies['vps.example'] = reply;
+      await expectLater(
+        servers.add(name: 'VPS', host: 'vps.example', port: 22),
+        throwsA(
+          isA<ApiException>().having(
+            (e) => e.code,
+            'code',
+            'server_host_key_unavailable',
+          ),
+        ),
+      );
+      expect(servers.list(), isEmpty);
+    }
+    runner.replies['vps.example'] = const CommandResult(
+      0,
+      'vps.example $hostKey',
+    );
+    await servers.add(name: 'VPS', host: 'vps.example', port: 22);
+    expect(servers.list(), hasLength(1));
+  });
+
   test(
     'background and explicit inventory share one bounded SSH request',
     () async {

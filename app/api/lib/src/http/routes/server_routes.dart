@@ -48,7 +48,7 @@ void registerServerRoutes(
     if (name is! String ||
         host is! String ||
         port is! int ||
-        hostKey is! String ||
+        hostKey != null && hostKey is! String ||
         endpoint != null && endpoint is! String ||
         relayAddress != null && relayAddress is! String) {
       throw const ApiException('request_invalid', status: 400);
@@ -57,7 +57,7 @@ void registerServerRoutes(
       name: name,
       host: host,
       port: port,
-      hostKey: hostKey,
+      hostKey: hostKey as String?,
       endpoint: endpoint as String?,
       relayAddress: relayAddress as String?,
     );

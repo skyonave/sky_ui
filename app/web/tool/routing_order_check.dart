@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 import 'package:sky_ui_web/src/features/routing/rule_order.dart';
+import 'package:sky_ui_web/src/features/routing/rule_targets.dart';
 
 void require(bool value, String message) {
   if (!value) throw StateError(message);
@@ -16,6 +17,41 @@ void main() {
   const broad = RoutingRule('suffix', 'example.org', NodeRouting.block);
   const network = RoutingRule('network', 'udp', NodeRouting.next);
   const original = [broad, exception, network];
+  require(
+    websiteHost('https://Example.org:443/news?q=value#top') == 'example.org' &&
+        websiteHost('https://user:password@example.org') == null &&
+        websiteHost('https://пример.рф/новости') == 'пример.рф' &&
+        websiteHost('https://ex%2Fample.org') == null &&
+        websiteHost('file:///tmp/file') == null,
+    'Extract only website host names.',
+  );
+  const nodes = ['local', 'transit', 'exit'];
+  const policies = {
+    'local': NodeRouting(rules: [broad]),
+    'transit': NodeRouting(fallback: NodeRouting.direct, rules: [exception]),
+  };
+  final copied = copyRuleToOtherNodes(
+    nodes,
+    policies,
+    'local',
+    broad,
+    packetIngress: false,
+  )!;
+  require(
+    copied['transit']!.rules.first == exception &&
+        copied['transit']!.rules.last == broad &&
+        copied['transit']!.fallback == NodeRouting.direct &&
+        copied['exit']!.rules.single == broad &&
+        policies.length == 2,
+    'Append on every other node without replacing rules or fallback.',
+  );
+  require(
+    copyRuleToOtherNodes(nodes, copied, 'local', broad, packetIngress: false) ==
+            null &&
+        copyRuleToOtherNodes(nodes, {}, 'exit', broad, packetIngress: true) ==
+            null,
+    'Avoid duplicates and unsupported packet rules.',
+  );
 
   final prioritized = reorderRoutingRules(original, 1, 0);
   require(

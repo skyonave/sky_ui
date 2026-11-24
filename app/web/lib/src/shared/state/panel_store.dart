@@ -13,7 +13,7 @@ class PanelStore {
   Map<String, String> routeAddresses = {};
   Map<String, String> remoteInstanceStates = {};
   List<NamedRoute> routes = [];
-  String serverName = 'Sky UI';
+  String serverName = 'Server';
   String address = '';
   Map<String, List<ProtocolDefinition>> protocols = {};
   void apply(PanelSnapshot snapshot) {

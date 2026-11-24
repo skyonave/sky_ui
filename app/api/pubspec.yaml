@@ -13,5 +13,6 @@ dependencies:
   bcrypt: 1.2.0
   sky_ui_shared:
     path: ../shared
+  punycoder: 0.3.0
 dev_dependencies:
   test: 1.32.0

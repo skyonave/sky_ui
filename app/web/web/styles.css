@@ -268,7 +268,7 @@ tbody tr:hover { background: #1d1a21; }
 .route-rule-body > .button { justify-self: start; }
 .route-rule-help { display: flex; align-items: center; gap: 8px; }
 .route-rules-list { display: grid; gap: 8px; padding: 0; margin: 0; list-style: none; }
-.route-rule-row { display: grid; grid-template-columns: 44px minmax(160px, 1fr) minmax(190px, 1.5fr) minmax(180px, 1.1fr) 96px; gap: 12px; align-items: end; padding: 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
+.route-rule-row { display: grid; grid-template-columns: 44px minmax(160px, 1fr) minmax(190px, 1.5fr) minmax(180px, 1.1fr) auto; gap: 12px; align-items: end; padding: 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); }
 .route-rule-row:hover { border-color: #454348; }
 .route-rule-row.is-dragging { opacity: .45; }
 .route-rule-row.drop-before { border-top-color: var(--accent); box-shadow: inset 0 2px var(--accent); }

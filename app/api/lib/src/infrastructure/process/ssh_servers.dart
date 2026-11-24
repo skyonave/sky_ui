@@ -80,15 +80,15 @@ class SshServers implements EngineRelayTransport, CachedRelayReadiness {
     required String name,
     required String host,
     required int port,
-    required String hostKey,
+    String? hostKey,
     String? endpoint,
     String? relayAddress,
   }) async {
     name = name.trim();
     host = host.trim().toLowerCase();
-    hostKey = hostKey.trim();
+    hostKey = hostKey?.trim();
     // Accept the complete public-key line, including its optional comment.
-    if (!hostKey.contains('\n') && !hostKey.contains('\r')) {
+    if (hostKey != null && !hostKey.contains('\n') && !hostKey.contains('\r')) {
       hostKey = hostKey.split(RegExp(r'[ \t]+')).take(2).join(' ');
     }
     endpoint = endpoint?.trim().toLowerCase();
@@ -106,7 +106,9 @@ class SshServers implements EngineRelayTransport, CachedRelayReadiness {
     if (relayAddress != null && InternetAddress.tryParse(relayAddress) == null)
       errors['relayAddress'] = 'ip';
     if (port < 1 || port > 65535) errors['port'] = 'port';
-    if (!_ed25519.hasMatch(hostKey)) errors['hostKey'] = 'hostKey';
+    if (hostKey != null && !_ed25519.hasMatch(hostKey)) {
+      errors['hostKey'] = 'hostKey';
+    }
     if (errors.isNotEmpty) {
       throw ApiException('server_invalid', status: 422, fields: errors);
     }
@@ -122,6 +124,7 @@ class SshServers implements EngineRelayTransport, CachedRelayReadiness {
       if (nodes.length >= maximumNodes) {
         throw const ApiException('server_limit', status: 409);
       }
+      final pinnedKey = hostKey ?? await _firstHostKey(host, port);
       await directory.create(recursive: true);
       staging = await directory.createTemp('.new-');
       final identity = '${staging.path}/identity';
@@ -152,7 +155,7 @@ class SshServers implements EngineRelayTransport, CachedRelayReadiness {
       );
       await File(
         '${staging.path}/known_hosts',
-      ).writeAsString('sky-ui-node $hostKey\n', flush: true);
+      ).writeAsString('sky-ui-node $pinnedKey\n', flush: true);
       await File(
         '${staging.path}/node.json',
       ).writeAsString(jsonEncode(node.toJson()), flush: true);
@@ -166,6 +169,29 @@ class SshServers implements EngineRelayTransport, CachedRelayReadiness {
         _adding = false;
       }
     }
+  }
+
+  Future<String> _firstHostKey(String host, int port) async {
+    final result = await runner.run('/usr/bin/ssh-keyscan', [
+      '-T',
+      '5',
+      '-p',
+      '$port',
+      '-t',
+      'ed25519',
+      host,
+    ], timeout: const Duration(seconds: 8));
+    final prefix = port == 22 ? '$host ' : '[$host]:$port ';
+    final keys = const LineSplitter()
+        .convert(result.output)
+        .where((line) => line.startsWith(prefix))
+        .map((line) => line.substring(prefix.length))
+        .where(_ed25519.hasMatch)
+        .toSet();
+    if (result.exitCode != 0 || keys.length != 1) {
+      throw const ApiException('server_host_key_unavailable', status: 502);
+    }
+    return keys.single;
   }
 
   Future<String> execute(

@@ -89,7 +89,6 @@ class ApiClient {
     required String name,
     required String host,
     required int port,
-    required String hostKey,
     required String endpoint,
     required String relayAddress,
   }) async => ServerNode.fromJson(
@@ -101,7 +100,6 @@ class ApiClient {
               'name': name,
               'host': host,
               'port': port,
-              'hostKey': hostKey,
               'endpoint': endpoint,
               'relayAddress': relayAddress,
             },
@@ -135,7 +133,7 @@ class ApiClient {
     await _request(
       '/api/v1/servers/$id/bootstrap',
       post: true,
-      timeout: const Duration(minutes: 4),
+      timeout: const Duration(minutes: 6),
       payload: {'user': user, 'key': key, 'password': password},
     );
   }

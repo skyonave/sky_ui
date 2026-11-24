@@ -5,6 +5,7 @@ import 'package:sky_ui_shared/sky_ui_shared.dart';
 import '../../shared/components/primitives.dart';
 import '../../shared/localization/strings.dart';
 import 'route_rules.dart';
+import 'rule_targets.dart';
 
 class RoutingPage extends StatefulComponent {
   const RoutingPage({
@@ -362,6 +363,18 @@ class _RoutingPageState extends State<RoutingPage> {
             NodeRouting.maxRules,
           ),
           editable: editable,
+          copyToOthers: (rule) {
+            final updated = copyRuleToOtherNodes(
+              nodes,
+              policies,
+              node,
+              rule,
+              packetIngress: bindings.any((c) => c.coreId == 'amneziawg'),
+            );
+            return updated == null
+                ? null
+                : () => setState(() => policies = updated);
+          },
           onChange: (p) => setState(() {
             if (p.isDefault) {
               policies.remove(node);
@@ -418,7 +431,12 @@ class _RoutingPageState extends State<RoutingPage> {
             }
           },
           classes: 'button primary',
-          disabled: !editable || invalidPolicies,
+          disabled:
+              !editable ||
+              invalidPolicies ||
+              policies.values.any(
+                (p) => p.rules.any((r) => r.target.contains('://')),
+              ),
         ),
       ], classes: 'routing-actions'),
     ], classes: 'routing-editor');

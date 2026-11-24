@@ -45,8 +45,20 @@ class PanelRepository implements AccessRepository {
       ]);
       _db.execute('INSERT OR IGNORE INTO metadata VALUES (?,?)', [
         'serverName',
-        defaultAddress,
+        'Server',
       ]);
+      if (metadata('independentServerName') == null &&
+          _db.select('SELECT 1 FROM deployment LIMIT 1').isEmpty) {
+        if (const {
+          '127.0.0.1',
+          '::1',
+          'localhost',
+        }.contains(metadata('serverName'))) {
+          _set('serverName', 'Server');
+          _set('revision', '${revision + 1}');
+        }
+        _set('independentServerName', '1');
+      }
       _db.execute('INSERT OR IGNORE INTO metadata VALUES (?,?)', [
         'address',
         defaultAddress,

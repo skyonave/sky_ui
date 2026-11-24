@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:punycoder/punycoder.dart';
 import 'package:sky_ui_shared/sky_ui_shared.dart';
 
 import '../../shared/api_exception.dart';
@@ -10,7 +11,10 @@ typedef RouteEdge = ({int from, int to, int index});
 class RoutePolicy {
   static const _maxNodes = 8;
 
-  static Map<String, NodeRouting> validate(Connection input) {
+  static Map<String, NodeRouting> validate(
+    Connection input, {
+    Map<String, NodeRouting> previous = const {},
+  }) {
     final nodes = input.route.isEmpty ? [Connection.localNode] : input.route;
     if (input.routing.length > nodes.length ||
         input.routing.values.fold(0, (total, p) => total + p.rules.length) >
@@ -34,9 +38,16 @@ class RoutePolicy {
         _invalid();
       }
       final coreId = entry.key == input.ingress ? input.coreId : 'mihomo';
+      final legacyTargets = [
+        for (final rule in previous[entry.key]?.rules ?? const <RoutingRule>[])
+          if (rule.type == 'geoip') rule.target,
+      ];
       final rules = <RoutingRule>[];
       for (final rule in policy.rules) {
-        if (!NodeRouting.matchesFor(coreId).contains(rule.type) ||
+        final supported = rule.type == 'geoip'
+            ? coreId != 'amneziawg' && legacyTargets.remove(rule.target)
+            : NodeRouting.matchesFor(coreId).contains(rule.type);
+        if (!supported ||
             !actions.contains(rule.action) ||
             rule.target.length > NodeRouting.maxTargetLength) {
           _invalid();
@@ -73,6 +84,7 @@ class RoutePolicy {
       if (target.endsWith('.')) {
         target = target.substring(0, target.length - 1);
       }
+      target = target.split('.').map(_asciiLabel).join('.');
     }
     if (type == 'cidr') {
       final ip = InternetAddress.tryParse(target);
@@ -100,8 +112,28 @@ class RoutePolicy {
       'network' => target == 'tcp' || target == 'udp',
       _ => false,
     };
-    if (!valid) _invalid();
+    if (!valid) {
+      if (const {'domain', 'suffix', 'wildcard'}.contains(type)) {
+        throw const ApiException('route_domain_invalid', status: 422);
+      }
+      _invalid();
+    }
     return target;
+  }
+
+  static String _asciiLabel(String label) {
+    if (label.codeUnits.every((unit) => unit < 128)) return label;
+    if (!RegExp(
+      r'^[\p{L}\p{N}](?:[\p{L}\p{N}-]*[\p{L}\p{N}])?$',
+      unicode: true,
+    ).hasMatch(label)) {
+      throw const ApiException('route_domain_invalid', status: 422);
+    }
+    try {
+      return domainToAscii(label);
+    } on FormatException {
+      throw const ApiException('route_domain_invalid', status: 422);
+    }
   }
 
   static Never _invalid() =>

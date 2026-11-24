@@ -7,6 +7,7 @@ import '../../shared/components/field_help.dart';
 import '../../shared/components/primitives.dart';
 import '../../shared/localization/strings.dart';
 import 'rule_order.dart';
+import 'rule_targets.dart';
 
 class RouteRules extends StatefulComponent {
   const RouteRules({
@@ -18,6 +19,7 @@ class RouteRules extends StatefulComponent {
     required this.ruleLimit,
     required this.editable,
     required this.onChange,
+    this.copyToOthers,
     super.key,
   });
 
@@ -28,6 +30,7 @@ class RouteRules extends StatefulComponent {
   final int ruleLimit;
   final bool editable;
   final void Function(NodeRouting) onChange;
+  final void Function()? Function(RoutingRule)? copyToOthers;
   @override
   State<RouteRules> createState() => _RouteRulesState();
 }
@@ -39,11 +42,10 @@ class _RouteRulesState extends State<RouteRules> {
   static const _examples = {
     'domain': 'www.example.com',
     'suffix': 'example.com',
-    'wildcard': '*.example.com',
+    'wildcard': '*.ru',
     'keyword': 'example',
     'geosite': 'youtube, category-ads-all',
     'cidr': '203.0.113.0/24',
-    'geoip': 'ru, private',
     'port': '443',
   };
   static const t = AppStrings();
@@ -89,6 +91,8 @@ class _RouteRulesState extends State<RouteRules> {
           buttonLabel: t('common.help', {'name': t('routing.title')}),
         ),
       ], classes: 'route-rule-help'),
+      if (coreId == 'amneziawg')
+        p([txt(t('routing.packetHelp'))], classes: 'muted small'),
       if (rows.isEmpty)
         p([txt(t('routing.empty'))], classes: 'route-rules-empty muted'),
       el('ol', [
@@ -96,7 +100,8 @@ class _RouteRulesState extends State<RouteRules> {
           _row(
             rows[i],
             {
-              if (rows[i].action == NodeRouting.next) ...routeAction,
+              if (next != null || rows[i].action == NodeRouting.next)
+                ...routeAction,
               ...actions,
             },
             i,
@@ -115,19 +120,20 @@ class _RouteRulesState extends State<RouteRules> {
             },
           ),
       ], classes: 'route-rules-list'),
-      action(
-        t('routing.add'),
-        () => update([
-          ...rows,
-          RoutingRule(
-            NodeRouting.matchesFor(coreId).first,
-            '',
-            NodeRouting.block,
+      div([
+        for (final type in [
+          NodeRouting.matchesFor(coreId).first,
+          if (coreId != 'amneziawg') ...['wildcard', 'geosite'],
+        ])
+          action(
+            type == NodeRouting.matchesFor(coreId).first
+                ? t('routing.add')
+                : t('routing.$type'),
+            () => update([...rows, RoutingRule(type, '', NodeRouting.block)]),
+            glyph: 'plus',
+            disabled: !editable || rows.length >= component.ruleLimit,
           ),
-        ]),
-        glyph: 'plus',
-        disabled: !editable || rows.length >= component.ruleLimit,
-      ),
+      ], classes: 'server-actions'),
       div([
         _select(
           'routing.fallback',
@@ -197,6 +203,7 @@ class _RouteRulesState extends State<RouteRules> {
         {
           for (final type in NodeRouting.matchesFor(coreId))
             type: t('routing.$type'),
+          if (rule.type == 'geoip') 'geoip': t('routing.geoip'),
         },
         (type) => change(
           RoutingRule(type, type == 'network' ? 'tcp' : '', rule.action),
@@ -211,6 +218,11 @@ class _RouteRulesState extends State<RouteRules> {
           (value) => change(RoutingRule(rule.type, value, rule.action)),
           classes: 'route-rule-target',
         )
+      else if (rule.type == 'geoip')
+        label([
+          txt(t('routing.target')),
+          input<String>(value: rule.target, disabled: true),
+        ])
       else
         _target(rule, index, change),
       _select(
@@ -221,6 +233,8 @@ class _RouteRulesState extends State<RouteRules> {
         classes: 'route-rule-action',
       ),
       div([
+        if (component.nodes.length > 1 && component.copyToOthers != null)
+          _copyButton(rule),
         iconButton(
           'up',
           t('routing.up'),
@@ -253,6 +267,16 @@ class _RouteRulesState extends State<RouteRules> {
     },
   );
 
+  Component _copyButton(RoutingRule rule) {
+    final copy = component.copyToOthers!(rule);
+    return iconButton(
+      'copy',
+      t('routing.copyToOthers'),
+      copy ?? () {},
+      disabled: !editable || copy == null,
+    );
+  }
+
   Component _target(
     RoutingRule rule,
     int index,
@@ -261,6 +285,9 @@ class _RouteRulesState extends State<RouteRules> {
     final id = 'routing-${component.node}-target-$index';
     final label = t('routing.target');
     final multiple = NodeRouting.allowsTargetList(coreId, rule.type);
+    final host = rule.type == 'domain' || rule.type == 'suffix'
+        ? websiteHost(rule.target)
+        : null;
     final help = [
       t('routing.help.${rule.type}'),
       if (multiple) t('routing.help.list', {'count': NodeRouting.maxTargets}),
@@ -290,6 +317,14 @@ class _RouteRulesState extends State<RouteRules> {
         attributes: attributes,
         onInput: update,
       ),
+      if (host != null)
+        action(
+          t('routing.useHost', {'host': host}),
+          () => update(host),
+          disabled: !editable,
+        )
+      else if (rule.target.contains('://'))
+        txt(t('routing.urlTargetHelp'), classes: 'field-error'),
     ], classes: 'route-rule-target');
   }
 

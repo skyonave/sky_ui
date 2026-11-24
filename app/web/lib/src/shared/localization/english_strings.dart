@@ -83,7 +83,7 @@ const englishStrings = <String, String>{
   'routes.pathHelp':
       'The first server accepts clients; the last sends traffic to the internet. A route may use a single server.',
   'routes.remoteCapabilities':
-      'Remote ingress currently supports mihomo. For TLS, provide a custom certificate and key in the connection parameters.',
+      'AmneziaWG needs a single-server route. For remote TLS ingress, supply a custom certificate and key.',
   'routes.policyConflict':
       'The server order changed. Some rules refer to removed or earlier nodes. Correct them before saving.',
   'routes.resetPolicies': 'Reset route rules',
@@ -96,8 +96,6 @@ const englishStrings = <String, String>{
   'routes.chooseHelp': 'Edit servers and rules in Routing.',
   'servers.hostHelp':
       'IP or hostname only, without root@ or https://. Enter the SSH user during installation.',
-  'servers.keyHelp':
-      'The complete server public key, starting with ssh-ed25519. This is not a password or private key.',
   'servers.endpointHelp':
       'Client IP or hostname, without https:// or port. The domain DNS must point to this server. Leave empty to use the SSH host.',
   'servers.relayHelp':
@@ -138,7 +136,7 @@ const englishStrings = <String, String>{
   'builder.routeTransit': 'Transit',
   'builder.routeEgress': 'Egress',
   'builder.routeHelp':
-      'The first node accepts connections. By default, traffic passes through every node. For remote mihomo ingress with TLS, supply a custom certificate.',
+      'The first node accepts connections. By default, traffic passes through every node. Remote TLS ingress requires a custom certificate.',
   'routing.title': 'Routing rules',
   'nav.routing': 'Routing',
   'routing.noConnections': 'This node has no connections yet.',
@@ -159,15 +157,20 @@ const englishStrings = <String, String>{
   'routing.target': 'Destination',
   'routing.action': 'Action',
   'routing.domain': 'Exact domain',
+  'routing.copyToOthers': 'Append this rule to the other nodes',
+  'routing.urlTargetHelp':
+      'For links, select Exact domain and paste an HTTP(S) address without credentials.',
+  'routing.useHost': 'Apply to the entire domain {host}',
   'routing.suffix': 'Domain and subdomains',
   'routing.wildcard': 'Domain wildcard',
   'routing.keyword': 'Domain keyword',
   'routing.geosite': 'GeoSite · domain groups',
   'routing.cidr': 'IP or network (CIDR)',
-  'routing.geoip': 'GeoIP · IP groups',
+  'routing.geoip': 'GeoIP (legacy rule)',
   'routing.port': 'Destination port',
   'routing.network': 'TCP or UDP',
-  'routing.help.domain': 'Enter a hostname without a scheme or path.',
+  'routing.help.domain':
+      'Enter a domain or paste a link and confirm its domain. The rule covers all pages on that host.',
   'routing.help.suffix':
       'example.com includes the domain and all its subdomains.',
   'routing.help.wildcard':
@@ -189,7 +192,10 @@ const englishStrings = <String, String>{
   'routing.review': 'Configured nodes: {nodes}, rules: {rules}',
   'routing.links': 'Additional relay ports (TCP and UDP)',
   'runtime.error.route_policy_invalid':
-      'Check the rule conditions and actions. Traffic can only be forwarded to a later node.',
+      'Check the condition type, values and action on each node of the route.',
+  'runtime.error.route_domain_invalid':
+      'Check the domain or wildcard. Examples include example.ru, *.ru and *.xn--p1ai. Separate values with commas.',
+  'builder.route.awgSingleNode': 'Choose a single-server route for AmneziaWG.',
   'runtime.error.route_geo_unknown':
       'The GeoSite or GeoIP group is missing from the dataset. Check its name.',
   'runtime.error.route_geo_unavailable':
@@ -218,7 +224,7 @@ const englishStrings = <String, String>{
   'runtime.error.route_address_unavailable':
       'Could not resolve the address for the link between nodes.',
   'runtime.error.route_protocol_unsupported':
-      'Choose this server as the first node, or use mihomo for remote ingress. Remote TLS ingress requires a custom certificate.',
+      'The connection settings are incompatible with this route. AmneziaWG requires a single server. Remote TLS ingress requires a custom certificate.',
   'runtime.error.route_node_protocol':
       'Update the node using Install over SSH.',
   'runtime.error.route_requires_rule_mode':
@@ -250,9 +256,6 @@ const englishStrings = <String, String>{
   'servers.endpoint': 'Client address (optional)',
   'servers.relayAddress': 'IP for links between nodes (optional)',
   'servers.port': 'SSH port',
-  'servers.hostKey': 'SSH host key',
-  'servers.hostKeyHelp':
-      'Copy the first two fields from /etc/ssh/ssh_host_ed25519_key.pub using the VPS console.',
   'servers.enrollmentHelp':
       'Give this public key to the node installer and select Check.',
   'servers.status': 'Check',
@@ -272,8 +275,9 @@ const englishStrings = <String, String>{
   'servers.state.reloading': 'Reloading',
   'servers.state.maintenance': 'Maintenance',
   'servers.state.refreshing': 'Refreshing',
-  'servers.error.server_invalid':
-      'Check the name, address, port and SSH host key.',
+  'servers.error.server_invalid': 'Check the highlighted fields.',
+  'servers.error.server_host_key_unavailable':
+      'Could not read the SSH host key. Check the address and port, and that SSH is reachable from the panel server. The server must support Ed25519.',
   'servers.error.server_duplicate': 'This SSH address is already registered.',
   'servers.error.server_limit': 'The server limit has been reached.',
   'servers.error.server_busy': 'Wait for the current operation to finish.',

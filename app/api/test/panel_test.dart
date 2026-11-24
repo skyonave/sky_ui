@@ -1452,6 +1452,7 @@ void main() {
   test(
     'default endpoint follows gateway changes; explicit endpoint survives them',
     () async {
+      expect((await panel.snapshot()).serverName, 'Server');
       expect((await panel.snapshot()).address, 'panel.example.net');
       repository.close();
       repository = PanelRepository(
@@ -1472,8 +1473,29 @@ void main() {
       );
       panel = service();
       expect((await panel.snapshot()).address, 'vpn.example.net');
+      expect((await panel.snapshot()).serverName, 'Сервер');
     },
   );
+  test('legacy loopback name migrates once without changing the endpoint', () {
+    final path = '${directory.path}/panel.sqlite';
+    repository.close();
+    final old = sqlite3.open(path);
+    try {
+      old.execute("DELETE FROM metadata WHERE key = 'independentServerName'");
+      old.execute(
+        "UPDATE metadata SET value = '127.0.0.1' WHERE key = 'serverName'",
+      );
+    } finally {
+      old.close();
+    }
+    repository = PanelRepository(path, defaultAddress: 'vpn.example.net');
+    expect(repository.read().serverName, 'Server');
+    expect(repository.read().address, 'vpn.example.net');
+    final revision = repository.revision;
+    repository.close();
+    repository = PanelRepository(path, defaultAddress: 'vpn.example.net');
+    expect(repository.revision, revision);
+  });
   test(
     'one subscription URL negotiates formats and preserves revocation',
     () async {

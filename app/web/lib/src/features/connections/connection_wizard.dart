@@ -771,7 +771,13 @@ class _ConnectionWizardState extends State<ConnectionWizard> {
           ], classes: 'protocol-description'),
           if (!available)
             txt(
-              t(protocol.tentative ? 'builder.planned' : 'feature.unavailable'),
+              t(
+                protocol.id == 'amneziawg' && route.length > 1
+                    ? 'builder.route.awgSingleNode'
+                    : protocol.tentative
+                    ? 'builder.planned'
+                    : 'feature.unavailable',
+              ),
               classes: 'availability-chip',
             ),
         ],

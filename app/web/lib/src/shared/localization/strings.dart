@@ -9,6 +9,7 @@ class AppStrings {
   static const supportedLocales = ['ru', 'en'];
   static String defaultLocale = 'ru';
   String get locale => _locale ?? defaultLocale;
+
   static Iterable<String> get translationKeys => {
     ..._catalogs['ru']!.keys,
     ...diagnosticStrings.keys,
@@ -111,7 +112,7 @@ class AppStrings {
       'routes.pathHelp':
           'Первый сервер принимает клиентов, последний выпускает трафик в интернет. Можно оставить один сервер.',
       'routes.remoteCapabilities':
-          'Удалённый вход сейчас поддерживает mihomo. Для TLS укажите собственный сертификат и ключ в параметрах подключения.',
+          'Для AmneziaWG нужен маршрут с одним сервером. Для TLS на удалённом входе укажите свой сертификат и ключ.',
       'routes.policyConflict':
           'Порядок серверов изменился. Некоторые правила ссылаются на удалённые или предыдущие узлы. Исправьте их перед сохранением.',
       'routes.resetPolicies': 'Сбросить правила маршрута',
@@ -126,8 +127,6 @@ class AppStrings {
           'Состав серверов и правила изменяются в разделе «Маршрутизация».',
       'servers.hostHelp':
           'Только IP или домен, без root@ и без https://. Пользователь SSH указывается при установке.',
-      'servers.keyHelp':
-          'Публичный ключ сервера целиком, начиная с ssh-ed25519. Это не пароль и не приватный ключ.',
       'servers.endpointHelp':
           'IP или домен для клиентов, без https:// и порта. DNS домена должен указывать на этот сервер. Пустое поле использует адрес SSH.',
       'servers.relayHelp':
@@ -170,7 +169,7 @@ class AppStrings {
       'builder.routeTransit': 'Транзит',
       'builder.routeEgress': 'Выход',
       'builder.routeHelp':
-          'Первый узел принимает подключения. По умолчанию трафик проходит через все узлы. Для удалённого входа через mihomo с TLS укажите свой сертификат.',
+          'Первый узел принимает подключения. По умолчанию трафик проходит через все узлы. Для TLS на удалённом входе укажите свой сертификат.',
       'routing.title': 'Правила маршрутизации',
       'nav.routing': 'Маршрутизация',
       'routing.noConnections': 'На этой ноде пока нет подключений.',
@@ -191,15 +190,21 @@ class AppStrings {
       'routing.target': 'Назначение',
       'routing.action': 'Действие',
       'routing.domain': 'Точный домен',
+      'routing.copyToOthers':
+          'Добавить правило в конец списка на остальных узлах',
+      'routing.urlTargetHelp':
+          'Для ссылки выберите «Точный домен» и вставьте HTTP(S)-адрес сайта без учётных данных.',
+      'routing.useHost': 'Применить ко всему домену {host}',
       'routing.suffix': 'Домен и поддомены',
       'routing.wildcard': 'Маска домена',
       'routing.keyword': 'Часть домена',
       'routing.geosite': 'GeoSite · группы доменов',
       'routing.cidr': 'IP или сеть (CIDR)',
-      'routing.geoip': 'GeoIP · группы IP',
+      'routing.geoip': 'GeoIP (старое правило)',
       'routing.port': 'Порт назначения',
       'routing.network': 'TCP или UDP',
-      'routing.help.domain': 'Укажите имя хоста без схемы и пути.',
+      'routing.help.domain':
+          'Введите домен или вставьте ссылку и подтвердите выбор домена. Правило охватывает все страницы сайта.',
       'routing.help.suffix':
           'example.com включает сам домен и все его поддомены.',
       'routing.help.wildcard':
@@ -221,7 +226,11 @@ class AppStrings {
       'routing.review': 'Узлов с настройками: {nodes}, правил: {rules}',
       'routing.links': 'Порты дополнительных переходов (TCP и UDP)',
       'runtime.error.route_policy_invalid':
-          'Проверьте условия и действия правил. Передать трафик можно только узлу дальше по маршруту.',
+          'Проверьте тип условия, значения и действие на каждом узле маршрута.',
+      'runtime.error.route_domain_invalid':
+          'Проверьте домен или маску. Примеры допустимых значений: example.ru, *.ru и *.рф. Разделяйте значения запятыми.',
+      'builder.route.awgSingleNode':
+          'Для AmneziaWG выберите маршрут с одним сервером.',
       'runtime.error.route_geo_unknown':
           'Группа GeoSite или GeoIP отсутствует в базе. Проверьте её название.',
       'runtime.error.route_geo_unavailable':
@@ -250,7 +259,7 @@ class AppStrings {
       'runtime.error.route_address_unavailable':
           'Не удалось определить адрес для связи между узлами.',
       'runtime.error.route_protocol_unsupported':
-          'Выберите текущий сервер первым узлом или используйте mihomo для удалённого входа. Для TLS на удалённом входе нужен свой сертификат.',
+          'Параметры подключения несовместимы с маршрутом. Для AmneziaWG нужен один сервер. Для TLS на удалённом входе нужен свой сертификат.',
       'runtime.error.route_node_protocol':
           'Узел нужно обновить через «Установить по SSH».',
       'runtime.error.route_requires_rule_mode':
@@ -283,9 +292,6 @@ class AppStrings {
       'servers.endpoint': 'Адрес для клиентов (опционально)',
       'servers.relayAddress': 'IP для связи узлов (опционально)',
       'servers.port': 'Порт SSH',
-      'servers.hostKey': 'Ключ сервера SSH',
-      'servers.hostKeyHelp':
-          'Возьмите первые два поля из /etc/ssh/ssh_host_ed25519_key.pub через консоль VPS.',
       'servers.enrollmentHelp':
           'Передайте этот публичный ключ установщику узла и нажмите «Проверить».',
       'servers.status': 'Проверить',
@@ -305,8 +311,9 @@ class AppStrings {
       'servers.state.reloading': 'Перезагружается',
       'servers.state.maintenance': 'Обслуживание',
       'servers.state.refreshing': 'Обновляется',
-      'servers.error.server_invalid':
-          'Проверьте название, адрес, порт и ключ SSH.',
+      'servers.error.server_invalid': 'Проверьте отмеченные поля.',
+      'servers.error.server_host_key_unavailable':
+          'Не удалось получить ключ SSH. Проверьте адрес, порт и доступность SSH с сервера панели. Сервер должен поддерживать Ed25519.',
       'servers.error.server_duplicate': 'Этот SSH-адрес уже добавлен.',
       'servers.error.server_limit': 'Достигнут лимит серверов.',
       'servers.error.server_busy': 'Дождитесь завершения текущей операции.',

@@ -57,7 +57,6 @@ class NodeRouting {
     'keyword',
     'geosite',
     'cidr',
-    'geoip',
     'port',
     'network',
   ];

@@ -40,6 +40,7 @@ void main() {
     () {
       final policy = RoutePolicy.validate(
         _connection('mihomo', _rules),
+        previous: {_local: NodeRouting(rules: _rules)},
       )[_local]!;
       expect(policy.rules.first.targets, ['example.org', 'example.net']);
       expect(policy.rules[3].target, 'youtube');
@@ -66,8 +67,8 @@ void main() {
         ),
       );
       for (final rule in [
+        _rules[4],
         const RoutingRule('geosite', '../youtube', _block),
-        const RoutingRule('wildcard', '(.*).example.com', _block),
         const RoutingRule('cidr', '192.0.2.1, invalid', _block),
         const RoutingRule('network', 'tcp, udp', _block),
         RoutingRule('port', List.filled(9, '443').join(','), _block),
@@ -75,6 +76,33 @@ void main() {
         expect(
           () => RoutePolicy.validate(_connection('xray', [rule])),
           invalid,
+        );
+      }
+      final masks = RoutePolicy.validate(
+        _connection('sing-box', [
+          const RoutingRule('wildcard', '*.ru, *.xn--p1ai, *.рф, *.su', _block),
+          const RoutingRule('suffix', 'ЯНДЕКС.РФ', _block),
+        ]),
+      )[_local]!.rules;
+      expect(masks.first.target, '*.ru, *.xn--p1ai, *.su');
+      expect(masks.last.target, 'xn--d1acpjx3f.xn--p1ai');
+      for (final target in [
+        '(.*).example.com',
+        '*.рф/path',
+        '*.-рф',
+        '*.рф:443',
+      ]) {
+        expect(
+          () => RoutePolicy.validate(
+            _connection('mihomo', [RoutingRule('wildcard', target, _block)]),
+          ),
+          throwsA(
+            isA<ApiException>().having(
+              (e) => e.code,
+              'code',
+              'route_domain_invalid',
+            ),
+          ),
         );
       }
       expect(
@@ -101,6 +129,7 @@ void main() {
         try {
           final policy = RoutePolicy.validate(
             _connection(engine, _rules),
+            previous: {_local: NodeRouting(rules: _rules)},
           )[_local]!;
           final files = switch (engine) {
             'mihomo' => {

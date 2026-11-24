@@ -35,6 +35,12 @@ Future<void> _check() async {
     }
 
     require(rows().length == 3, 'Three rules must render.');
+    final match = rows().first.querySelector('select') as web.HTMLSelectElement;
+    require(
+      match.querySelector('option[value="geoip"]') == null &&
+          match.querySelector('option[value="geosite"]') != null,
+      'New rules must offer GeoSite and omit GeoIP.',
+    );
     final data = web.DataTransfer();
     rows()[1]
         .querySelector('.route-rule-grip')!
@@ -80,6 +86,24 @@ Future<void> _check() async {
     require(
       first() == 'example.org',
       'Saved policy must retain the displayed order.',
+    );
+    final target = rows()[1].querySelector('input') as web.HTMLInputElement;
+    target.value = 'https://video.example.net/watch?id=1';
+    target.dispatchEvent(web.Event('input', web.EventInit(bubbles: true)));
+    await _frame();
+    final convert =
+        rows()[1].querySelector('.route-rule-target button.button')
+            as web.HTMLElement;
+    require(
+      convert.textContent!.contains('video.example.net'),
+      'Show the hostname before conversion.',
+    );
+    convert.click();
+    await _frame();
+    require(
+      (rows()[1].querySelector('input') as web.HTMLInputElement).value ==
+          'video.example.net',
+      'Store the hostname when the user accepts the conversion.',
     );
     (web.document.querySelector('#read-only') as web.HTMLElement).click();
     await _frame();

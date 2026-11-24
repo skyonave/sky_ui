@@ -12,7 +12,8 @@ class NamedRouteCommands {
   final ConnectionCommands connections;
 
   Future<void> save(PanelData data, NamedRoute input, {String? id}) async {
-    if (id != null && !data.namedRoutes.any((r) => r.id == id)) {
+    final previous = data.namedRoutes.where((r) => r.id == id).firstOrNull;
+    if (id != null && previous == null) {
       throw const ApiException('not_found', status: 404);
     }
     if (id == null && data.namedRoutes.length >= 128) {
@@ -49,6 +50,7 @@ class NamedRouteCommands {
         route: effective,
         routing: input.policies,
       ),
+      previous: previous?.policies ?? const {},
     );
     final value = NamedRoute(
       id: routeId,
